@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Careerva — License Key Generator</title>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; display: flex; align-items: center; justify-content: center;
+    background: radial-gradient(1000px 500px at 50% -10%, #1b2436, #0f1115);
+    color: #e6e8ec; font-family: -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .card {
+    width: 540px; max-width: calc(100vw - 32px);
+    background: #181b22; border: 1px solid #2a2f3a; border-radius: 16px;
+    padding: 28px 30px; box-shadow: 0 24px 64px rgba(0,0,0,.5);
+  }
+  h1 { margin: 0 0 4px; font-size: 20px; }
+  p { color: #8b93a1; font-size: 13px; }
+  label { display: block; margin: 16px 0 6px; color: #8b93a1; font-size: 12px; }
+  input {
+    width: 100%; background: #1f232c; border: 1px solid #2a2f3a; color: #e6e8ec;
+    border-radius: 9px; padding: 11px 12px; font-size: 14px; font-family: inherit;
+  }
+  input:focus { outline: none; border-color: #4f8cff; }
+  .key {
+    margin-top: 16px; background: #11151c; border: 1px solid #2a2f3a; border-radius: 10px;
+    padding: 16px; font-family: ui-monospace, Consolas, monospace; font-size: 20px;
+    letter-spacing: 1px; text-align: center; color: #4ccb8b; user-select: all; word-break: break-all;
+  }
+  button {
+    margin-top: 14px; background: #4f8cff; border: none; color: #fff;
+    padding: 11px 18px; border-radius: 9px; font-size: 14px; cursor: pointer;
+  }
+  .muted { color: #8b93a1; font-size: 12px; margin-top: 14px; }
+</style>
+</head>
+<body>
+  <div class="card">
+    <h1>Careerva — Key Generator</h1>
+    <p>Paste the Machine ID shown in the app's activation screen (Settings → Security) to produce its license key.</p>
+
+    <label>Machine ID</label>
+    <input id="mid" placeholder="XXXX-XXXX-XXXX-XXXX" autofocus />
+
+    <button id="gen">Generate Key</button>
+
+    <label>License Key</label>
+    <div class="key" id="out">—</div>
+
+    <div class="muted">Keep this tool private — it can generate keys for any machine.</div>
+  </div>
+
+<script>
+  // MUST match electron/license.js
+  const SECRET = "Careerva-9f4Qe2$Kx7!pZr3@Lm8#Vn1&Hb6^Wd0-v1";
+  const normalize = (s) => (s || "").replace(/[^a-z0-9]/gi, "").toUpperCase();
+
+  async function hmacHex(secret, msg) {
+    const enc = new TextEncoder();
+    const key = await crypto.subtle.importKey(
+      "raw", enc.encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]
+    );
+    const sig = await crypto.subtle.sign("HMAC", key, enc.encode(msg));
+    return [...new Uint8Array(sig)].map((b) => b.toString(16).padStart(2, "0")).join("").toUpperCase();
+  }
+
+  async function makeKey() {
+    const mid = normalize(document.getElementById("mid").value);
+    if (!mid) { document.getElementById("out").textContent = "—"; return; }
+    const sig = await hmacHex(SECRET, mid);
+    document.getElementById("out").textContent = sig.slice(0, 20).match(/.{4}/g).join("-");
+  }
+
+  document.getElementById("gen").addEventListener("click", makeKey);
+  document.getElementById("mid").addEventListener("keydown", (e) => { if (e.key === "Enter") makeKey(); });
+</script>
+</body>
+</html>
