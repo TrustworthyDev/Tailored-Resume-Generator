@@ -425,7 +425,11 @@ export default function ResumeGenerator() {
       setTimeout(() => setCopied(false), 1500);
     } catch (_) {}
   };
-  const copyLocation = () => { copyFolderToClipboard(savedPath); setView("generate"); };
+  const copyLocation = () => {
+    copyFolderToClipboard(savedPath);
+    setView("generate");
+    toast("Folder path copied to clipboard.", "success");
+  };
 
   const copy = () => navigator.clipboard.writeText(result);
 
@@ -627,7 +631,7 @@ export default function ResumeGenerator() {
         </p>
 
         <div className="grid2">
-          <label className="field">
+          <div className="field">
             <span className="field-label">Account</span>
             <FlagSelect
               value={accountId}
@@ -639,9 +643,9 @@ export default function ResumeGenerator() {
                 country: a.country,
               }))}
             />
-          </label>
+          </div>
 
-          <label className="field">
+          <div className="field">
             <span className="field-label">Active AI API Key</span>
             <FlagSelect
               value={keyId}
@@ -649,10 +653,10 @@ export default function ResumeGenerator() {
               placeholder={keys.length ? "Select key" : "No keys — add one first"}
               options={keys.map((k) => ({ value: k.id, name: k.name || "(unnamed key)" }))}
             />
-          </label>
+          </div>
         </div>
 
-        <label className="field">
+        <div className="field">
           <span className="field-label">Active Prompt</span>
           <FlagSelect
             value={promptId}
@@ -660,14 +664,14 @@ export default function ResumeGenerator() {
             placeholder={prompts.length ? "Select a prompt" : "No prompts — add in Instructions"}
             options={prompts.map((p) => ({ value: p.id, name: p.name || "(untitled)" }))}
           />
-        </label>
+        </div>
         <div className="prompt-preview">
           {selectedPrompt
             ? selectedPrompt.body || "(this prompt is empty)"
             : "Select a prompt to see its content."}
         </div>
 
-        <label className="field">
+        <label className="field jd-field">
           <span className="field-label">Job Description <span className="req">(required)</span></span>
           <textarea
             className="textarea"

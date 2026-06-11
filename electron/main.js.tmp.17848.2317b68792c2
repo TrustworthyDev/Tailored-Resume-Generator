@@ -91,19 +91,22 @@ function createWindow() {
 
   // Open links from the app (including links clicked in the inline PDF/resume
   // preview) in the user's default browser / mail client — like target="_blank".
-  // Only http/mailto/tel are intercepted; blob:/data:/file: loads (the preview
-  // itself) are left alone.
   const openExternal = (url) => {
-    if (/^(https?:|mailto:|tel:)/i.test(url || "")) { shell.openExternal(url); return true; }
+    if (/^(https?:|mailto:|tel:)/i.test(url)) { shell.openExternal(url); return true; }
     return false;
   };
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     openExternal(url);
     return { action: "deny" };
   });
-  const guardNavigate = (e, url) => { if (openExternal(url)) e.preventDefault(); };
-  mainWindow.webContents.on("will-navigate", (e, url) => guardNavigate(e, url));
-  mainWindow.webContents.on("will-frame-navigate", (e) => guardNavigate(e, e.url));
+  const guardNavigate = (e, url) => {
+    const here = isDev ? "http://localhost:3000" : "file://";
+    if (url && !url.startsWith(here)) { e.preventDefault(); openExternal(url); }
+  };
+  mainWindow.webContents.on("will-navigate", guardNavigate);
+  mainWindow.webContents.on("will-frame-navigate", (e) => {
+    if (e.url) guardNavigate(e, e.url);
+  });
 
   if (isDev) {
     mainWindow.loadURL("http://localhost:3000");

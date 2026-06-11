@@ -53,6 +53,9 @@ main h2, main h3 { break-after: avoid; }
 main li { break-inside: avoid; }
 main p { orphans: 2; widows: 2; }
 a { text-decoration: none; }
+/* Header contact links follow the contact-line colour (visible on every style,
+   including coloured-header templates) instead of the accent. */
+.contacts a { color: inherit; }
 @page { size: A4; margin: 14mm 8mm; }
 `;
 
@@ -258,14 +261,37 @@ function isContactish(s) {
   return false;
 }
 
+// Turn a single contact item into a clickable link where it makes sense, so the
+// generated PDF's header links actually work when clicked (email → mailto,
+// phone → tel, LinkedIn / portfolio / any URL → https).
+function linkifyContact(part) {
+  const t = String(part || "").trim();
+  if (!t) return "";
+  const attr = (s) => String(s).replace(/"/g, "%22");
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(t)) {
+    return `<a href="mailto:${attr(t)}">${escapeHtml(t)}</a>`;
+  }
+  if (/^https?:\/\//i.test(t) || /^www\./i.test(t) || /^[^\s/]+\.[a-z]{2,}(?:[/?#]|$)/i.test(t)) {
+    const href = /^https?:\/\//i.test(t) ? t : "https://" + t.replace(/^\/+/, "");
+    return `<a href="${attr(href)}">${escapeHtml(t)}</a>`;
+  }
+  if ((t.match(/\d/g) || []).length >= 7 && /^[+()\d\s.\-]+$/.test(t)) {
+    return `<a href="tel:${t.replace(/[^\d+]/g, "")}">${escapeHtml(t)}</a>`;
+  }
+  return escapeHtml(t);
+}
+
 // Shared header markup (used by both the resume and the cover letter). For the
-// "cards" style the contact items stack vertically on the right.
+// "cards" style the contact items stack vertically on the right. Each contact
+// item is linkified so it's clickable in the PDF.
 function headerHtml(id, name, title, contacts) {
   if (!name) return "";
-  const contactsHtml =
-    id === "cards"
-      ? contacts.split("  •  ").map((s) => escapeHtml(s.trim())).filter(Boolean).join("<br>")
-      : escapeHtml(contacts);
+  const items = String(contacts || "")
+    .split("  •  ")
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map(linkifyContact);
+  const contactsHtml = id === "cards" ? items.join("<br>") : items.join("  •  ");
   return (
     `<header><h1>${escapeHtml(name)}</h1>` +
     `${title ? `<div class="title">${escapeHtml(title)}</div>` : ""}` +
@@ -485,7 +511,7 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
   const header = headerHtml(id, name, title, contacts);
 
   return `<!doctype html>
-<html><head><meta charset="utf-8" /><style>${css}${fontOverride(style)}</style></head>
+<html><head><meta charset="utf-8" /><base target="_blank" /><style>${css}${fontOverride(style)}</style></head>
 <body><div class="page">
 ${header}
 <main>${body}</main>
@@ -516,7 +542,7 @@ export function buildCoverLetterHtml(coverMarkdown, style, contactInfo = null) {
     fontOverride(style);
 
   return `<!doctype html>
-<html><head><meta charset="utf-8" /><style>${css}</style></head>
+<html><head><meta charset="utf-8" /><base target="_blank" /><style>${css}</style></head>
 <body><div class="page">
 ${header}
 <main>${body}</main>

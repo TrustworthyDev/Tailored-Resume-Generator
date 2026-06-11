@@ -359,7 +359,19 @@ select.input {
   background: var(--primary); color: #fff; border-radius: 50%;
   display: flex; align-items: center; justify-content: center; font-size: 13px;
 }
-.resume-form { min-width: 0; }
+.resume-form {
+  min-width: 0;
+  display: flex; flex-direction: column;
+  height: calc(100vh - 52px);
+}
+/* Breathing room between the generate-form sections. */
+.resume-form > p.muted,
+.resume-form > .grid2,
+.resume-form > .field,
+.resume-form > .prompt-preview { margin-bottom: 20px; }
+/* Job Description fills the remaining height so the form matches the styles panel. */
+.jd-field { flex: 1 1 auto; min-height: 150px; }
+.jd-field .textarea { flex: 1 1 auto; height: 100%; min-height: 0; }
 /* Generate / Preview sub-tabs at the top of the form card — underline tab style. */
 .resume-tabs {
   display: flex; align-items: stretch; gap: 4px;
@@ -393,10 +405,10 @@ select.input {
   margin: 0 0 10px; word-break: break-all;
   position: sticky; top: 96px; z-index: 5; background: var(--panel);
 }
-/* Full resume viewer below the form — fills the viewport; PDF scrolls inside. */
-.resume-viewer-wrap { margin-top: 12px; }
+/* Full resume viewer below the form — fills the form height; PDF scrolls inside. */
+.resume-viewer-wrap { margin-top: 12px; flex: 1 1 auto; min-height: 0; }
 .resume-viewer {
-  width: 100%; height: calc(100vh - 230px); min-height: 460px; margin: 0;
+  width: 100%; height: 100%; min-height: 360px; margin: 0;
   border: 1px solid var(--border); border-radius: 10px; background: #fff; display: block;
 }
 .resume-viewer-empty {
@@ -406,10 +418,12 @@ select.input {
   display: flex; align-items: center; justify-content: center;
 }
 .prompt-preview {
-  margin-top: 8px; background: var(--panel-2); border: 1px solid var(--border);
+  margin-top: 2px; background: var(--panel-2); border: 1px solid var(--border);
   border-radius: 9px; padding: 12px; color: var(--muted); font-size: 12px;
-  max-height: 110px; overflow: auto; white-space: pre-wrap;
+  max-height: 230px; overflow: auto; white-space: pre-wrap;
 }
+/* Keep the Active Prompt label/dropdown close to its content preview. */
+.resume-form > .field:has(+ .prompt-preview) { margin-bottom: 6px; }
 .resume-output {
   background: var(--panel-2); border: 1px solid var(--border); border-radius: 9px;
   padding: 16px; white-space: pre-wrap; word-break: break-word;

@@ -22,7 +22,7 @@ export default function FlagSelect({ value, onChange, options, placeholder }) {
       <button
         type="button"
         className="input flagselect-btn"
-        onClick={() => setOpen((o) => !o)}
+        onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen((o) => !o); }}
       >
         <span className="flagselect-label">
           {selected ? (
@@ -49,7 +49,7 @@ export default function FlagSelect({ value, onChange, options, placeholder }) {
               className={
                 "flagselect-opt" + (String(o.value) === String(value) ? " active" : "")
               }
-              onClick={() => { onChange(String(o.value)); setOpen(false); }}
+              onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(false); onChange(String(o.value)); }}
             >
               {o.country ? <span className="flag">{countryFlag(o.country)}</span> : null}
               <span className="flagselect-optname">{o.name}</span>
