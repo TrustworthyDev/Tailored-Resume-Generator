@@ -2,12 +2,14 @@ import { useState } from "react";
 import ApiKeys from "./ApiKeys";
 import ProxySettings from "./ProxySettings";
 import LocationSettings from "./LocationSettings";
+import DatabaseSettings from "./DatabaseSettings";
 import Security from "./Security";
 
 const TABS = [
   { id: "api", label: "API" },
   { id: "proxy", label: "Proxy" },
   { id: "folder", label: "Folder" },
+  { id: "database", label: "Database" },
   { id: "security", label: "Security" },
 ];
 
@@ -31,6 +33,7 @@ export default function Settings() {
         {tab === "api" && <ApiKeys />}
         {tab === "proxy" && <ProxySettings />}
         {tab === "folder" && <LocationSettings />}
+        {tab === "database" && <DatabaseSettings />}
         {tab === "security" && <Security />}
       </div>
     </div>

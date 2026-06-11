@@ -70,6 +70,12 @@ contextBridge.exposeInMainWorld("api", {
   chooseDownloadLocation: () => invoke("location:choose"),
   openDownloadLocation: () => invoke("location:open"),
 
+  // Database backup / restore
+  exportDatabase: () => invoke("db:export"),
+  importDatabase: () => invoke("db:import"),
+  scanDatabase: () => invoke("db:scan"),
+  importSelectedDatabase: (payload) => invoke("db:importSelected", payload),
+
   // Resume
   generateResume: (data) => invoke("resume:generate", data),
   generateCoverLetter: (data) => invoke("coverletter:generate", data),
@@ -78,6 +84,7 @@ contextBridge.exposeInMainWorld("api", {
   exportResumePdf: (data) => invoke("resume:exportPdf", data),
   revealPdf: (filePath) => invoke("pdf:reveal", filePath),
   openPdf: (filePath) => invoke("pdf:open", filePath),
+  readPdf: (filePath) => invoke("pdf:read", filePath),
 
   // Applications & tracking
   addApplication: (data) => invoke("app:add", data),
@@ -93,4 +100,12 @@ contextBridge.exposeInMainWorld("api", {
   getActiveSession: () => invoke("session:active"),
   getTodayCount: () => invoke("app:todayCount"),
   listTodayApplications: () => invoke("app:todayList"),
+
+  // In-app notifications (the main process forwards messages here instead of
+  // showing a native OS notification). Returns an unsubscribe function.
+  onAppNotify: (cb) => {
+    const handler = (_e, body) => cb(body);
+    ipcRenderer.on("app:notify", handler);
+    return () => ipcRenderer.removeListener("app:notify", handler);
+  },
 });

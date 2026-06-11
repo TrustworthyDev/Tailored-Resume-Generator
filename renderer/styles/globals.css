@@ -37,15 +37,29 @@ h1, h2, h3 { color: var(--text); }
 ::-webkit-scrollbar-corner { background: transparent; }
 
 /* App shell — the sidebar is fixed; only the content scrolls */
-.app { display: flex; height: 100vh; overflow: hidden; }
+.app { display: flex; height: 100vh; overflow: hidden; position: relative; }
 .sidebar {
-  width: 220px; flex-shrink: 0; height: 100vh; overflow-y: auto;
-  background: var(--panel); border-right: 1px solid var(--border); padding: 18px 14px;
+  width: 260px; flex-shrink: 0; height: 100vh; overflow-y: auto;
+  background: var(--panel); border-right: 1px solid var(--border); padding: 58px 20px 24px;
 }
-.sidebar nav { display: flex; flex-direction: column; gap: 6px; }
+/* Collapse the main nav sidebar to widen the workspace. */
+.sidebar-toggle {
+  position: fixed; top: 14px; left: 216px; z-index: 100;
+  width: 34px; height: 34px; border-radius: 9px;
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  cursor: pointer; font-size: 18px; line-height: 1;
+  display: inline-flex; align-items: center; justify-content: center;
+  transition: left 0.16s ease, border-color 0.12s, background 0.12s;
+}
+.sidebar-toggle:hover { border-color: var(--primary); background: var(--panel); }
+.app.sidebar-collapsed .sidebar { display: none; }
+.app.sidebar-collapsed .sidebar-toggle { left: 12px; }
+.app.sidebar-collapsed .content { padding-left: 58px; }
+.sidebar nav { display: flex; flex-direction: column; gap: 9px; }
 .nav {
   text-align: left; background: transparent; border: none; color: var(--muted);
-  padding: 11px 14px; border-radius: 9px; cursor: pointer; font-size: 14px;
+  padding: 14px 18px; border-radius: 10px; cursor: pointer;
+  font-size: 18px; font-weight: 700;
   transition: background 0.12s, color 0.12s;
 }
 .nav:hover { background: var(--panel-2); color: var(--text); }
@@ -300,7 +314,11 @@ select.input {
 .flagselect-empty { color: var(--muted); padding: 10px; font-size: 13px; }
 
 /* Account form roles / projects */
-.role-row { display: flex; align-items: flex-start; gap: 10px; margin-top: 10px; }
+.role-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  margin-top: 12px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: 10px;
+}
 .role-grid { flex: 1; min-width: 0; }
 .save-bar { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 6px; }
 .main-stack-input { flex: 1; margin: 0 16px; max-width: 560px; }
@@ -320,8 +338,14 @@ select.input {
 
 /* Resume generator */
 .resume-layout { display: grid; grid-template-columns: 380px 1fr; gap: 22px; align-items: start; }
-.resume-styles { position: sticky; top: 0; }
-.style-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px; }
+.resume-styles {
+  position: sticky; top: 0; max-height: calc(100vh - 52px);
+  display: flex; flex-direction: column;
+}
+.style-grid {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;
+  overflow-y: auto; flex: 1 1 auto; min-height: 160px; padding-right: 4px;
+}
 .style-cell {
   position: relative; padding: 0; background: var(--panel-2);
   border: 2px solid var(--border); border-radius: 10px; cursor: pointer; overflow: hidden;
@@ -336,6 +360,51 @@ select.input {
   display: flex; align-items: center; justify-content: center; font-size: 13px;
 }
 .resume-form { min-width: 0; }
+/* Generate / Preview sub-tabs at the top of the form card — underline tab style. */
+.resume-tabs {
+  display: flex; align-items: stretch; gap: 4px;
+  margin-bottom: 16px; border-bottom: 1px solid var(--border);
+  position: sticky; top: 0; z-index: 6; background: var(--panel);
+}
+/* Resume Styles header + collapsible "Colors & Font" section. */
+.styles-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.section-collapse {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
+  padding: 6px 11px; border-radius: 8px; cursor: pointer; font-size: 12px; font-weight: 600;
+  white-space: nowrap; transition: color 0.12s, border-color 0.12s;
+}
+.section-collapse:hover { color: var(--text); border-color: var(--muted); }
+.styles-pickers { flex-shrink: 0; }
+.resume-tab {
+  background: transparent; border: none; border-bottom: 2px solid transparent;
+  color: var(--muted); padding: 10px 18px; margin-bottom: -1px; cursor: pointer;
+  font-size: 15px; font-weight: 600; transition: color 0.12s, border-color 0.12s;
+}
+.resume-tab:hover { color: var(--text); }
+.resume-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+.resume-tabs-spacer { flex: 1; }
+.resume-tabs .field-label { align-self: center; }
+/* The Preview action bar stays fixed in place while the PDF scrolls below it. */
+.preview-actions {
+  margin-bottom: 8px; padding: 6px 0;
+  position: sticky; top: 50px; z-index: 5; background: var(--panel);
+}
+.saved-inline {
+  margin: 0 0 10px; word-break: break-all;
+  position: sticky; top: 96px; z-index: 5; background: var(--panel);
+}
+/* Full resume viewer below the form — fills the viewport; PDF scrolls inside. */
+.resume-viewer-wrap { margin-top: 12px; }
+.resume-viewer {
+  width: 100%; height: calc(100vh - 230px); min-height: 460px; margin: 0;
+  border: 1px solid var(--border); border-radius: 10px; background: #fff; display: block;
+}
+.resume-viewer-empty {
+  border: 1px dashed var(--border); border-radius: 10px;
+  padding: 40px 24px; text-align: center; font-size: 13px;
+  background: var(--panel-2); min-height: 200px;
+  display: flex; align-items: center; justify-content: center;
+}
 .prompt-preview {
   margin-top: 8px; background: var(--panel-2); border: 1px solid var(--border);
   border-radius: 9px; padding: 12px; color: var(--muted); font-size: 12px;
@@ -352,6 +421,51 @@ select.input {
 .font-section { margin: 12px 0 4px; gap: 10px; }
 .font-section .field-label { margin-bottom: 4px; }
 
+/* Selective database import — grouped, checkbox-pickable contents. */
+.import-panel {
+  margin-top: 12px; border: 1px solid var(--border); border-radius: 10px;
+  padding: 14px 16px; background: var(--panel-2);
+}
+.import-src { margin-bottom: 10px; word-break: break-all; }
+.import-group { padding: 8px 0; border-top: 1px solid var(--border); }
+.import-group:first-of-type { border-top: none; }
+.import-group-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }
+.import-items {
+  display: flex; flex-direction: column; gap: 4px;
+  margin: 6px 0 2px 22px;
+}
+.import-item { display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px; }
+.import-item span { color: var(--text); }
+.import-panel input[type="checkbox"] { cursor: pointer; }
+
+/* Bottom-center in-app toast (replaces native OS notifications). Auto-dismisses.
+   Categorised: danger | warning | alert | success | info. */
+.toast {
+  position: fixed; bottom: 34px; left: 50%; z-index: 1000;
+  transform: translateX(-50%);
+  display: flex; align-items: center; gap: 14px;
+  min-width: 360px; max-width: 600px; padding: 18px 26px; cursor: pointer;
+  background: var(--panel); color: var(--text);
+  border: 1px solid var(--border); border-left: 6px solid var(--primary);
+  border-radius: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  animation: toast-in 0.18s ease-out;
+}
+.toast-icon { font-size: 26px; line-height: 1; flex-shrink: 0; }
+.toast-msg { font-size: 16px; font-weight: 600; line-height: 1.4; }
+.toast-danger { border-left-color: var(--danger); }
+.toast-danger .toast-icon { color: var(--danger); }
+.toast-warning { border-left-color: #f59e0b; }
+.toast-warning .toast-icon { color: #f59e0b; }
+.toast-alert { border-left-color: var(--primary); }
+.toast-info { border-left-color: var(--primary); }
+.toast-success { border-left-color: #16a34a; }
+.toast-success .toast-icon { color: #16a34a; }
+@keyframes toast-in {
+  from { opacity: 0; transform: translate(-50%, 12px); }
+  to { opacity: 1; transform: translate(-50%, 0); }
+}
+.req { color: var(--danger); font-weight: 700; font-size: 11px; }
+
 /* Resume accent color swatches */
 .color-section { margin: 10px 0 6px; }
 .swatch-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 8px; }
@@ -364,11 +478,26 @@ select.input {
 }
 .swatch:hover { transform: scale(1.08); }
 .swatch.active { border-color: #fff; box-shadow: 0 0 0 2px var(--primary); }
+/* A colour already chosen in the other picker is disabled (can't pick twice). */
+.swatch:disabled { opacity: 0.25; cursor: not-allowed; }
+.swatch:disabled:hover { transform: none; }
 .swatch-default {
   width: auto; height: 26px; border-radius: 13px; padding: 0 12px;
   background: var(--panel-2); color: var(--muted); font-size: 12px;
 }
 .swatch-default.active { color: var(--text); border-color: var(--primary); box-shadow: none; }
+/* White swatch — dark check so it stays visible on white. */
+.swatch-white { color: #111; }
+/* Custom-colour swatch — a rainbow chip wrapping a hidden native color input. */
+.swatch-custom {
+  padding: 0; overflow: hidden; position: relative;
+  background: conic-gradient(#f00, #ff0, #0f0, #0ff, #00f, #f0f, #f00);
+}
+.swatch-custom input {
+  position: absolute; top: -25%; left: -25%; width: 150%; height: 150%;
+  margin: 0; padding: 0; border: none; background: transparent;
+  cursor: pointer; opacity: 0;
+}
 
 /* Activation screen */
 .activation-screen {

@@ -8,22 +8,11 @@ const path = require("path");
 
 let db = null;
 let dbPath = null;
+let SQL = null; // the loaded sql.js module, reused to re-open DBs on import
 
-async function initDb(userDataDir) {
-  const SQL = await initSqlJs({
-    locateFile: (file) =>
-      path.join(__dirname, "..", "node_modules", "sql.js", "dist", file),
-  });
-
-  dbPath = path.join(userDataDir, "careerva.sqlite");
-
-  if (fs.existsSync(dbPath)) {
-    db = new SQL.Database(fs.readFileSync(dbPath));
-  } else {
-    db = new SQL.Database();
-  }
-
-  db.run(`
+// Full schema (idempotent). Used on first init and after a database import so
+// an imported file always has every table this app expects.
+const SCHEMA = `
     CREATE TABLE IF NOT EXISTS api_keys (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       name       TEXT,
@@ -127,7 +116,23 @@ async function initDb(userDataDir) {
       is_active INTEGER DEFAULT 0,
       created_at TEXT
     );
-  `);
+`;
+
+async function initDb(userDataDir) {
+  SQL = await initSqlJs({
+    locateFile: (file) =>
+      path.join(__dirname, "..", "node_modules", "sql.js", "dist", file),
+  });
+
+  dbPath = path.join(userDataDir, "careerva.sqlite");
+
+  if (fs.existsSync(dbPath)) {
+    db = new SQL.Database(fs.readFileSync(dbPath));
+  } else {
+    db = new SQL.Database();
+  }
+
+  db.run(SCHEMA);
 
   migrate();
   persist();
@@ -255,6 +260,35 @@ function persist() {
   fs.writeFileSync(dbPath, Buffer.from(db.export()));
 }
 
+// Absolute path of the on-disk SQLite file (used by the export feature).
+function getDbPath() {
+  return dbPath;
+}
+
+// Replace the live database with the contents of an imported .sqlite file.
+// Throws if the bytes are not a valid SQLite database. This machine's license
+// key is preserved so importing another machine's backup can't deactivate the
+// app.
+function importDb(buffer) {
+  const license = get("SELECT value FROM prefs WHERE key = 'license_key'");
+  const keep = license ? license.value : null;
+
+  const next = new SQL.Database(buffer);
+  next.exec("SELECT name FROM sqlite_master LIMIT 1"); // throws if not a real DB
+  db = next;
+
+  db.run(SCHEMA); // make sure every expected table exists
+  migrate();      // bring an older imported schema up to date
+  if (keep) {
+    run(
+      `INSERT INTO prefs (key, value) VALUES ('license_key', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      [keep]
+    );
+  }
+  persist();
+}
+
 function all(sql, params = []) {
   const stmt = db.prepare(sql);
   stmt.bind(params);
@@ -282,4 +316,201 @@ function insert(sql, params = []) {
   return row ? row.id : null;
 }
 
-module.exports = { initDb, all, get, run, insert };
+// ---- Selective import (merge specific rows from another .sqlite file) -------
+
+// Friendly labels for known preference keys (raw key shown for anything else).
+const PREF_LABELS = {
+  download_location: "Download folder",
+  resume_style: "Resume style",
+  resume_accent: "Content color",
+  resume_name_color: "Name color",
+  resume_font: "Resume font",
+  resume_font_size: "Font size",
+  auto_preview: "Auto-preview on paste",
+  auto_generate: "Auto-generate",
+  open_preview_after: "Open preview modal",
+  cover_letter: "Cover letter toggle",
+  style_order: "Resume style order",
+  selected_account_id: "Selected account",
+  gen_jd: "Last job description",
+};
+const prefLabel = (key) => PREF_LABELS[key] || key;
+
+// Read helpers that run against an arbitrary (source) database handle.
+function srcAll(src, sql, params = []) {
+  const stmt = src.prepare(sql);
+  stmt.bind(params);
+  const rows = [];
+  while (stmt.step()) rows.push(stmt.getAsObject());
+  stmt.free();
+  return rows;
+}
+const srcGet = (src, sql, params = []) => srcAll(src, sql, params)[0] || null;
+const srcHasTable = (src, name) =>
+  srcAll(src, "SELECT name FROM sqlite_master WHERE type='table' AND name=?", [name]).length > 0;
+
+const nextOrder = (table) => {
+  const r = get(`SELECT COALESCE(MAX(sort_order), -1) AS m FROM ${table}`);
+  return (r ? r.m : -1) + 1;
+};
+
+// Inspect a .sqlite file and return its importable contents grouped by type.
+function scanFile(filePath) {
+  const src = new SQL.Database(fs.readFileSync(filePath));
+  try {
+    const groups = [];
+    if (srcHasTable(src, "api_keys")) {
+      groups.push({
+        id: "api_keys", label: "API Keys",
+        items: srcAll(src, "SELECT * FROM api_keys ORDER BY id").map((r) => ({
+          id: r.id, label: (r.name || "(unnamed)") + (r.provider ? ` · ${r.provider}` : ""),
+        })),
+      });
+    }
+    if (srcHasTable(src, "accounts")) {
+      groups.push({
+        id: "accounts", label: "Accounts",
+        items: srcAll(src, "SELECT * FROM accounts ORDER BY id").map((r) => ({
+          id: r.id, label: (r.name || "(unnamed)") + (r.main_stack ? ` (${r.main_stack})` : ""),
+        })),
+      });
+    }
+    if (srcHasTable(src, "instructions")) {
+      groups.push({
+        id: "instructions", label: "Prompts",
+        items: srcAll(src, "SELECT * FROM instructions ORDER BY id").map((r) => ({
+          id: r.id, label: r.name || "(untitled)",
+        })),
+      });
+    }
+    if (srcHasTable(src, "proxies")) {
+      groups.push({
+        id: "proxies", label: "Proxies",
+        items: srcAll(src, "SELECT * FROM proxies ORDER BY id").map((r) => ({
+          id: r.id, label: [r.url, r.port].filter(Boolean).join(":") || "(proxy)",
+        })),
+      });
+    }
+    if (srcHasTable(src, "prefs")) {
+      groups.push({
+        id: "prefs", label: "Settings",
+        items: srcAll(src, "SELECT key, value FROM prefs ORDER BY key")
+          .filter((r) => r.key !== "license_key")
+          .map((r) => ({ id: r.key, label: prefLabel(r.key) })),
+      });
+    }
+    return groups.filter((g) => g.items.length);
+  } finally {
+    try { src.close(); } catch (_) {}
+  }
+}
+
+// Merge only the user-selected rows from `filePath` into the live database.
+// Rows are inserted as NEW records (no id clashes); prefs are upserted by key.
+// The license key is never touched.
+function importSelected(filePath, selection = {}) {
+  const src = new SQL.Database(fs.readFileSync(filePath));
+  const nowIso = new Date().toISOString();
+  const counts = { api_keys: 0, accounts: 0, instructions: 0, proxies: 0, prefs: 0 };
+  const ids = (k) => (Array.isArray(selection[k]) ? selection[k].map(Number) : []);
+  try {
+    if (srcHasTable(src, "api_keys")) {
+      ids("api_keys").forEach((id) => {
+        const r = srcGet(src, "SELECT * FROM api_keys WHERE id = ?", [id]);
+        if (!r) return;
+        insert(
+          `INSERT INTO api_keys (name, api_key, provider, is_active, sort_order, created_at)
+           VALUES (?, ?, ?, 0, ?, ?)`,
+          [r.name ?? null, r.api_key ?? null, r.provider ?? "gemini", nextOrder("api_keys"), r.created_at ?? nowIso]
+        );
+        counts.api_keys++;
+      });
+    }
+    if (srcHasTable(src, "accounts")) {
+      ids("accounts").forEach((id) => {
+        const a = srcGet(src, "SELECT * FROM accounts WHERE id = ?", [id]);
+        if (!a) return;
+        insert(
+          `INSERT INTO accounts (name, title, email, phone, address, country, linkedin, portfolio, main_stack, sort_order, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [a.name ?? null, a.title ?? null, a.email ?? null, a.phone ?? null, a.address ?? null,
+           a.country ?? null, a.linkedin ?? null, a.portfolio ?? null, a.main_stack ?? null,
+           nextOrder("accounts"), a.created_at ?? nowIso]
+        );
+        // sql.js resets last_insert_rowid() on export, so read the new id back.
+        const maxRow = get("SELECT MAX(id) AS id FROM accounts");
+        const newId = maxRow ? maxRow.id : null;
+        if (srcHasTable(src, "work_history")) {
+          srcAll(src, "SELECT * FROM work_history WHERE account_id = ?", [id]).forEach((w) =>
+            insert(
+              `INSERT INTO work_history (account_id, role_name, company_name, location, work_duration, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              [newId, w.role_name ?? null, w.company_name ?? null, w.location ?? null, w.work_duration ?? null, w.created_at ?? nowIso]
+            ));
+        }
+        if (srcHasTable(src, "education")) {
+          srcAll(src, "SELECT * FROM education WHERE account_id = ?", [id]).forEach((ed) =>
+            insert(
+              `INSERT INTO education (account_id, university, location, degree, period, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)`,
+              [newId, ed.university ?? null, ed.location ?? null, ed.degree ?? null, ed.period ?? null, ed.created_at ?? nowIso]
+            ));
+        }
+        if (srcHasTable(src, "projects")) {
+          srcAll(src, "SELECT * FROM projects WHERE account_id = ?", [id]).forEach((p) =>
+            insert(
+              `INSERT INTO projects (account_id, title, link, description, created_at)
+               VALUES (?, ?, ?, ?, ?)`,
+              [newId, p.title ?? null, p.link ?? null, p.description ?? null, p.created_at ?? nowIso]
+            ));
+        }
+        counts.accounts++;
+      });
+    }
+    if (srcHasTable(src, "instructions")) {
+      ids("instructions").forEach((id) => {
+        const r = srcGet(src, "SELECT * FROM instructions WHERE id = ?", [id]);
+        if (!r) return;
+        insert(
+          `INSERT INTO instructions (name, body, is_active, sort_order, created_at)
+           VALUES (?, ?, 0, ?, ?)`,
+          [r.name ?? null, r.body ?? null, nextOrder("instructions"), r.created_at ?? nowIso]
+        );
+        counts.instructions++;
+      });
+    }
+    if (srcHasTable(src, "proxies")) {
+      ids("proxies").forEach((id) => {
+        const r = srcGet(src, "SELECT * FROM proxies WHERE id = ?", [id]);
+        if (!r) return;
+        insert(
+          `INSERT INTO proxies (url, port, username, password, is_active, created_at)
+           VALUES (?, ?, ?, ?, 0, ?)`,
+          [r.url ?? null, r.port ?? null, r.username ?? null, r.password ?? null, r.created_at ?? nowIso]
+        );
+        counts.proxies++;
+      });
+    }
+    if (srcHasTable(src, "prefs")) {
+      (Array.isArray(selection.prefs) ? selection.prefs : []).forEach((key) => {
+        if (key === "license_key") return;
+        const r = srcGet(src, "SELECT value FROM prefs WHERE key = ?", [key]);
+        if (!r) return;
+        run(
+          `INSERT INTO prefs (key, value) VALUES (?, ?)
+           ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+          [key, r.value ?? null]
+        );
+        counts.prefs++;
+      });
+    }
+    persist();
+    return counts;
+  } finally {
+    try { src.close(); } catch (_) {}
+  }
+}
+
+module.exports = {
+  initDb, all, get, run, insert, getDbPath, importDb, scanFile, importSelected,
+};

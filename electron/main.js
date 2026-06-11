@@ -61,10 +61,14 @@ function nowStamp() {
   return { folder: `${date} ${time.replace(/:/g, "-")}`, display: `${date} ${time}` };
 }
 
+// Show a message inside the app window (a top-right toast) instead of a native
+// Windows notification. Falls back silently if the window isn't available.
 function notify(title, body) {
-  if (Notification.isSupported()) {
-    new Notification({ title, body }).show();
-  }
+  try {
+    if (mainWindow && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send("app:notify", body || title);
+    }
+  } catch (_) {}
 }
 
 function createWindow() {
@@ -79,6 +83,9 @@ function createWindow() {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
       nodeIntegration: false,
+      // Enable Chromium's built-in PDF viewer so the resume preview can render
+      // the generated PDF inline as real, paginated pages.
+      plugins: true,
     },
   });
 
@@ -500,6 +507,73 @@ function registerIpc() {
     return { ok: !err, error: err || undefined };
   });
 
+  // Export the whole SQLite database to a user-chosen .sqlite file.
+  ipcMain.handle("db:export", async () => {
+    try {
+      const res = await dialog.showSaveDialog(mainWindow, {
+        title: "Export database",
+        defaultPath: "careerva-backup.sqlite",
+        filters: [{ name: "SQLite Database", extensions: ["sqlite"] }],
+      });
+      if (res.canceled || !res.filePath) return { canceled: true };
+      const src = db.getDbPath();
+      if (!src || !fs.existsSync(src)) return { ok: false, error: "No database file found." };
+      fs.copyFileSync(src, res.filePath);
+      return { ok: true, path: res.filePath };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
+  // Inspect a .sqlite file (chosen by the user) and return its importable
+  // contents grouped by type, so the renderer can let the user pick items.
+  ipcMain.handle("db:scan", async () => {
+    try {
+      const res = await dialog.showOpenDialog(mainWindow, {
+        title: "Choose a database to import from",
+        properties: ["openFile"],
+        filters: [{ name: "SQLite Database", extensions: ["sqlite", "sqlite3", "db"] }],
+      });
+      if (res.canceled || !res.filePaths.length) return { canceled: true };
+      const filePath = res.filePaths[0];
+      return { ok: true, filePath, groups: db.scanFile(filePath) };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
+  // Merge only the selected items from a previously-scanned .sqlite file.
+  ipcMain.handle("db:importSelected", async (_e, payload) => {
+    try {
+      const filePath = payload && payload.filePath;
+      const selection = (payload && payload.selection) || {};
+      if (!filePath) return { ok: false, error: "No source database chosen." };
+      const counts = db.importSelected(filePath, selection);
+      return { ok: true, counts };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
+  // Import a .sqlite file, replacing the current database, then reload the UI so
+  // every view re-reads the imported data. The local license is preserved.
+  ipcMain.handle("db:import", async () => {
+    try {
+      const res = await dialog.showOpenDialog(mainWindow, {
+        title: "Import database",
+        properties: ["openFile"],
+        filters: [{ name: "SQLite Database", extensions: ["sqlite", "sqlite3", "db"] }],
+      });
+      if (res.canceled || !res.filePaths.length) return { canceled: true };
+      const buf = fs.readFileSync(res.filePaths[0]);
+      db.importDb(buf);
+      if (mainWindow && mainWindow.webContents) mainWindow.webContents.reload();
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
   // Proxies (multiple; one active is applied to AI API requests).
   function applyActiveProxy() {
     const active = db.get(
@@ -755,6 +829,17 @@ function registerIpc() {
     if (!fs.existsSync(filePath)) return { ok: false, error: "The file no longer exists." };
     const err = await shell.openPath(filePath);
     return { ok: !err, error: err || undefined };
+  });
+
+  // Read a saved PDF's bytes (base64) so the renderer can show it inline in the
+  // built-in PDF viewer (real, paginated A4 pages) via a blob URL.
+  ipcMain.handle("pdf:read", (_e, filePath) => {
+    try {
+      if (!filePath || !fs.existsSync(filePath)) return { ok: false };
+      return { ok: true, base64: fs.readFileSync(filePath).toString("base64") };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
   });
 
   // Resume generation

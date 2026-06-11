@@ -468,7 +468,7 @@ export default function ResumeGenerator() {
                   className={"swatch" + (on ? " active" : "")}
                   style={{ background: c.value }}
                   onClick={() => chooseNameColor(c.value)}
-                  disabled={taken && !on}
+                  disabled={taken}
                   title={taken ? `${c.name} — already used by the Content picker` : c.name}
                   aria-label={c.name}
                 >
@@ -481,7 +481,7 @@ export default function ResumeGenerator() {
               className={"swatch swatch-white" + (nameColor.toLowerCase() === "#ffffff" ? " active" : "")}
               style={{ background: "#ffffff" }}
               onClick={() => chooseNameColor("#ffffff")}
-              disabled={accent.toLowerCase() === "#ffffff" && nameColor.toLowerCase() !== "#ffffff"}
+              disabled={accent.toLowerCase() === "#ffffff"}
               title={accent.toLowerCase() === "#ffffff" ? "White — already used by the Content picker" : "White"}
               aria-label="White"
             >
@@ -518,7 +518,7 @@ export default function ResumeGenerator() {
                   className={"swatch" + (on ? " active" : "")}
                   style={{ background: c.value }}
                   onClick={() => chooseAccent(c.value)}
-                  disabled={taken && !on}
+                  disabled={taken}
                   title={taken ? `${c.name} — already used by the Name picker` : c.name}
                   aria-label={c.name}
                 >
@@ -531,7 +531,7 @@ export default function ResumeGenerator() {
               className={"swatch swatch-white" + (accent.toLowerCase() === "#ffffff" ? " active" : "")}
               style={{ background: "#ffffff" }}
               onClick={() => chooseAccent("#ffffff")}
-              disabled={nameColor.toLowerCase() === "#ffffff" && accent.toLowerCase() !== "#ffffff"}
+              disabled={nameColor.toLowerCase() === "#ffffff"}
               title={nameColor.toLowerCase() === "#ffffff" ? "White — already used by the Name picker" : "White"}
               aria-label="White"
             >

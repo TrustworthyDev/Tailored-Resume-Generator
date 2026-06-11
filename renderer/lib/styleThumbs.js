@@ -4,6 +4,15 @@ const R = "#dfe3ea";
 const rc = (x, y, w, h, c, r = 1) =>
   `<rect x='${x}' y='${y}' width='${w}' height='${h}' rx='${r}' fill='${c}'/>`;
 
+// Darker shade of a hex (used for the title bar, which is darker than the name).
+function darken(hex, f = 0.7) {
+  const h = String(hex || "").replace("#", "");
+  if (!/^[0-9a-f]{6}$/i.test(h)) return hex;
+  const n = parseInt(h, 16);
+  const ch = (s) => Math.round(((n >> s) & 255) * f).toString(16).padStart(2, "0");
+  return "#" + ch(16) + ch(8) + ch(0);
+}
+
 function sections(startY, accent, opts = {}) {
   let s = "";
   let y = startY;
@@ -22,46 +31,52 @@ function sections(startY, accent, opts = {}) {
 export function styleThumb(style) {
   const a = (style && style.accent) || "#2f5b8f";
   const id = (style && style.id) || "professional";
+  // The Content picker (head, empty for "Default") recolors only the themeable
+  // bars — section headings (categories), dividers, and header backgrounds. The
+  // Name picker recolors the name bar (nameC) and title bars (titleC, darker).
+  const head = (style && style.head) || null;
+  const nameC = (style && style.nameColor) || null;
+  const titleC = nameC ? darken(nameC, 0.7) : null;
   let inner = "";
 
   switch (id) {
     case "modern":
-      inner += rc(20, 22, 120, 16, "#16203a", 2);
+      inner += rc(20, 22, 120, 16, nameC || "#16203a", 2);
       inner += rc(20, 44, 200, 3, a);
-      inner += rc(20, 52, 80, 6, G);
+      inner += rc(20, 52, 80, 6, titleC || G);
       inner += sections(80, a);
       break;
     case "minimal":
-      inner += rc(20, 24, 100, 14, "#222", 2);
-      inner += rc(20, 46, 70, 6, G);
-      inner += sections(82, "#9aa1ad");
+      inner += rc(20, 24, 100, 14, nameC || "#222", 2);
+      inner += rc(20, 46, 70, 6, titleC || G);
+      inner += sections(82, a);
       break;
     case "creative":
       inner += rc(16, 16, 208, 52, a, 6);
-      inner += rc(28, 28, 110, 14, "#ffffff", 2);
-      inner += rc(28, 48, 90, 6, "#ffffffaa");
+      inner += rc(28, 28, 110, 14, nameC || "#ffffff", 2);
+      inner += rc(28, 48, 90, 6, titleC || "#ffffffaa");
       inner += sections(88, a);
       break;
     case "technical":
       inner += rc(20, 20, 7, 40, a, 1);
-      inner += rc(34, 24, 110, 14, "#13233f", 2);
-      inner += rc(34, 46, 70, 6, G);
+      inner += rc(34, 24, 110, 14, nameC || "#13233f", 2);
+      inner += rc(34, 46, 70, 6, titleC || G);
       inner += sections(80, a, { tick: true });
       break;
     case "academic":
-      inner += rc(60, 20, 120, 15, "#1f2937", 2);
-      inner += rc(72, 42, 96, 6, G);
-      inner += rc(20, 58, 200, 1, "#bbbbbb");
-      inner += sections(72, "#33485f", { rule: true });
+      inner += rc(60, 20, 120, 15, nameC || "#1f2937", 2);
+      inner += rc(72, 42, 96, 6, titleC || G);
+      inner += rc(20, 58, 200, 1, head || "#bbbbbb");
+      inner += sections(72, head || "#33485f", { rule: true });
       break;
     case "executive":
-      inner += rc(12, 12, 216, 54, "#16233b", 0);
-      inner += rc(26, 26, 120, 15, "#ffffff", 2);
-      inner += rc(26, 46, 90, 6, "#c7d2e0");
-      inner += sections(84, "#16233b", { rule: true });
+      inner += rc(12, 12, 216, 54, head || "#16233b", 0);
+      inner += rc(26, 26, 120, 15, nameC || "#ffffff", 2);
+      inner += rc(26, 46, 90, 6, titleC || "#c7d2e0");
+      inner += sections(84, head || "#16233b", { rule: true });
       break;
     case "compact": {
-      inner += rc(20, 16, 110, 12, "#1f2937", 2);
+      inner += rc(20, 16, 110, 12, nameC || "#1f2937", 2);
       inner += rc(20, 32, 200, 2, a);
       let y = 46;
       for (let k = 0; k < 4; k++) {
@@ -72,8 +87,8 @@ export function styleThumb(style) {
       break;
     }
     case "cards": {
-      inner += rc(20, 18, 110, 14, "#1b3a5e", 2);
-      inner += rc(20, 36, 84, 6, a);
+      inner += rc(20, 18, 110, 14, nameC || "#1b3a5e", 2);
+      inner += rc(20, 36, 84, 6, titleC || a);
       inner += rc(150, 18, 70, 4, G);
       inner += rc(160, 26, 60, 4, G);
       inner += rc(155, 34, 65, 4, G);
@@ -96,15 +111,15 @@ export function styleThumb(style) {
       }
       inner += rc(20, yy + 2, 70, 6, a);
       inner += rc(20, yy + 12, 200, 1.5, a);
-      inner += rc(20, yy + 20, 90, 6, "#1b3a5e");
+      inner += rc(20, yy + 20, 90, 6, "#333333");
       inner += rc(180, yy + 20, 40, 5, G);
       for (let i = 0; i < 2; i++) inner += rc(20, yy + 32 + i * 8, 200, 4, G);
       break;
     }
     default: // professional
       inner += rc(20, 20, 7, 42, a, 1);
-      inner += rc(36, 24, 100, 16, a, 3);
-      inner += rc(36, 46, 70, 6, G);
+      inner += rc(36, 24, 100, 16, nameC || "#1f2937", 3);
+      inner += rc(36, 46, 70, 6, titleC || G);
       inner += sections(82, a, { rule: true });
   }
 

@@ -14,9 +14,10 @@ body { color: #23272e; font-size: 10.5pt; line-height: 1.34; }
 .page { margin: 0; padding: 0; }
 @media screen {
   body { background: #e9ebee; }
-  .page { max-width: 794px; margin: 24px auto; padding: 40px 48px; background: #fff; box-shadow: 0 2px 14px rgba(0,0,0,.18); }
+  .page { max-width: 794px; margin: 24px auto; padding: 36px 18px; background: #fff; box-shadow: 0 2px 14px rgba(0,0,0,.18); }
 }
-main h3 { font-size: 11pt; margin: 8px 0 1px; color: #1a1f27; }
+/* Role titles (job titles) are a fixed medium-black bold across all styles. */
+main h3 { font-size: 11pt; margin: 8px 0 1px; color: #333333; font-weight: 700; }
 main p { margin: 3px 0; text-align: justify; }
 main p.skills { line-height: 1.6; text-align: left; }
 main ul { margin: 3px 0 6px; padding-left: 18px; }
@@ -34,6 +35,9 @@ main h3 { margin-bottom: 0; }
 /* Projects: bold title + (domain) link on one line, description on the next
    with a narrow gap, and space between projects. */
 .proj-title { font-weight: 700; color: #14181e; }
+/* Clickable project link sits on the title line, normal weight. */
+.proj-link { font-weight: 400; }
+.proj-link a { font-weight: 400; }
 .proj-desc { margin-top: 1px; text-align: justify; }
 .project { margin: 0 0 8px; break-inside: avoid; }
 /* Contacts must stay on a single row. */
@@ -49,11 +53,17 @@ main h2, main h3 { break-after: avoid; }
 main li { break-inside: avoid; }
 main p { orphans: 2; widows: 2; }
 a { text-decoration: none; }
-@page { size: A4; margin: 14mm 16mm; }
+@page { size: A4; margin: 14mm 8mm; }
 `;
 
-// Distinct visual template per style id.
-function templateCss(id, accent) {
+// Distinct visual template per style id. `head` is the user-picked color (empty
+// for "Default"). It recolors only the THEMEABLE parts — section headings
+// (categories), dividers/rules, and header backgrounds — while the candidate's
+// NAME (headline) and the job ROLE TITLES keep a fixed dark color so they never
+// change with the picker. `accent` already follows the pick for elements that
+// were always themed; `head || <default>` themes the rest without altering the
+// Default appearance.
+function templateCss(id, accent, head) {
   switch (id) {
     case "modern":
       return `body{font-family:"Segoe UI",Arial,sans-serif;}
@@ -70,7 +80,7 @@ a{color:${accent};}`;
 header{margin-bottom:20px;}
 header h1{margin:0;font-size:22pt;font-weight:600;letter-spacing:.5px;color:#111;}
 .contacts{margin-top:6px;color:#6b7280;}
-main h2{font-size:10pt;color:#6b7280;text-transform:uppercase;letter-spacing:2px;border-bottom:1px solid #e5e7eb;padding-bottom:4px;margin:22px 0 8px;font-weight:600;}
+main h2{font-size:10pt;color:${head || "#6b7280"};text-transform:uppercase;letter-spacing:2px;border-bottom:1px solid ${head || "#e5e7eb"};padding-bottom:4px;margin:22px 0 8px;font-weight:600;}
 main ul{list-style:none;padding-left:2px;}
 main li{position:relative;padding-left:14px;}
 main li::before{content:"\\2013";color:#9ca3af;position:absolute;left:0;}
@@ -97,28 +107,28 @@ main li::before{content:"\\2713";color:${accent};position:absolute;left:0;font-w
 a{color:${accent};}`;
     case "academic":
       return `body{font-family:Georgia,"Times New Roman",serif;color:#222;}
-header{text-align:center;margin-bottom:16px;border-bottom:1px solid #ccc;padding-bottom:12px;}
+header{text-align:center;margin-bottom:16px;border-bottom:1px solid ${head || "#ccc"};padding-bottom:12px;}
 header h1{margin:0;font-size:24pt;color:#1f2937;letter-spacing:.5px;}
 .contacts{margin-top:6px;color:#555;}
-main h2{font-size:12pt;color:#1f2937;text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid #bbb;padding-bottom:2px;margin:18px 0 8px;}
-a{color:#33485f;}`;
+main h2{font-size:12pt;color:${head || "#1f2937"};text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid ${head || "#bbb"};padding-bottom:2px;margin:18px 0 8px;}
+a{color:${head || "#33485f"};}`;
     case "executive":
       return `body{font-family:Georgia,"Times New Roman",serif;color:#23272e;}
-header{background:#16233b;color:#fff;padding:20px 22px;margin-bottom:18px;}
+header{background:${head || "#16233b"};color:#fff;padding:20px 22px;margin-bottom:18px;}
 header h1{margin:0;font-size:25pt;color:#fff;font-weight:700;}
 .title{color:#c7d2e0;}
 .contacts{margin-top:6px;color:#c7d2e0;font-family:Arial,sans-serif;}
-main h2{font-size:12pt;color:#16233b;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid #16233b;padding-bottom:3px;margin:18px 0 8px;}
+main h2{font-size:12pt;color:${head || "#16233b"};text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid ${head || "#16233b"};padding-bottom:3px;margin:18px 0 8px;}
 main ul{list-style:none;padding-left:2px;}
 main li{position:relative;padding-left:16px;}
 main li::before{content:"\\25C6";color:${accent};font-size:7pt;position:absolute;left:0;top:3px;}
-a{color:#16233b;}`;
+a{color:${head || "#16233b"};}`;
     case "compact":
       return `body{font-family:"Segoe UI",Arial,sans-serif;font-size:9.5pt;line-height:1.32;}
 header{border-bottom:2px solid ${accent};padding-bottom:8px;margin-bottom:12px;}
 header h1{margin:0;font-size:20pt;color:#1f2937;}
 .contacts{margin-top:4px;color:#5a6573;font-size:8.5pt;}
-main h2{font-size:10pt;color:${accent};text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid #d8dde4;padding-bottom:2px;margin:12px 0 5px;}
+main h2{font-size:10pt;color:${accent};text-transform:uppercase;letter-spacing:.5px;border-bottom:1px solid ${head || "#d8dde4"};padding-bottom:2px;margin:12px 0 5px;}
 main ul{margin:3px 0 6px;padding-left:16px;}
 main li{margin:1px 0;}
 a{color:${accent};}`;
@@ -128,11 +138,11 @@ header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;c
 header h1{grid-column:1;grid-row:1;margin:0;font-size:24pt;font-weight:700;color:#1b3a5e;letter-spacing:.3px;line-height:1.06;}
 .title{grid-column:1;grid-row:2;margin-top:5px;color:${accent};text-transform:uppercase;letter-spacing:2px;font-weight:700;font-size:10pt;white-space:normal;}
 .contacts{grid-column:2;grid-row:1/3;align-self:start;justify-self:end;text-align:right;color:#5a6573;font-size:8.5pt;line-height:1.7;white-space:normal;max-width:235px;word-break:break-word;}
-main h2{font-size:11pt;color:#1b3a5e;text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid ${accent};padding-bottom:3px;margin:16px 0 8px;}
+main h2{font-size:11pt;color:${head || "#1b3a5e"};text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid ${accent};padding-bottom:3px;margin:16px 0 8px;}
 main ul{list-style:none;padding-left:2px;}
 main li{position:relative;padding-left:15px;}
 main li::before{content:"\\2022";color:${accent};position:absolute;left:0;font-weight:700;}
-main h3{font-size:11pt;color:#1b3a5e;font-weight:700;margin-bottom:0;}
+main h3{font-size:11pt;color:#333333;font-weight:700;margin-bottom:0;}
 a{color:${accent};}
 .summary-box{border:1.5px solid ${accent};border-radius:9px;padding:2px 16px 12px;margin-bottom:8px;background:${accent}0d;}
 .summary-box h2{border:none;color:${accent};margin:10px 0 4px;}
@@ -145,7 +155,7 @@ a{color:${accent};}
     default: // professional
       return `body{font-family:Calibri,"Segoe UI",Arial,sans-serif;}
 header{border-left:5px solid ${accent};padding-left:16px;margin-bottom:18px;}
-header h1{margin:0;font-size:25pt;color:${accent};font-family:Georgia,serif;}
+header h1{margin:0;font-size:25pt;color:#1f2937;font-family:Georgia,serif;}
 .contacts{margin-top:6px;color:#5a6573;}
 main h2{font-size:12pt;color:${accent};text-transform:uppercase;letter-spacing:.6px;border-bottom:1.5px solid ${accent};padding-bottom:3px;margin:20px 0 8px;}
 a{color:${accent};}`;
@@ -158,6 +168,69 @@ function shortLink(url) {
     .trim()
     .replace(/^https?:\/\/(www\.)?/i, "")
     .replace(/\/+$/, "");
+}
+
+// Multiply each RGB channel by `f` (<1) to produce a darker shade of a hex.
+function darkenHex(hex, f = 0.7) {
+  const h = String(hex || "").replace("#", "");
+  if (!/^[0-9a-f]{6}$/i.test(h)) return hex;
+  const n = parseInt(h, 16);
+  const ch = (shift) => Math.round(((n >> shift) & 255) * f).toString(16).padStart(2, "0");
+  return "#" + ch(16) + ch(8) + ch(0);
+}
+
+// When the user picks a Name color, recolor the candidate's name (headline) to
+// it and the professional title (subtitle) to a darker shade. Job/role titles
+// in Experience are intentionally left out — they stay a fixed medium-black
+// bold. Appended after the template so these overrides win by cascade order.
+function nameTitleCss(nameColor) {
+  if (!nameColor) return "";
+  const titleColor = darkenHex(nameColor, 0.7);
+  return `\nheader h1{color:${nameColor};}\n.title{color:${titleColor};}`;
+}
+
+// Normalize an <a> into a clean clickable link: an absolute href plus a short
+// label (a bare-URL label is trimmed to its domain so it reads cleanly).
+function cleanProjectAnchor(aHtml) {
+  const hrefM = aHtml.match(/href="([^"]*)"/i);
+  let href = (hrefM ? hrefM[1] : "").trim();
+  let label = aHtml.replace(/<[^>]+>/g, "").trim();
+  const looksUrl = /^https?:\/\//i.test(label) || /^www\./i.test(label) || /^[^\s/]+\.[a-z]{2,}/i.test(label);
+  if (looksUrl) label = shortLink(label);
+  if (!href) href = "https://" + label.replace(/^\/+/, "");
+  else if (!/^(https?:|mailto:)/i.test(href)) href = "https://" + href.replace(/^\/+/, "");
+  return `<a href="${href}">${label || href}</a>`;
+}
+
+// Code/file extensions that must NOT be mistaken for a domain (e.g. "Node.js").
+const NON_DOMAIN_EXT = /^(js|ts|jsx|tsx|mjs|cjs|py|rb|go|rs|php|java|cs|cpp|css|scss|sass|html|xml|json|yml|yaml|md|sh|bat|sql|env|toml|ini|txt|csv|png|jpg|svg|pdf)$/i;
+function looksLikeDomain(s) {
+  const t = String(s || "").trim().replace(/^https?:\/\//i, "").replace(/^www\./i, "");
+  const m = t.match(/^[^\s/]+\.([a-z]{2,})(?:[/?#]|$)/i);
+  return !!m && !NON_DOMAIN_EXT.test(m[1]);
+}
+
+// Find the project's link wherever the model put it (right after the title, a
+// markdown link/autolink anywhere, or a trailing "(domain)") and return it
+// separated from the remaining description text.
+function extractProjectLink(rest) {
+  // 1) Link directly after the title — parenthesized or bare anchor.
+  let m = rest.match(/^\s*\(?\s*(<a\b[^>]*>[\s\S]*?<\/a>)\s*\)?/);
+  if (m) return { link: cleanProjectAnchor(m[1]), desc: rest.slice(m[0].length) };
+  // 2) Bare "(domain)" directly after the title.
+  m = rest.match(/^\s*\(\s*([^()\s<]+)\s*\)/);
+  if (m && looksLikeDomain(m[1])) {
+    return { link: cleanProjectAnchor(`<a href="">${m[1]}</a>`), desc: rest.slice(m[0].length) };
+  }
+  // 3) A real link anywhere in the entry (markdown link or autolinked URL).
+  m = rest.match(/<a\b[^>]*>[\s\S]*?<\/a>/);
+  if (m) return { link: cleanProjectAnchor(m[0]), desc: rest.slice(0, m.index) + rest.slice(m.index + m[0].length) };
+  // 4) A trailing "(domain)" at the very end of the entry.
+  m = rest.match(/\(\s*([^()\s<]+)\s*\)\s*$/);
+  if (m && looksLikeDomain(m[1])) {
+    return { link: cleanProjectAnchor(`<a href="">${m[1]}</a>`), desc: rest.slice(0, m.index) };
+  }
+  return { link: "", desc: rest };
 }
 
 // Build the contact line from the account's own fields. Authoritative, so the
@@ -215,6 +288,8 @@ function fontOverride(style) {
 export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo = null) {
   const id = (style && style.id) || "professional";
   const accent = (style && style.accent) || "#2f5b8f";
+  const head = (style && style.head) || "";
+  const nameColor = (style && style.nameColor) || "";
 
   const md = (markdown || "").trim();
   const lines = md.split("\n");
@@ -340,8 +415,7 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
       let raw = rest2;
       // Flatten block wrappers so projects can be re-segmented cleanly.
       raw = raw.replace(/<\/?(p|ul|ol|li)\b[^>]*>/gi, " ").replace(/<br\s*\/?>/gi, " ");
-      // Drop stray autolinked bare URLs; make project links absolute.
-      raw = raw.replace(/\s*<a\b[^>]*>\s*https?:\/\/[^<]*<\/a>/gi, "");
+      // Make any relative project links absolute (the model often omits https).
       raw = raw.replace(/<a\s+href="(?!https?:|mailto:)([^"]+)"/gi, '<a href="https://$1"');
 
       // Each project begins at a bold title (<strong>).
@@ -350,28 +424,35 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
 
       const html = chunks
         .map((part) => {
-          let head = part;
-          let desc = "";
-          let cut = -1;
-          const linkM = part.match(/<\/a>\s*\)?/);
-          if (linkM) cut = linkM.index + linkM[0].length;
-          else {
-            const sM = part.match(/<\/strong>/);
-            if (sM) cut = sM.index + sM[0].length;
+          // Title = the leading bold run. Without one, treat the chunk as text.
+          const sM = part.match(/<strong>[\s\S]*?<\/strong>/);
+          if (!sM) {
+            return `<li class="project"><div class="proj-desc">${part.trim()}</div></li>`;
           }
-          if (cut > -1) {
-            head = part.slice(0, cut).trim();
-            desc = part.slice(cut).replace(/^(?:\s|[|•:\-–—])+/, "").trim();
-          }
-          head = head.replace(/^\s*<strong>/, '<strong class="proj-title">');
+          const titleHtml = sM[0].replace(/^<strong>/, '<strong class="proj-title">');
+          const after = part.slice(sM.index + sM[0].length).replace(/^(?:\s|[|•:\-–—])+/, "");
+
+          // Pull the project link (wherever the model put it) onto the title
+          // line as a single clickable link so the viewer can open it directly.
+          const { link, desc: rawDesc } = extractProjectLink(after);
+          const desc = rawDesc
+            .replace(/\s*<a\b[^>]*>\s*https?:\/\/[^<]*<\/a>/gi, "") // drop leftover bare-URL dupes
+            .replace(/^(?:\s|[|•:\-–—])+/, "")
+            .replace(/\(\s*\)/g, "")
+            .replace(/\s{2,}/g, " ")
+            .trim();
+
+          const head = link
+            ? `${titleHtml} <span class="proj-link">(${link})</span>`
+            : titleHtml;
           return (
-            `<div class="project"><div class="proj-head">${head}</div>` +
+            `<li class="project"><div class="proj-head">${head}</div>` +
             (desc ? `<div class="proj-desc">${desc}</div>` : "") +
-            `</div>`
+            `</li>`
           );
         })
         .join("");
-      return heading + html;
+      return heading + `<ul class="projects">${html}</ul>`;
     }
   );
 
@@ -387,7 +468,7 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
   );
 
   const css =
-    BASE + "\n" + templateCss(id, accent) +
+    BASE + "\n" + templateCss(id, accent, head) + nameTitleCss(nameColor) +
     "\nmain h2{margin-top:13px;margin-bottom:5px;}" +
     "\n.contacts{overflow-wrap:anywhere;}";
 
@@ -415,6 +496,8 @@ ${header}
 export function buildCoverLetterHtml(coverMarkdown, style, contactInfo = null) {
   const id = (style && style.id) || "professional";
   const accent = (style && style.accent) || "#2f5b8f";
+  const head = (style && style.head) || "";
+  const nameColor = (style && style.nameColor) || "";
   const name = (contactInfo && contactInfo.name) || "";
   const title = (contactInfo && (contactInfo.title || "").trim()) || "";
   const contacts = buildContacts(contactInfo);
@@ -427,7 +510,7 @@ export function buildCoverLetterHtml(coverMarkdown, style, contactInfo = null) {
   });
 
   const css =
-    BASE + "\n" + templateCss(id, accent) +
+    BASE + "\n" + templateCss(id, accent, head) + nameTitleCss(nameColor) +
     "\n.contacts{overflow-wrap:anywhere;}" +
     "\nmain p{margin:0 0 11px;line-height:1.5;text-align:left;}" +
     fontOverride(style);
