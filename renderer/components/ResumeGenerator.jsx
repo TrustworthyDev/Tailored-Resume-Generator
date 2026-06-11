@@ -347,6 +347,9 @@ export default function ResumeGenerator() {
         role,
         company,
         country,
+        // Colour/style/font re-render: overwrite the existing file in place
+        // rather than creating a new folder.
+        overwritePath: opts.skipCover && savedPath ? savedPath : undefined,
       });
       if (exp && exp.ok) {
         setSavedPath(exp.path);

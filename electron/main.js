@@ -705,6 +705,18 @@ function registerIpc() {
         preferCSSPageSize: true,
       });
 
+      // Live re-render (colour / style / font change): overwrite the already
+      // saved PDF in place — no new folder/file, no new application entry.
+      if (d.overwritePath) {
+        try {
+          fs.mkdirSync(path.dirname(d.overwritePath), { recursive: true });
+          fs.writeFileSync(d.overwritePath, pdf);
+          return { ok: true, path: d.overwritePath, savedAt: nowStamp().display, overwritten: true };
+        } catch (err) {
+          return { ok: false, error: (err && err.message) || String(err) };
+        }
+      }
+
       // Save into a per-person folder; filename = Role + Company.
       const sani = (s) =>
         String(s || "")
