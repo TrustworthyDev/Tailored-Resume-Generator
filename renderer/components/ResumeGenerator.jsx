@@ -78,7 +78,6 @@ export default function ResumeGenerator() {
   const [savedAt, setSavedAt] = useState("");
   const [showPreview, setShowPreview] = useState(false);
   const [proxyActive, setProxyActive] = useState(false);
-  const [autoPreview, setAutoPreview] = useState(false);
   const [autoOnPaste, setAutoOnPaste] = useState(true);
   const [openModalAfterPreview, setOpenModalAfterPreview] = useState(true);
   const [autoGenerate, setAutoGenerate] = useState(false);
@@ -208,16 +207,17 @@ export default function ResumeGenerator() {
     return (a && a.title) || "";
   };
 
-  const callApi = async () =>
+  const callApi = async (jdValue) =>
     api().generateResume({
       accountId: Number(accountId),
-      jobDescription: jd,
+      jobDescription: jdValue,
       style,
       instructionId: promptId ? Number(promptId) : undefined,
     });
 
   // Build + save the PDF (and optional cover letter) from generated content.
-  const exportPdf = async (content, role, company, country) => {
+  const exportPdf = async (content, role, company, country, jdValue) => {
+    const useJd = typeof jdValue === "string" ? jdValue : jd;
     if (!accountId) { setError("Select an account first."); return; }
     if (!content) {
       setError("Click Preview first to generate the content, then Generate to download the PDF.");
@@ -234,7 +234,7 @@ export default function ResumeGenerator() {
         try {
           const cl = await api().generateCoverLetter({
             accountId: Number(accountId),
-            jobDescription: jd,
+            jobDescription: useJd,
             instructionId: promptId ? Number(promptId) : undefined,
             role,
             company,
@@ -269,11 +269,12 @@ export default function ResumeGenerator() {
     }
   };
 
-  const generate = () => exportPdf(result, jobRole, jobCompany, jobCountry);
+  const generate = () => exportPdf(result, jobRole, jobCompany, jobCountry, jd);
 
   // Preview: call the AI once, cache the content, optionally pop the modal,
   // and optionally chain straight into Generate.
-  const preview = async () => {
+  const preview = async (jdValue) => {
+    const useJd = typeof jdValue === "string" ? jdValue : jd;
     if (!accountId) { setError("Select an account first."); return; }
     const px = await api().getActiveProxy();
     if (!px || !px.enabled) {
@@ -284,14 +285,14 @@ export default function ResumeGenerator() {
     setError("");
     setSavedPath("");
     try {
-      const res = await callApi();
+      const res = await callApi(useJd);
       setResult(res.text || "");
       setJobRole(res.jobRole || "");
       setJobCompany(res.jobCompany || "");
       setJobCountry(res.jobCountry || "");
       if (openModalAfterPreview) setShowPreview(true);
       if (autoGenerate) {
-        await exportPdf(res.text || "", res.jobRole || "", res.jobCompany || "", res.jobCountry || "");
+        await exportPdf(res.text || "", res.jobRole || "", res.jobCompany || "", res.jobCountry || "", useJd);
       }
     } catch (e) {
       setError(e.message || String(e));
@@ -299,12 +300,6 @@ export default function ResumeGenerator() {
       setLoading(false);
     }
   };
-
-  useEffect(() => {
-    if (!autoPreview) return;
-    setAutoPreview(false);
-    if (jd.trim() && accountId && !loading) preview();
-  }, [autoPreview, jd]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const openFolder = async () => {
     if (!savedPath) { setNotice("Generate a resume first — then Open Folder will reveal the saved PDF."); return; }
@@ -476,13 +471,16 @@ export default function ResumeGenerator() {
             placeholder="(Optional) Paste a target job description here..."
             value={jd}
             onChange={(e) => {
-              setJd(e.target.value);
-              api().setPref("gen_jd", e.target.value);
+              const v = e.target.value;
+              setJd(v);
+              api().setPref("gen_jd", v);
               clearCache();
               // "Auto-preview on paste" is the sole gate for paste-triggered
-              // work. Auto-generate only chains AFTER a preview runs (whether
-              // that preview was triggered by paste or by clicking Preview).
-              if (pastedRef.current && autoOnPaste) setAutoPreview(true);
+              // work. Run it with the EXACT pasted text (not state) so the very
+              // first request never uses a stale/previous JD.
+              if (pastedRef.current && autoOnPaste && v.trim() && accountId && !loading) {
+                preview(v);
+              }
               pastedRef.current = false;
             }}
             onPaste={() => { pastedRef.current = true; }}
@@ -530,7 +528,7 @@ export default function ResumeGenerator() {
             </>)}
           </div>
           <div className="action-group">
-            <button className="btn" onClick={preview} disabled={loading}>
+            <button className="btn" onClick={() => preview()} disabled={loading}>
               {loading ? "Generating…" : "Preview"}
             </button>
             <button className="btn primary" onClick={generate} disabled={loading}>
