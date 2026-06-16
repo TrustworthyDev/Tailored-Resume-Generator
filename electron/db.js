@@ -18,6 +18,7 @@ const SCHEMA = `
       name       TEXT,
       api_key    TEXT,
       provider   TEXT,
+      model      TEXT,
       is_active  INTEGER DEFAULT 0,
       sort_order INTEGER,
       created_at TEXT
@@ -165,6 +166,11 @@ function migrate() {
     db.run("ALTER TABLE api_keys ADD COLUMN provider TEXT");
   }
   db.run("UPDATE api_keys SET provider = 'gemini' WHERE provider IS NULL OR provider = ''");
+
+  // Ensure api_keys has a model column (per-key model choice).
+  if (!keyCols.some((c) => c.name === "model")) {
+    db.run("ALTER TABLE api_keys ADD COLUMN model TEXT");
+  }
 
   // Ensure api_keys has a sort_order column (drag-and-drop ranking).
   if (!keyCols.some((c) => c.name === "sort_order")) {

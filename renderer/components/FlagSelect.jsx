@@ -30,7 +30,7 @@ export default function FlagSelect({ value, onChange, options, placeholder }) {
               {selected.country ? (
                 <span className="flag">{countryFlag(selected.country)}</span>
               ) : null}
-              {selected.name}
+              <span className="flagselect-name">{selected.name}</span>
             </>
           ) : (
             <span className="muted">{placeholder || "Select"}</span>

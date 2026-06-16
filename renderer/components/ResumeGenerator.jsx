@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { buildResumeHtml, buildCoverLetterHtml } from "../lib/resumeHtml";
 import { styleThumb } from "../lib/styleThumbs";
+import { modelShort } from "../lib/aiModels";
 import FlagSelect from "./FlagSelect";
 
 const STYLES = [
@@ -654,7 +655,10 @@ export default function ResumeGenerator() {
               value={keyId}
               onChange={onKey}
               placeholder={keys.length ? "Select key" : "No keys — add one first"}
-              options={keys.map((k) => ({ value: k.id, name: k.name || "(unnamed key)" }))}
+              options={keys.map((k) => ({
+                value: k.id,
+                name: `${k.name || "(unnamed key)"} (${modelShort(k.provider, k.model)})`,
+              }))}
             />
           </div>
         </div>

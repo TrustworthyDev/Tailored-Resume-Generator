@@ -146,7 +146,7 @@ function registerIpc() {
   // API keys (multiple; one active key is used for resume generation)
   ipcMain.handle("apikeys:list", () =>
     db.all(
-      "SELECT id, name, api_key, provider, is_active FROM api_keys ORDER BY sort_order ASC, id ASC"
+      "SELECT id, name, api_key, provider, model, is_active FROM api_keys ORDER BY sort_order ASC, id ASC"
     )
   );
 
@@ -162,6 +162,7 @@ function registerIpc() {
     const name = (d.name || "").trim();
     const key = (d.api_key || "").trim();
     const provider = (d.provider || "gemini").trim().toLowerCase();
+    const model = (d.model || "").trim();
     if (!key) return { ok: false, error: "Key is required." };
     // First key added becomes active automatically.
     const existing = db.get("SELECT COUNT(*) AS c FROM api_keys");
@@ -169,8 +170,8 @@ function registerIpc() {
     const maxRow = db.get("SELECT COALESCE(MAX(sort_order), -1) AS m FROM api_keys");
     const nextOrder = (maxRow ? maxRow.m : -1) + 1;
     const id = db.insert(
-      "INSERT INTO api_keys (name, api_key, provider, is_active, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-      [name, key, provider, active, nextOrder, nowIso()]
+      "INSERT INTO api_keys (name, api_key, provider, model, is_active, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
+      [name, key, provider, model, active, nextOrder, nowIso()]
     );
     return { ok: true, id };
   });
@@ -179,10 +180,11 @@ function registerIpc() {
     const name = (d.name || "").trim();
     const key = (d.api_key || "").trim();
     const provider = (d.provider || "gemini").trim().toLowerCase();
+    const model = (d.model || "").trim();
     if (!key) return { ok: false, error: "Key is required." };
     db.run(
-      "UPDATE api_keys SET name = ?, api_key = ?, provider = ? WHERE id = ?",
-      [name, key, provider, d.id]
+      "UPDATE api_keys SET name = ?, api_key = ?, provider = ?, model = ? WHERE id = ?",
+      [name, key, provider, model, d.id]
     );
     return { ok: true };
   });
@@ -873,8 +875,8 @@ function registerIpc() {
   // Resume generation
   ipcMain.handle("resume:generate", async (_e, payload) => {
     const keyRow =
-      db.get("SELECT api_key, provider FROM api_keys WHERE is_active = 1 LIMIT 1") ||
-      db.get("SELECT api_key, provider FROM api_keys ORDER BY id DESC LIMIT 1");
+      db.get("SELECT api_key, provider, model FROM api_keys WHERE is_active = 1 LIMIT 1") ||
+      db.get("SELECT api_key, provider, model FROM api_keys ORDER BY id DESC LIMIT 1");
     const accountId = payload && payload.accountId;
     const personal = accountId
       ? db.get("SELECT * FROM accounts WHERE id = ?", [accountId])
@@ -907,6 +909,7 @@ function registerIpc() {
     const out = await generateResume({
       apiKey: keyRow && keyRow.api_key,
       provider: keyRow && keyRow.provider,
+      model: keyRow && keyRow.model,
       personal,
       work,
       education,
@@ -921,8 +924,8 @@ function registerIpc() {
   // Cover letter generation (same account data, addressed to the JD's company).
   ipcMain.handle("coverletter:generate", async (_e, payload) => {
     const keyRow =
-      db.get("SELECT api_key, provider FROM api_keys WHERE is_active = 1 LIMIT 1") ||
-      db.get("SELECT api_key, provider FROM api_keys ORDER BY id DESC LIMIT 1");
+      db.get("SELECT api_key, provider, model FROM api_keys WHERE is_active = 1 LIMIT 1") ||
+      db.get("SELECT api_key, provider, model FROM api_keys ORDER BY id DESC LIMIT 1");
     const accountId = payload && payload.accountId;
     const personal = accountId
       ? db.get("SELECT * FROM accounts WHERE id = ?", [accountId])
@@ -948,6 +951,7 @@ function registerIpc() {
     const out = await generateCoverLetter({
       apiKey: keyRow && keyRow.api_key,
       provider: keyRow && keyRow.provider,
+      model: keyRow && keyRow.model,
       personal,
       work,
       education,
@@ -971,8 +975,8 @@ function registerIpc() {
 
     const filePath = res.filePaths[0];
     const keyRow =
-      db.get("SELECT api_key, provider FROM api_keys WHERE is_active = 1 LIMIT 1") ||
-      db.get("SELECT api_key, provider FROM api_keys ORDER BY id DESC LIMIT 1");
+      db.get("SELECT api_key, provider, model FROM api_keys WHERE is_active = 1 LIMIT 1") ||
+      db.get("SELECT api_key, provider, model FROM api_keys ORDER BY id DESC LIMIT 1");
     try {
       const stat = fs.statSync(filePath);
       if (stat.size > 15 * 1024 * 1024) {
@@ -982,6 +986,7 @@ function registerIpc() {
       const data = await parseResumeFile({
         apiKey: keyRow && keyRow.api_key,
         provider: keyRow && keyRow.provider,
+        model: keyRow && keyRow.model,
         base64,
       });
       return { ok: true, data, fileName: path.basename(filePath) };

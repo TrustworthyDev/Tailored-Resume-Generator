@@ -1,8 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import ConfirmModal from "./ConfirmModal";
-
-const EMPTY = { name: "", api_key: "", provider: "gemini" };
+import { MODEL_OPTIONS, defaultModel, modelLabel } from "../lib/aiModels";
 
 const PROVIDERS = [
   { id: "gemini", label: "Google Gemini" },
@@ -11,6 +10,8 @@ const PROVIDERS = [
 ];
 const providerLabel = (id) =>
   (PROVIDERS.find((p) => p.id === id) || {}).label || "Google Gemini";
+
+const EMPTY = { name: "", api_key: "", provider: "gemini", model: defaultModel("gemini") };
 
 function mask(key) {
   if (!key) return "";
@@ -37,6 +38,11 @@ export default function ApiKeys() {
   useEffect(() => { load(); }, []);
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
+  // Changing the provider switches the model list to that provider's default.
+  const onProvider = (e) => {
+    const provider = e.target.value;
+    setForm((f) => ({ ...f, provider, model: defaultModel(provider) }));
+  };
 
   const save = async () => {
     setError("");
@@ -58,7 +64,13 @@ export default function ApiKeys() {
   };
 
   const startEdit = (k) => {
-    setForm({ name: k.name || "", api_key: k.api_key || "", provider: k.provider || "gemini" });
+    const provider = k.provider || "gemini";
+    setForm({
+      name: k.name || "",
+      api_key: k.api_key || "",
+      provider,
+      model: k.model || defaultModel(provider),
+    });
     setEditingId(k.id);
     setError("");
     setShowForm(true);
@@ -108,6 +120,49 @@ export default function ApiKeys() {
     });
   };
 
+  // The add/edit form — rendered at the top when adding, or inline at the row
+  // being edited so the editor stays in place.
+  const formCard = (
+    <div className="subcard">
+      <h3 className="modal-title">{editingId ? "Edit API Key" : "Add API Key"}</h3>
+      <label className="field">
+        <span className="field-label">Provider</span>
+        <select className="input" value={form.provider} onChange={onProvider}>
+          {PROVIDERS.map((p) => (
+            <option key={p.id} value={p.id}>{p.label}</option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span className="field-label">Model</span>
+        <select className="input" value={form.model} onChange={set("model")}>
+          {(MODEL_OPTIONS[form.provider] || []).map((m) => (
+            <option key={m.id} value={m.id}>{m.label}</option>
+          ))}
+        </select>
+      </label>
+      <label className="field">
+        <span className="field-label">Name</span>
+        <input className="input" placeholder="e.g. Personal Gemini key"
+          value={form.name} onChange={set("name")} />
+      </label>
+      <label className="field">
+        <span className="field-label">Key</span>
+        <input className="input" placeholder="API key…" type="password"
+          value={form.api_key} onChange={set("api_key")} />
+      </label>
+      {error && <div className="error">{error}</div>}
+      <div className="row">
+        <button className="btn primary" onClick={save}>
+          {editingId ? "Update" : "Save"}
+        </button>
+        {keys.length > 0 && (
+          <button className="btn" onClick={cancelForm}>Cancel</button>
+        )}
+      </div>
+    </div>
+  );
+
   return (
     <section className="card">
       <div className="card-head">
@@ -117,41 +172,14 @@ export default function ApiKeys() {
         </button>
       </div>
 
-      {showForm && (
-        <div className="subcard">
-          <h3 className="modal-title">{editingId ? "Edit API Key" : "Add API Key"}</h3>
-          <label className="field">
-            <span className="field-label">Provider</span>
-            <select className="input" value={form.provider} onChange={set("provider")}>
-              {PROVIDERS.map((p) => (
-                <option key={p.id} value={p.id}>{p.label}</option>
-              ))}
-            </select>
-          </label>
-          <label className="field">
-            <span className="field-label">Name</span>
-            <input className="input" placeholder="e.g. Personal Gemini key"
-              value={form.name} onChange={set("name")} />
-          </label>
-          <label className="field">
-            <span className="field-label">Key</span>
-            <input className="input" placeholder="API key…" type="password"
-              value={form.api_key} onChange={set("api_key")} />
-          </label>
-          {error && <div className="error">{error}</div>}
-          <div className="row">
-            <button className="btn primary" onClick={save}>
-              {editingId ? "Update" : "Save"}
-            </button>
-            {keys.length > 0 && (
-              <button className="btn" onClick={cancelForm}>Cancel</button>
-            )}
-          </div>
-        </div>
-      )}
+      {/* Adding a new key shows the form at the top; editing shows it inline. */}
+      {showForm && editingId === null && formCard}
 
       <div className="list">
         {keys.map((k, i) => (
+          showForm && editingId === k.id ? (
+            <div key={k.id}>{formCard}</div>
+          ) : (
           <div
             className={
               (k.is_active ? "list-item active-row" : "list-item") +
@@ -168,7 +196,7 @@ export default function ApiKeys() {
               <strong>{k.name || "(unnamed)"}</strong>
               <span className="badge badge-gap">{providerLabel(k.provider)}</span>
               {k.is_active ? <span className="badge live badge-gap">active</span> : null}
-              <div className="muted small">{mask(k.api_key)}</div>
+              <div className="muted small">{modelLabel(k.provider, k.model)} · {mask(k.api_key)}</div>
             </div>
             <div className="list-actions">
               <button className="btn small" onClick={() => startEdit(k)}>
@@ -184,6 +212,7 @@ export default function ApiKeys() {
               </button>
             </div>
           </div>
+          )
         ))}
       </div>
 

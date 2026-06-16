@@ -178,8 +178,8 @@ function buildPrompt(personal, work, education, projects, jobDescription, style,
   return lines.join("\n");
 }
 
-async function callGemini(apiKey, prompt) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODELS.gemini}:generateContent?key=${encodeURIComponent(
+async function callGemini(apiKey, prompt, model) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model || MODELS.gemini}:generateContent?key=${encodeURIComponent(
     apiKey
   )}`;
   const res = await uFetch(url, {
@@ -205,7 +205,7 @@ async function callGemini(apiKey, prompt) {
   );
 }
 
-async function callOpenAI(apiKey, prompt) {
+async function callOpenAI(apiKey, prompt, model) {
   const res = await uFetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
@@ -213,7 +213,7 @@ async function callOpenAI(apiKey, prompt) {
       Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify({
-      model: MODELS.openai,
+      model: model || MODELS.openai,
       messages: [{ role: "user", content: prompt }],
       temperature: 0.7,
     }),
@@ -230,7 +230,7 @@ async function callOpenAI(apiKey, prompt) {
     : null;
 }
 
-async function callAnthropic(apiKey, prompt) {
+async function callAnthropic(apiKey, prompt, model) {
   const res = await uFetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -239,7 +239,7 @@ async function callAnthropic(apiKey, prompt) {
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: MODELS.anthropic,
+      model: model || MODELS.anthropic,
       max_tokens: 4096,
       messages: [{ role: "user", content: prompt }],
     }),
@@ -257,6 +257,7 @@ async function callAnthropic(apiKey, prompt) {
 async function generateResume({
   provider,
   apiKey,
+  model,
   personal,
   work,
   education,
@@ -280,11 +281,12 @@ async function generateResume({
   );
 
   const p = (provider || "gemini").toLowerCase();
+  const mdl = (model || "").trim() || undefined;
   let text;
   try {
-    if (p === "openai") text = await callOpenAI(apiKey, prompt);
-    else if (p === "anthropic" || p === "claude") text = await callAnthropic(apiKey, prompt);
-    else text = await callGemini(apiKey, prompt);
+    if (p === "openai") text = await callOpenAI(apiKey, prompt, mdl);
+    else if (p === "anthropic" || p === "claude") text = await callAnthropic(apiKey, prompt, mdl);
+    else text = await callGemini(apiKey, prompt, mdl);
   } catch (e) {
     throw new Error(describeError(e));
   }
@@ -363,18 +365,19 @@ function buildCoverLetterPrompt(personal, work, education, projects, jobDescript
 }
 
 async function generateCoverLetter({
-  provider, apiKey, personal, work, education, projects, jobDescription, instruction, role, company,
+  provider, apiKey, model, personal, work, education, projects, jobDescription, instruction, role, company,
 }) {
   if (!apiKey) {
     throw new Error("No active API key. Add one under API Keys first.");
   }
   const prompt = buildCoverLetterPrompt(personal, work, education, projects, jobDescription, instruction, role, company);
   const pr = (provider || "gemini").toLowerCase();
+  const m = (model || "").trim() || undefined;
   let text;
   try {
-    if (pr === "openai") text = await callOpenAI(apiKey, prompt);
-    else if (pr === "anthropic" || pr === "claude") text = await callAnthropic(apiKey, prompt);
-    else text = await callGemini(apiKey, prompt);
+    if (pr === "openai") text = await callOpenAI(apiKey, prompt, m);
+    else if (pr === "anthropic" || pr === "claude") text = await callAnthropic(apiKey, prompt, m);
+    else text = await callGemini(apiKey, prompt, m);
   } catch (e) {
     throw new Error(describeError(e));
   }
@@ -456,8 +459,8 @@ function normalizeParsed(data) {
 }
 
 // Send a base64 PDF + prompt to Gemini (native document understanding).
-async function callGeminiPdf(apiKey, base64, prompt) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${MODELS.gemini}:generateContent?key=${encodeURIComponent(
+async function callGeminiPdf(apiKey, base64, prompt, model) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model || MODELS.gemini}:generateContent?key=${encodeURIComponent(
     apiKey
   )}`;
   const res = await uFetch(url, {
@@ -493,7 +496,7 @@ async function callGeminiPdf(apiKey, base64, prompt) {
 }
 
 // Send a base64 PDF + prompt to Anthropic (document content block).
-async function callAnthropicPdf(apiKey, base64, prompt) {
+async function callAnthropicPdf(apiKey, base64, prompt, model) {
   const res = await uFetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
@@ -502,7 +505,7 @@ async function callAnthropicPdf(apiKey, base64, prompt) {
       "anthropic-version": "2023-06-01",
     },
     body: JSON.stringify({
-      model: MODELS.anthropic,
+      model: model || MODELS.anthropic,
       max_tokens: 4096,
       messages: [
         {
@@ -528,7 +531,7 @@ async function callAnthropicPdf(apiKey, base64, prompt) {
   return data && data.content && data.content[0] ? data.content[0].text : null;
 }
 
-async function parseResumeFile({ provider, apiKey, base64 }) {
+async function parseResumeFile({ provider, apiKey, model, base64 }) {
   if (!apiKey) {
     throw new Error("No active API key. Add one under API Keys first.");
   }
@@ -536,6 +539,7 @@ async function parseResumeFile({ provider, apiKey, base64 }) {
 
   const prompt = parseInstructions();
   const p = (provider || "gemini").toLowerCase();
+  const m = (model || "").trim() || undefined;
   let raw;
   try {
     if (p === "openai") {
@@ -543,9 +547,9 @@ async function parseResumeFile({ provider, apiKey, base64 }) {
         "PDF import works with a Gemini or Anthropic key. Set one of those as the active API key, then try Import again."
       );
     } else if (p === "anthropic" || p === "claude") {
-      raw = await callAnthropicPdf(apiKey, base64, prompt);
+      raw = await callAnthropicPdf(apiKey, base64, prompt, m);
     } else {
-      raw = await callGeminiPdf(apiKey, base64, prompt);
+      raw = await callGeminiPdf(apiKey, base64, prompt, m);
     }
   } catch (e) {
     throw new Error(describeError(e));

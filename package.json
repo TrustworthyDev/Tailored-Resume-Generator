@@ -4,7 +4,7 @@
   "description": "Careerva - generate tailored resumes and track job applications",
   "private": true,
   "main": "electron/main.js",
-  "author": "Sotaro Yoshimoto",
+  "author": "Hayashi Benjiro",
   "scripts": {
     "dev:next": "next dev renderer -p 3000",
     "dev:electron": "wait-on tcp:127.0.0.1:3000 && cross-env ELECTRON_DEV=1 electron .",
