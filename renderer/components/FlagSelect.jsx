@@ -5,6 +5,7 @@ import { countryFlag } from "../lib/flags";
 export default function FlagSelect({ value, onChange, options, placeholder }) {
   const [open, setOpen] = useState(false);
   const ref = useRef(null);
+  const activeRef = useRef(null); // the currently-selected option, for scroll-into-view
 
   useEffect(() => {
     const onDoc = (e) => {
@@ -13,6 +14,14 @@ export default function FlagSelect({ value, onChange, options, placeholder }) {
     document.addEventListener("mousedown", onDoc);
     return () => document.removeEventListener("mousedown", onDoc);
   }, []);
+
+  // When the menu opens, bring the current selection into view so it's visible
+  // even when the list is long enough to scroll.
+  useEffect(() => {
+    if (open && activeRef.current) {
+      activeRef.current.scrollIntoView({ block: "nearest" });
+    }
+  }, [open]);
 
   const opts = options || [];
   const selected = opts.find((o) => String(o.value) === String(value));
@@ -42,19 +51,21 @@ export default function FlagSelect({ value, onChange, options, placeholder }) {
       {open && (
         <div className="flagselect-menu">
           {opts.length === 0 && <div className="flagselect-empty">No options</div>}
-          {opts.map((o) => (
+          {opts.map((o) => {
+            const isActive = String(o.value) === String(value);
+            return (
             <button
               type="button"
               key={o.value}
-              className={
-                "flagselect-opt" + (String(o.value) === String(value) ? " active" : "")
-              }
+              ref={isActive ? activeRef : null}
+              className={"flagselect-opt" + (isActive ? " active" : "")}
               onClick={(e) => { e.preventDefault(); e.stopPropagation(); setOpen(false); onChange(String(o.value)); }}
             >
               {o.country ? <span className="flag">{countryFlag(o.country)}</span> : null}
               <span className="flagselect-optname">{o.name}</span>
             </button>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>

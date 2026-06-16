@@ -1,3 +1,15 @@
+// Providers (AI types), shared by the API Keys editor and the resume
+// generator's key dropdown.
+export const PROVIDERS = [
+  { id: "gemini", label: "Google Gemini" },
+  { id: "openai", label: "OpenAI" },
+  { id: "anthropic", label: "Anthropic (Claude)" },
+];
+
+// Human-readable provider name, e.g. "Anthropic (Claude)".
+export const providerLabel = (id) =>
+  (PROVIDERS.find((p) => p.id === id) || {}).label || "Google Gemini";
+
 // Selectable AI models per provider, shared by the API Keys editor and the
 // resume generator's key dropdown. The first model is the default for new keys.
 export const MODEL_OPTIONS = {

@@ -1,15 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import ConfirmModal from "./ConfirmModal";
-import { MODEL_OPTIONS, defaultModel, modelLabel } from "../lib/aiModels";
-
-const PROVIDERS = [
-  { id: "gemini", label: "Google Gemini" },
-  { id: "openai", label: "OpenAI" },
-  { id: "anthropic", label: "Anthropic (Claude)" },
-];
-const providerLabel = (id) =>
-  (PROVIDERS.find((p) => p.id === id) || {}).label || "Google Gemini";
+import { MODEL_OPTIONS, PROVIDERS, providerLabel, defaultModel, modelLabel } from "../lib/aiModels";
 
 const EMPTY = { name: "", api_key: "", provider: "gemini", model: defaultModel("gemini") };
 
