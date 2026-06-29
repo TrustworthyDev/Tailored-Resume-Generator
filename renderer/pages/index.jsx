@@ -13,7 +13,8 @@ const TABS = [
   { id: "settings", label: "Settings" },
   { id: "prompts", label: "Prompts" },
   { id: "account", label: "Accounts" },
-  { id: "generate", label: "Generate" },
+  { id: "generate", label: "Generate V1" },
+  { id: "generate2", label: "Generate V2" },
   { id: "tracker", label: "Tracker" },
 ];
 
@@ -92,7 +93,8 @@ export default function Home() {
         {tab === "prompts" && <Instructions />}
         {tab === "account" && <AccountManagement />}
         {tab === "applications" && <Applications />}
-        {tab === "generate" && <ResumeGenerator />}
+        {tab === "generate" && <ResumeGenerator variant="v1" />}
+        {tab === "generate2" && <ResumeGenerator variant="v2" />}
         {tab === "tracker" && <Tracker />}
       </main>
 

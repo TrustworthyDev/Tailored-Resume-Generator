@@ -1,15 +1,7 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import ConfirmModal from "./ConfirmModal";
-import { MODEL_OPTIONS, defaultModel, modelLabel } from "../lib/aiModels";
-
-const PROVIDERS = [
-  { id: "gemini", label: "Google Gemini" },
-  { id: "openai", label: "OpenAI" },
-  { id: "anthropic", label: "Anthropic (Claude)" },
-];
-const providerLabel = (id) =>
-  (PROVIDERS.find((p) => p.id === id) || {}).label || "Google Gemini";
+import { MODEL_OPTIONS, PROVIDERS, providerLabel, defaultModel, modelLabel } from "../lib/aiModels";
 
 const EMPTY = { name: "", api_key: "", provider: "gemini", model: defaultModel("gemini") };
 
@@ -19,7 +11,11 @@ function mask(key) {
   return "••••••••" + key.slice(-4);
 }
 
-export default function ApiKeys() {
+// `kind` splits keys into two independent groups:
+//   "v1" — direct resume generation (Gemini / OpenAI / Anthropic)
+//   "v2" — a Gemini key that refines the ChatGPT prompt (Gemini only)
+export default function ApiKeys({ kind = "v1" }) {
+  const isV2 = kind === "v2";
   const [keys, setKeys] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY);
@@ -29,13 +25,13 @@ export default function ApiKeys() {
   const [confirmId, setConfirmId] = useState(null);
 
   const load = async () => {
-    const rows = await api().listApiKeys();
+    const rows = await api().listApiKeys(kind);
     setKeys(rows || []);
     // Show the form automatically when there are no keys yet.
     if (!rows || rows.length === 0) setShowForm(true);
   };
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => { load(); /* reload when switching V1/V2 tab */ }, [kind]);
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   // Changing the provider switches the model list to that provider's default.
@@ -48,7 +44,7 @@ export default function ApiKeys() {
     setError("");
     const res = editingId
       ? await api().updateApiKey({ ...form, id: editingId })
-      : await api().addApiKey(form);
+      : await api().addApiKey({ ...form, kind });
     if (!res.ok) { setError(res.error || "Could not save key."); return; }
     setForm(EMPTY);
     setEditingId(null);
@@ -125,14 +121,16 @@ export default function ApiKeys() {
   const formCard = (
     <div className="subcard">
       <h3 className="modal-title">{editingId ? "Edit API Key" : "Add API Key"}</h3>
-      <label className="field">
-        <span className="field-label">Provider</span>
-        <select className="input" value={form.provider} onChange={onProvider}>
-          {PROVIDERS.map((p) => (
-            <option key={p.id} value={p.id}>{p.label}</option>
-          ))}
-        </select>
-      </label>
+      {!isV2 && (
+        <label className="field">
+          <span className="field-label">Provider</span>
+          <select className="input" value={form.provider} onChange={onProvider}>
+            {PROVIDERS.map((p) => (
+              <option key={p.id} value={p.id}>{p.label}</option>
+            ))}
+          </select>
+        </label>
+      )}
       <label className="field">
         <span className="field-label">Model</span>
         <select className="input" value={form.model} onChange={set("model")}>
@@ -166,11 +164,16 @@ export default function ApiKeys() {
   return (
     <section className="card">
       <div className="card-head">
-        <h2>API Keys</h2>
+        <h2>{isV2 ? "API Keys — V2 (prompt refiner)" : "API Keys — V1 (resume generation)"}</h2>
         <button className="btn primary" onClick={startAdd}>
           + Add New
         </button>
       </div>
+      <p className="muted small">
+        {isV2
+          ? "A Google Gemini key used by Generate V2 to refine the ChatGPT prompt before it's copied. Optional — without an active key, V2 uses the app's built-in prompt."
+          : "Keys used by Generate V1 to create resumes directly (Google Gemini, OpenAI, or Anthropic). The active key is used for generation."}
+      </p>
 
       {/* Adding a new key shows the form at the top; editing shows it inline. */}
       {showForm && editingId === null && formCard}

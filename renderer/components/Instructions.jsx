@@ -58,6 +58,27 @@ export default function Instructions() {
     setItems((arr) => { api().reorderInstructions(arr.map((p) => p.id)); return arr; });
   };
 
+  // The add/edit form — rendered at the top when adding, or inline at the row
+  // being edited so the editor stays in place.
+  const formCard = (
+    <div className="subcard">
+      <h3 className="modal-title">{editingId ? "Edit Prompt" : "Add Prompt"}</h3>
+      <label className="field">
+        <span className="field-label">Name</span>
+        <input className="input" placeholder="e.g. Python Full Stack" value={form.name} onChange={set("name")} />
+      </label>
+      <label className="field">
+        <span className="field-label">Instruction</span>
+        <textarea className="textarea" rows={8} placeholder="You are an expert technical resume writer…"
+          value={form.body} onChange={set("body")} />
+      </label>
+      <div className="row">
+        <button className="btn primary" onClick={save}>{editingId ? "Update" : "Save"}</button>
+        {items.length > 0 && <button className="btn" onClick={cancel}>Cancel</button>}
+      </div>
+    </div>
+  );
+
   return (
     <section className="card">
       <div className="card-head">
@@ -69,27 +90,14 @@ export default function Instructions() {
         Generate page) is sent to the AI.
       </p>
 
-      {showForm && (
-        <div className="subcard">
-          <h3 className="modal-title">{editingId ? "Edit Prompt" : "Add Prompt"}</h3>
-          <label className="field">
-            <span className="field-label">Name</span>
-            <input className="input" placeholder="e.g. Python Full Stack" value={form.name} onChange={set("name")} />
-          </label>
-          <label className="field">
-            <span className="field-label">Instruction</span>
-            <textarea className="textarea" rows={8} placeholder="You are an expert technical resume writer…"
-              value={form.body} onChange={set("body")} />
-          </label>
-          <div className="row">
-            <button className="btn primary" onClick={save}>{editingId ? "Update" : "Save"}</button>
-            {items.length > 0 && <button className="btn" onClick={cancel}>Cancel</button>}
-          </div>
-        </div>
-      )}
+      {/* Adding a new prompt shows the form at the top; editing shows it inline. */}
+      {showForm && editingId === null && formCard}
 
       <div className="list">
         {items.map((p, i) => (
+          showForm && editingId === p.id ? (
+            <div key={p.id}>{formCard}</div>
+          ) : (
           <div
             className={
               (p.is_active ? "list-item active-row" : "list-item") +
@@ -113,6 +121,7 @@ export default function Instructions() {
               <button className="btn small danger" onClick={() => setConfirmId(p.id)}>Delete</button>
             </div>
           </div>
+          )
         ))}
       </div>
 

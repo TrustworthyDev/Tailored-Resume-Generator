@@ -1,8 +1,11 @@
-const { app, BrowserWindow, ipcMain, Notification, dialog, shell } = require("electron");
+const { app, BrowserWindow, ipcMain, Notification, dialog, shell, clipboard, session } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const db = require("./db");
-const { generateResume, generateCoverLetter, parseResumeFile, setProxy, checkProxy } = require("./ai");
+const {
+  generateResume, generateCoverLetter, parseResumeFile, setProxy, checkProxy,
+  buildPromptJson, parseResumeJson, refineV2Prompt,
+} = require("./ai");
 const license = require("./license");
 
 const isDev = !!process.env.ELECTRON_DEV;
@@ -143,12 +146,20 @@ function registerIpc() {
     return { ok: false, error: "Invalid key for this machine." };
   });
 
-  // API keys (multiple; one active key is used for resume generation)
-  ipcMain.handle("apikeys:list", () =>
-    db.all(
-      "SELECT id, name, api_key, provider, model, is_active FROM api_keys ORDER BY sort_order ASC, id ASC"
-    )
-  );
+  // API keys (multiple; one active key PER KIND is used). Kinds: 'v1' = direct
+  // resume generation (Gemini/OpenAI/Anthropic), 'v2' = a Gemini key that
+  // refines the ChatGPT prompt. Pass a kind to list only that group.
+  ipcMain.handle("apikeys:list", (_e, kind) => {
+    const k = kind === "v1" || kind === "v2" ? kind : null;
+    return k
+      ? db.all(
+          "SELECT id, name, api_key, provider, model, kind, is_active FROM api_keys WHERE kind = ? ORDER BY sort_order ASC, id ASC",
+          [k]
+        )
+      : db.all(
+          "SELECT id, name, api_key, provider, model, kind, is_active FROM api_keys ORDER BY sort_order ASC, id ASC"
+        );
+  });
 
   // Persist a new API-key ranking from drag-and-drop (array of ids in order).
   ipcMain.handle("apikeys:reorder", (_e, ids) => {
@@ -161,17 +172,19 @@ function registerIpc() {
   ipcMain.handle("apikeys:add", (_e, d) => {
     const name = (d.name || "").trim();
     const key = (d.api_key || "").trim();
-    const provider = (d.provider || "gemini").trim().toLowerCase();
+    const kind = d.kind === "v2" ? "v2" : "v1";
+    // V2 keys only refine the ChatGPT prompt, which uses Gemini.
+    const provider = kind === "v2" ? "gemini" : (d.provider || "gemini").trim().toLowerCase();
     const model = (d.model || "").trim();
     if (!key) return { ok: false, error: "Key is required." };
-    // First key added becomes active automatically.
-    const existing = db.get("SELECT COUNT(*) AS c FROM api_keys");
+    // First key added IN THIS KIND becomes active automatically.
+    const existing = db.get("SELECT COUNT(*) AS c FROM api_keys WHERE kind = ?", [kind]);
     const active = existing && existing.c > 0 ? 0 : 1;
     const maxRow = db.get("SELECT COALESCE(MAX(sort_order), -1) AS m FROM api_keys");
     const nextOrder = (maxRow ? maxRow.m : -1) + 1;
     const id = db.insert(
-      "INSERT INTO api_keys (name, api_key, provider, model, is_active, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
-      [name, key, provider, model, active, nextOrder, nowIso()]
+      "INSERT INTO api_keys (name, api_key, provider, model, kind, is_active, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+      [name, key, provider, model, kind, active, nextOrder, nowIso()]
     );
     return { ok: true, id };
   });
@@ -179,7 +192,9 @@ function registerIpc() {
   ipcMain.handle("apikeys:update", (_e, d) => {
     const name = (d.name || "").trim();
     const key = (d.api_key || "").trim();
-    const provider = (d.provider || "gemini").trim().toLowerCase();
+    const row = db.get("SELECT kind FROM api_keys WHERE id = ?", [d.id]);
+    const kind = (row && row.kind) === "v2" ? "v2" : "v1";
+    const provider = kind === "v2" ? "gemini" : (d.provider || "gemini").trim().toLowerCase();
     const model = (d.model || "").trim();
     if (!key) return { ok: false, error: "Key is required." };
     db.run(
@@ -190,18 +205,25 @@ function registerIpc() {
   });
 
   ipcMain.handle("apikeys:delete", (_e, id) => {
-    const wasActive = db.get("SELECT is_active FROM api_keys WHERE id = ?", [id]);
+    const wasActive = db.get("SELECT is_active, kind FROM api_keys WHERE id = ?", [id]);
     db.run("DELETE FROM api_keys WHERE id = ?", [id]);
-    // If we removed the active key, promote the most recent remaining one.
+    // If we removed the active key, promote the most recent remaining one OF THE
+    // SAME KIND so each group keeps an active key.
     if (wasActive && wasActive.is_active) {
-      const next = db.get("SELECT id FROM api_keys ORDER BY id DESC LIMIT 1");
+      const next = db.get(
+        "SELECT id FROM api_keys WHERE kind = ? ORDER BY id DESC LIMIT 1",
+        [wasActive.kind || "v1"]
+      );
       if (next) db.run("UPDATE api_keys SET is_active = 1 WHERE id = ?", [next.id]);
     }
     return { ok: true };
   });
 
   ipcMain.handle("apikeys:setActive", (_e, id) => {
-    db.run("UPDATE api_keys SET is_active = 0");
+    // Active is per-kind: clear only this key's group, then activate it.
+    const row = db.get("SELECT kind FROM api_keys WHERE id = ?", [id]);
+    const kind = (row && row.kind) || "v1";
+    db.run("UPDATE api_keys SET is_active = 0 WHERE kind = ?", [kind]);
     db.run("UPDATE api_keys SET is_active = 1 WHERE id = ?", [id]);
     return { ok: true };
   });
@@ -250,7 +272,7 @@ function registerIpc() {
   ipcMain.handle("accounts:save", (_e, d) => {
     db.run(
       `UPDATE accounts SET name = ?, title = ?, email = ?, phone = ?, address = ?,
-         country = ?, linkedin = ?, portfolio = ?, main_stack = ? WHERE id = ?`,
+         country = ?, linkedin = ?, portfolio = ?, main_stack = ?, additional_info = ? WHERE id = ?`,
       [
         d.name || "",
         d.title || "",
@@ -261,6 +283,7 @@ function registerIpc() {
         d.linkedin || "",
         d.portfolio || "",
         d.main_stack || "",
+        d.additional_info || "",
         d.id,
       ]
     );
@@ -319,8 +342,24 @@ function registerIpc() {
   // Application history for one account (most recent first).
   ipcMain.handle("applications:byAccount", (_e, accountId) =>
     db.all(
-      "SELECT id, role, company, country, applied_at, pdf_path FROM applications WHERE account_id = ? ORDER BY id DESC",
+      `SELECT ap.id, ap.role, ap.company, ap.country, ap.applied_at, ap.pdf_path,
+              ac.main_stack AS account_stack
+       FROM applications ap
+       LEFT JOIN accounts ac ON ac.id = ap.account_id
+       WHERE ap.account_id = ? ORDER BY ap.id DESC`,
       [accountId]
+    )
+  );
+
+  // Every application across all accounts (with the owning account's name),
+  // most recent first — feeds the "All Applications" tab.
+  ipcMain.handle("applications:all", () =>
+    db.all(
+      `SELECT ap.id, ap.role, ap.company, ap.country, ap.applied_at, ap.pdf_path,
+              ac.name AS account_name, ac.main_stack AS account_stack
+       FROM applications ap
+       LEFT JOIN accounts ac ON ac.id = ap.account_id
+       ORDER BY ap.id DESC`
     )
   );
 
@@ -329,7 +368,7 @@ function registerIpc() {
     const like = `%${(query || "").trim().toLowerCase()}%`;
     return db.all(
       `SELECT ap.id, ap.role, ap.company, ap.country, ap.applied_at, ap.pdf_path,
-              ac.name AS account_name
+              ac.name AS account_name, ac.main_stack AS account_stack
        FROM applications ap
        LEFT JOIN accounts ac ON ac.id = ap.account_id
        WHERE LOWER(IFNULL(ac.name, '')) LIKE ?
@@ -875,8 +914,8 @@ function registerIpc() {
   // Resume generation
   ipcMain.handle("resume:generate", async (_e, payload) => {
     const keyRow =
-      db.get("SELECT api_key, provider, model FROM api_keys WHERE is_active = 1 LIMIT 1") ||
-      db.get("SELECT api_key, provider, model FROM api_keys ORDER BY id DESC LIMIT 1");
+      db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' AND is_active = 1 LIMIT 1") ||
+      db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' ORDER BY id DESC LIMIT 1");
     const accountId = payload && payload.accountId;
     const personal = accountId
       ? db.get("SELECT * FROM accounts WHERE id = ?", [accountId])
@@ -921,11 +960,199 @@ function registerIpc() {
     return out; // { text, jobRole, jobCompany }
   });
 
+  // ---- Generate V2: ChatGPT-in-a-browser via a clipboard handshake ---------
+  // V2 builds the SAME resume prompt as V1 but, instead of calling the Gemini
+  // API, hands the prompt to the user's signed-in ChatGPT (in an embedded,
+  // session-persistent browser). A unique ID wraps the expected reply so the
+  // app can recognise it on the clipboard and feed it into the same renderer.
+
+  const CHAT_PARTITION = "persist:chatgpt";
+  // A real Chrome UA so Google OAuth doesn't reject the embedded browser as
+  // "not secure"; Electron's default UA contains "Electron" and gets blocked.
+  const CHAT_UA =
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
+  let chatWin = null;
+  let clipWatch = null; // { timer, resolve }
+  let chatProxyAuth = null; // { username, password } for the embedded browser's proxy
+
+  // Route the embedded ChatGPT browser through the SAME proxy the user configured
+  // for V1 API calls (the active row in `proxies`). Applied to the persistent
+  // chat session, so the ChatGPT page and its OAuth pop-ups all use the proxy.
+  async function applyChatProxy() {
+    const ses = session.fromPartition(CHAT_PARTITION);
+    const active = db.get(
+      "SELECT url, port, username, password FROM proxies WHERE is_active = 1 LIMIT 1"
+    );
+    if (!active || !String(active.url || "").trim()) {
+      chatProxyAuth = null;
+      try { await ses.setProxy({ mode: "direct" }); } catch (_) {}
+      return;
+    }
+    const host = String(active.url).trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "");
+    const port = String(active.port || "").trim();
+    const server = port ? `${host}:${port}` : host;
+    try { await ses.setProxy({ proxyRules: server }); } catch (_) {}
+    const username = String(active.username || "").trim();
+    const password = String(active.password || "").trim();
+    chatProxyAuth = username || password ? { username, password } : null;
+  }
+
+  // Supply proxy credentials when the embedded browser's proxy requires auth.
+  app.on("login", (event, _webContents, _request, authInfo, callback) => {
+    if (authInfo && authInfo.isProxy && chatProxyAuth) {
+      event.preventDefault();
+      callback(chatProxyAuth.username, chatProxyAuth.password);
+    }
+  });
+
+  // Build the JSON prompt the user pastes into ChatGPT. It carries a unique
+  // request_id and a job_ref (job-description fingerprint) so the reply can be
+  // verified as belonging to THIS request and THIS job description. If a V2
+  // (Gemini) key is active, the prompt is refined by Gemini before copying.
+  ipcMain.handle("chatgpt:buildPrompt", async (_e, payload) => {
+    const accountId = payload && payload.accountId;
+    const personal = accountId ? db.get("SELECT * FROM accounts WHERE id = ?", [accountId]) : null;
+    if (!personal) throw new Error("Select an account to build a resume for.");
+    const work = db.all("SELECT * FROM work_history WHERE account_id = ? ORDER BY id ASC", [accountId]);
+    const education = db.all("SELECT * FROM education WHERE account_id = ? ORDER BY id ASC", [accountId]);
+    const projects = db.all("SELECT * FROM projects WHERE account_id = ? ORDER BY id ASC", [accountId]);
+    const instrId = payload && payload.instructionId;
+    const instrRow =
+      (instrId ? db.get("SELECT body FROM instructions WHERE id = ?", [instrId]) : null) ||
+      db.get("SELECT body FROM instructions WHERE is_active = 1 LIMIT 1");
+
+    // Short unique handshake id (no Math.random dependency at import time).
+    const id = (Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36)).slice(-10);
+    const { prompt: basePrompt, jobRef } = buildPromptJson(
+      personal, work, education, projects,
+      payload && payload.jobDescription, payload && payload.style, instrRow && instrRow.body, id
+    );
+
+    // Optional refinement via the active V2 Gemini key (Settings → API (V2)).
+    // refineV2Prompt falls back to basePrompt on any error, and never disturbs
+    // the verification fields, so this is always safe.
+    const v2Key = db.get(
+      "SELECT api_key, model FROM api_keys WHERE kind = 'v2' AND is_active = 1 LIMIT 1"
+    );
+    let prompt = basePrompt;
+    let refined = false;
+    if (v2Key && v2Key.api_key) {
+      const out = await refineV2Prompt({ promptText: basePrompt, apiKey: v2Key.api_key, model: v2Key.model });
+      if (out && out !== basePrompt) { prompt = out; refined = true; }
+    }
+
+    // Copy the prompt to the clipboard from the main process. Electron's native
+    // clipboard is more reliable than navigator.clipboard in the renderer (which
+    // can silently fail on focus/permission), so the prompt is guaranteed to be
+    // on the clipboard by the time the renderer gets this reply. The reply
+    // watcher ignores a clipboard value equal to the prompt, so this is safe.
+    let copied = false;
+    try { clipboard.writeText(prompt); copied = true; } catch (_) {}
+    return { id, prompt, copied, jobRef, refined };
+  });
+
+  // Open (or focus) the embedded, session-persistent ChatGPT browser.
+  ipcMain.handle("chatgpt:open", async () => {
+    const ses = session.fromPartition(CHAT_PARTITION);
+    ses.setUserAgent(CHAT_UA);
+    // Pick up the latest active proxy each time the browser is opened/focused.
+    await applyChatProxy();
+    if (chatWin && !chatWin.isDestroyed()) {
+      chatWin.show();
+      chatWin.focus();
+      return { ok: true };
+    }
+    chatWin = new BrowserWindow({
+      width: 1180, height: 860, title: "ChatGPT — Careerva V2",
+      autoHideMenuBar: true,
+      webPreferences: { partition: CHAT_PARTITION, contextIsolation: true, sandbox: true },
+    });
+    chatWin.webContents.setUserAgent(CHAT_UA);
+    // Keep OAuth pop-ups (Google sign-in) inside the same persistent session.
+    chatWin.webContents.setWindowOpenHandler(() => ({
+      action: "allow",
+      overrideBrowserWindowOptions: {
+        autoHideMenuBar: true,
+        webPreferences: { partition: CHAT_PARTITION, contextIsolation: true, sandbox: true },
+      },
+    }));
+    // Closing the ChatGPT window aborts any in-flight wait — there's no longer a
+    // place for the reply to come from, so stop the generation instead of hanging.
+    chatWin.on("closed", () => {
+      chatWin = null;
+      if (clipWatch) { clipWatch.resolve({ ok: false, closed: true }); clipWatch = null; }
+    });
+    try {
+      await chatWin.loadURL("https://chatgpt.com/");
+    } catch (_) {}
+    return { ok: true };
+  });
+
+  // Is the user already signed in (so V2 won't make them log in again)?
+  ipcMain.handle("chatgpt:signedIn", async () => {
+    try {
+      const ses = session.fromPartition(CHAT_PARTITION);
+      const cookies = await ses.cookies.get({ domain: "chatgpt.com" });
+      const signedIn = cookies.some((c) => /session-token|__Secure-next-auth/i.test(c.name));
+      return { signedIn };
+    } catch (_) {
+      return { signedIn: false };
+    }
+  });
+
+  // Poll the clipboard until the ChatGPT reply (a JSON object echoing the unique
+  // request_id and the job_ref) appears, verify it belongs to this request and
+  // job description, then parse it into the same { text, jobRole, … } shape as
+  // V1. Only a verified reply resolves ok — so the app never builds the final
+  // resume from stale or mismatched clipboard content.
+  ipcMain.handle("chatgpt:awaitClipboard", (_e, id, promptText, jobRef) => {
+    if (clipWatch) { clipWatch.resolve({ ok: false, canceled: true }); clipWatch = null; }
+    const promptTrim = String(promptText || "").trim();
+    const startedAt = Date.now();
+    const TIMEOUT_MS = 15 * 60 * 1000;
+
+    return new Promise((resolve) => {
+      let last = "";
+      const finish = (result) => {
+        clearInterval(timer);
+        clipWatch = null;
+        resolve(result);
+      };
+      const timer = setInterval(() => {
+        let clip = "";
+        try { clip = clipboard.readText() || ""; } catch (_) {}
+        if (clip && clip !== last) {
+          last = clip;
+          // The prompt itself is JSON with the same tokens — never treat it as the reply.
+          if (clip.trim() !== promptTrim) {
+            const res = parseResumeJson(clip, { id, jobRef });
+            if (res.ok) { finish(res); return; }
+            // A real resume reply, but for a different id/job description: stop
+            // and report it rather than rendering the wrong resume.
+            if (res.reason === "mismatch") {
+              finish({ ok: false, mismatch: true, detail: res.detail });
+              return;
+            }
+            // "not-json" → not the reply yet; keep polling.
+          }
+        }
+        if (Date.now() - startedAt > TIMEOUT_MS) finish({ ok: false, timeout: true });
+      }, 600);
+      clipWatch = { timer, resolve: (r) => finish(r) };
+    });
+  });
+
+  // Stop waiting for the clipboard reply (user cancelled / left the tab).
+  ipcMain.handle("chatgpt:cancelClipboard", () => {
+    if (clipWatch) { clipWatch.resolve({ ok: false, canceled: true }); clipWatch = null; }
+    return { ok: true };
+  });
+
   // Cover letter generation (same account data, addressed to the JD's company).
   ipcMain.handle("coverletter:generate", async (_e, payload) => {
     const keyRow =
-      db.get("SELECT api_key, provider, model FROM api_keys WHERE is_active = 1 LIMIT 1") ||
-      db.get("SELECT api_key, provider, model FROM api_keys ORDER BY id DESC LIMIT 1");
+      db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' AND is_active = 1 LIMIT 1") ||
+      db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' ORDER BY id DESC LIMIT 1");
     const accountId = payload && payload.accountId;
     const personal = accountId
       ? db.get("SELECT * FROM accounts WHERE id = ?", [accountId])
@@ -975,8 +1202,8 @@ function registerIpc() {
 
     const filePath = res.filePaths[0];
     const keyRow =
-      db.get("SELECT api_key, provider, model FROM api_keys WHERE is_active = 1 LIMIT 1") ||
-      db.get("SELECT api_key, provider, model FROM api_keys ORDER BY id DESC LIMIT 1");
+      db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' AND is_active = 1 LIMIT 1") ||
+      db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' ORDER BY id DESC LIMIT 1");
     try {
       const stat = fs.statSync(filePath);
       if (stat.size > 15 * 1024 * 1024) {

@@ -205,6 +205,15 @@ select.input {
   border-radius: 50%; animation: spin 0.8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+.spinner.small { width: 20px; height: 20px; margin: 0; border-width: 3px; }
+
+/* Generate V2 — "waiting for the ChatGPT reply" banner. */
+.v2-wait {
+  display: flex; align-items: center; gap: 14px; margin-top: 12px;
+  padding: 13px 16px; border: 1px solid var(--border);
+  border-left: 4px solid var(--primary); border-radius: 10px; background: #15233f;
+}
+.v2-wait-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 
 /* Lists (api keys, prompts, proxies) */
 .subcard {
@@ -326,17 +335,76 @@ select.input {
 .save-bar { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 6px; }
 .main-stack-input { flex: 1; margin: 0 16px; max-width: 560px; }
 
+/* Account form — five input tabs (underline style, matching the resume tabs) */
+.account-form { display: flex; flex-direction: column; gap: 18px; }
+.form-tabs {
+  display: flex; flex-wrap: wrap; gap: 2px;
+  border-bottom: 1px solid var(--border); margin: 4px 0 18px;
+}
+.form-tab {
+  background: transparent; border: none; border-bottom: 2px solid transparent;
+  color: var(--muted); padding: 9px 16px; margin-bottom: -1px; cursor: pointer;
+  font-size: 14px; font-weight: 600; display: inline-flex; align-items: center; gap: 7px;
+  transition: color 0.12s, border-color 0.12s;
+}
+.form-tab:hover { color: var(--text); }
+.form-tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+.tab-count {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--muted);
+  border-radius: 10px; padding: 0 7px; font-size: 11px; font-weight: 600; line-height: 18px;
+}
+.form-tab.active .tab-count { color: var(--primary); border-color: var(--primary); }
+.form-tab-panel { min-height: 120px; }
+.tab-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 4px; }
+.tab-head p { margin: 0; }
+
+/* Account form — collapsible read-only View sections */
+.view-section { border: 1px solid var(--border); border-radius: 10px; margin-top: 10px; overflow: hidden; }
+.view-section.open { border-color: var(--muted); }
+.view-section-head {
+  display: flex; align-items: center; gap: 10px; width: 100%; text-align: left;
+  background: var(--panel-2); border: none; color: var(--text); cursor: pointer;
+  padding: 12px 14px; font-size: 14px; font-weight: 600;
+}
+.view-section-head:hover { background: var(--border); }
+.view-chevron { color: var(--muted); font-size: 12px; width: 12px; }
+.view-section-title { flex: 1; }
+.view-section-body { padding: 14px; border-top: 1px solid var(--border); }
+.view-grid {
+  display: grid; grid-template-columns: 130px 1fr; gap: 8px 16px; margin: 0;
+}
+.view-grid dt { color: var(--muted); font-size: 13px; }
+.view-grid dd { margin: 0; font-size: 14px; word-break: break-word; }
+.view-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+.view-list li { display: flex; flex-direction: column; gap: 2px; font-size: 14px; }
+.view-text { margin: 0; font-size: 14px; white-space: pre-wrap; line-height: 1.5; }
+
 /* Applications */
 .app-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
 .app-card {
   background: var(--panel-2); border: 1px solid var(--border);
-  border-radius: 10px; padding: 14px 16px;
+  border-radius: 10px; padding: 12px 16px;
 }
-.app-role { font-weight: 700; font-size: 15px; margin-bottom: 8px; }
-.app-meta { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: center; color: var(--text); }
-.app-meta .app-country { color: var(--muted); }
-.app-meta .muted { text-align: right; }
-.app-actions { display: flex; gap: 8px; margin-top: 10px; }
+.app-top { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+.app-role { font-weight: 700; font-size: 15px; }
+.app-date { font-size: 12.5px; white-space: nowrap; flex-shrink: 0; }
+/* Meta line: company · country · account — empty parts are simply omitted, so
+   there are no lonely "—" placeholders floating in the middle of wide rows. */
+.app-sub {
+  display: flex; flex-wrap: wrap; align-items: center;
+  gap: 4px 8px; margin-top: 5px; font-size: 13px; color: var(--muted);
+}
+.app-sub .app-company { color: var(--text); font-weight: 600; }
+.app-sub .sep { opacity: 0.45; }
+.cat-chip {
+  display: inline-block; margin-left: 8px; padding: 1px 9px;
+  border-radius: 11px; font-size: 12px; font-weight: 600;
+  background: rgba(59, 130, 246, 0.16); color: #9ec1ff;
+  border: 1px solid rgba(59, 130, 246, 0.38);
+}
+.app-sub .flag { margin-right: 4px; }
+.app-actions { display: flex; gap: 8px; margin-top: 11px; }
+.apps-tabs { position: sticky; top: 0; z-index: 6; background: var(--bg); }
 .date-input { width: auto; padding: 6px 10px; font-size: 13px; color-scheme: dark; }
 
 /* Resume generator */
@@ -458,27 +526,41 @@ select.input {
 /* Bottom-center in-app toast (replaces native OS notifications). Auto-dismisses.
    Categorised: danger | warning | alert | success | info. */
 .toast {
-  position: fixed; bottom: 34px; left: 50%; z-index: 1000;
+  position: fixed; top: 34px; left: 50%; z-index: 1000;
   transform: translateX(-50%);
   display: flex; align-items: center; gap: 14px;
-  min-width: 360px; max-width: 600px; padding: 18px 26px; cursor: pointer;
-  background: var(--panel); color: var(--text);
-  border: 1px solid var(--border); border-left: 6px solid var(--primary);
-  border-radius: 12px; box-shadow: 0 12px 32px rgba(0, 0, 0, 0.5);
+  min-width: 360px; max-width: 620px; padding: 18px 26px; cursor: pointer;
+  background: #1c2433; color: #f4f7fb;
+  border: 2px solid var(--primary); border-left-width: 7px;
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6);
   animation: toast-in 0.18s ease-out;
 }
-.toast-icon { font-size: 26px; line-height: 1; flex-shrink: 0; }
-.toast-msg { font-size: 16px; font-weight: 600; line-height: 1.4; }
-.toast-danger { border-left-color: var(--danger); }
-.toast-danger .toast-icon { color: var(--danger); }
-.toast-warning { border-left-color: #f59e0b; }
-.toast-warning .toast-icon { color: #f59e0b; }
-.toast-alert { border-left-color: var(--primary); }
-.toast-info { border-left-color: var(--primary); }
-.toast-success { border-left-color: #16a34a; }
-.toast-success .toast-icon { color: #16a34a; }
+.toast-icon { font-size: 28px; line-height: 1; flex-shrink: 0; }
+.toast-msg { font-size: 16px; font-weight: 700; line-height: 1.45; color: #ffffff; }
+/* Each category gets a tinted background + matching border + colored glow so
+   it stands out clearly against the dark app behind it. */
+.toast-danger {
+  border-color: var(--danger); background: #3a1717;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 0 4px rgba(220, 38, 38, 0.18);
+}
+.toast-danger .toast-icon { color: #fca5a5; }
+.toast-warning {
+  border-color: #f59e0b; background: #3a2c0e;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 0 4px rgba(245, 158, 11, 0.2);
+}
+.toast-warning .toast-icon { color: #fcd34d; }
+.toast-alert, .toast-info {
+  border-color: var(--primary); background: #15233f;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 0 4px rgba(59, 130, 246, 0.2);
+}
+.toast-success {
+  border-color: #16a34a; background: #102b1c;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6), 0 0 0 4px rgba(22, 163, 74, 0.2);
+}
+.toast-success .toast-icon { color: #86efac; }
 @keyframes toast-in {
-  from { opacity: 0; transform: translate(-50%, 12px); }
+  from { opacity: 0; transform: translate(-50%, -12px); }
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 .req { color: var(--danger); font-weight: 700; font-size: 11px; }

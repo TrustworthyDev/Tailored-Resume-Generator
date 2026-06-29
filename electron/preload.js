@@ -11,7 +11,7 @@ contextBridge.exposeInMainWorld("api", {
   activateLicense: (key) => invoke("license:activate", key),
 
   // API keys (multiple)
-  listApiKeys: () => invoke("apikeys:list"),
+  listApiKeys: (kind) => invoke("apikeys:list", kind),
   addApiKey: (data) => invoke("apikeys:add", data),
   updateApiKey: (data) => invoke("apikeys:update", data),
   deleteApiKey: (id) => invoke("apikeys:delete", id),
@@ -79,6 +79,13 @@ contextBridge.exposeInMainWorld("api", {
   // Resume
   generateResume: (data) => invoke("resume:generate", data),
   generateCoverLetter: (data) => invoke("coverletter:generate", data),
+
+  // Generate V2 — ChatGPT-in-a-browser via a clipboard handshake.
+  chatgptBuildPrompt: (data) => invoke("chatgpt:buildPrompt", data),
+  openChatgpt: () => invoke("chatgpt:open"),
+  chatgptSignedIn: () => invoke("chatgpt:signedIn"),
+  awaitChatgptClipboard: (id, prompt, jobRef) => invoke("chatgpt:awaitClipboard", id, prompt, jobRef),
+  cancelChatgptClipboard: () => invoke("chatgpt:cancelClipboard"),
   importResumeFile: () => invoke("resume:importFile"),
   previewResume: (html) => invoke("resume:preview", html),
   exportResumePdf: (data) => invoke("resume:exportPdf", data),
@@ -90,8 +97,8 @@ contextBridge.exposeInMainWorld("api", {
   addApplication: (data) => invoke("app:add", data),
   listAllApplications: () => invoke("app:listAll"),
   applicationsByAccount: (accountId) => invoke("applications:byAccount", accountId),
+  allApplications: () => invoke("applications:all"),
   applicationCounts: () => invoke("applications:counts"),
-  searchApplications: (q) => invoke("applications:search", q),
   searchApplications: (query) => invoke("applications:search", query),
   deleteApplication: (id) => invoke("app:delete", id),
   resetApplications: () => invoke("app:resetAll"),
