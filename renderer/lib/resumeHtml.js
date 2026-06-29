@@ -7,6 +7,30 @@ function escapeHtml(s) {
     .replace(/>/g, "&gt;");
 }
 
+// Render a degree with each significant term bold but connective words left at
+// normal weight, e.g. "Bachelor's Degree in Computer Science" -> bold
+// "Bachelor's Degree", plain "in", bold "Computer Science".
+const DEGREE_CONNECTORS = new Set(
+  ["in", "of", "and", "the", "for", "with", "a", "an", "&", "-", "–", "—", ","]
+);
+function formatDegreeHtml(degree) {
+  const words = String(degree || "").trim().split(/\s+/).filter(Boolean);
+  const parts = [];
+  let group = [];
+  const flush = () => {
+    if (group.length) {
+      parts.push(`<strong class="edu-degree">${escapeHtml(group.join(" "))}</strong>`);
+      group = [];
+    }
+  };
+  for (const w of words) {
+    if (DEGREE_CONNECTORS.has(w.toLowerCase())) { flush(); parts.push(escapeHtml(w)); }
+    else group.push(w);
+  }
+  flush();
+  return parts.join(" ");
+}
+
 const BASE = `
 * { box-sizing: border-box; }
 html, body { margin: 0; background: #fff; }
@@ -311,7 +335,7 @@ function fontOverride(style) {
 // Convert the AI's Markdown resume into a styled HTML document using the chosen
 // style's template. The name + title come from the account (Personal Info); the
 // model supplies only the body.
-export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo = null) {
+export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo = null, education = null) {
   const id = (style && style.id) || "professional";
   const accent = (style && style.accent) || "#2f5b8f";
   const head = (style && style.head) || "";
@@ -423,6 +447,47 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
     return `<h3${attr}>${roleTitle}${ds}</h3>${od}`;
   });
 
+  // Education: render deterministically from the account's own structured data
+  // so it looks identical in every style and never depends on the model's
+  // wording or markdown (which was the source of the "sometimes broken" layout).
+  // The institution is the bold heading; the degree — including connective words
+  // like "in" — stays normal weight on the line below, so nothing in
+  // "Bachelor's Degree in Computer Science" renders bold.
+  const eduList = (Array.isArray(education) ? education : education ? [education] : [])
+    .map((e) => e || {})
+    .filter((e) => e.university || e.degree || e.period || e.location);
+  if (eduList.length) {
+    const eduHtml = eduList
+      .map((e) => {
+        const uni = (e.university || "").trim();
+        const degree = (e.degree || "").trim();
+        const loc = (e.location || "").trim();
+        const period = (e.period || "").trim();
+        const dates = period ? `<span class="role-dates">${escapeHtml(period)}</span>` : "";
+        // Primary line: the degree, terms bold with connective words ("in", "of")
+        // left normal weight. Falls back to the school name when no degree.
+        const primary = degree
+          ? formatDegreeHtml(degree)
+          : `<strong class="edu-degree">${escapeHtml(uni)}</strong>`;
+        // Secondary line: "University - Location" (whichever is present).
+        const second = [degree && uni ? uni : "", loc]
+          .filter(Boolean)
+          .map(escapeHtml)
+          .join(" - ");
+        const sub = second ? `<div class="role-org edu-org">${second}</div>` : "";
+        return `<div class="edu-line">${primary}${dates}</div>${sub}`;
+      })
+      .join("");
+    if (/<h2[^>]*>[^<]*Education[^<]*<\/h2>/i.test(body)) {
+      body = body.replace(
+        /(<h2[^>]*>[^<]*Education[^<]*<\/h2>)([\s\S]*?)(?=<h2|$)/i,
+        (mm, heading) => `${heading}${eduHtml}`
+      );
+    } else {
+      body += `<h2>Education</h2>${eduHtml}`;
+    }
+  }
+
   // Cards style additionally boxes the summary section.
   if (id === "cards") {
     body = body.replace(
@@ -496,6 +561,9 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
   const css =
     BASE + "\n" + templateCss(id, accent, head) + nameTitleCss(nameColor) +
     "\nmain h2{margin-top:13px;margin-bottom:5px;}" +
+    "\n.edu-line{font-size:11pt;color:#23272e;font-weight:normal;margin:8px 0 0;}" +
+    "\n.edu-line .edu-degree{font-weight:700;color:#14181e;}" +
+    "\n.edu-org{color:#3a4250;font-weight:normal;margin:1px 0 5px;}" +
     "\n.contacts{overflow-wrap:anywhere;}";
 
   // Normalize the contact line so LinkedIn shows as a single clean handle.

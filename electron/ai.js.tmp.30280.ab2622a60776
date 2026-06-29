@@ -342,9 +342,9 @@ function buildPromptJson(personal, work, education, projects, jobDescription, st
     "Fill EVERY field of `resume` in `response_format` and follow that schema EXACTLY. Keep company, location, dates, degree, university and period EXACTLY as provided.",
     "For `target.role`, copy the COMPLETE job title VERBATIM from job_description (keep all words and symbols, e.g. `AI Engineer (Full Remote)`); use \"Unknown\" for any part not found.",
     "Build this resume FRESH from this JSON only; do not reuse a resume produced earlier in this conversation for a different job.",
-    // PERMANENT rule: each follow-up answer goes in its OWN ChatGPT Canvas (the
-    // big editable / copyable / expandable card), not in the chat text.
-    "FOLLOW-UP — application questions (PERMANENT RULE for this entire conversation): Whenever the user later types one or MORE job-application questions, answer using the canvas tool — create a SEPARATE canvas document for EACH question's answer, so every answer appears in its own editable, copyable, expandable canvas card. Immediately before each canvas, write that question on its own line as a bold heading. ALWAYS exactly one canvas per question — even if several questions arrive in one message, create a separate bold-heading + canvas for each, in order; never put two answers in one canvas and never answer in plain chat text. This rule applies to every follow-up, no matter how many messages later. Each answer must be confident, positive, first-person, consistent with the resume above, tailored to job_description, and concise (about 2-5 sentences unless more is clearly needed).",
+    // PERMANENT rule: answer each follow-up question in its OWN canvas (editable
+    // text document) so it shows in a large, editable, copyable, expandable box.
+    "FOLLOW-UP — application questions (PERMANENT RULE for this entire conversation): Whenever the user later types one or MORE job-application questions, answer EACH question in its OWN separate canvas / text document (use the canvas tool / textdoc), so each answer appears in its own large, editable, copyable, expandable box — NOT in a code block and NOT as plain chat text. Title each canvas with the question it answers. Create ONE canvas per question — never combine multiple answers into one canvas and never split one answer across canvases. Apply this to every follow-up, no matter how many messages later. Answers must be confident, positive, first-person, consistent with the resume above, tailored to job_description, and concise (about 2-5 sentences unless more is clearly needed). If the user sends several questions at once, produce a separate titled canvas for each, in order.",
   ].filter(Boolean);
 
   const promptObj = {
@@ -379,7 +379,7 @@ function buildPromptJson(personal, work, education, projects, jobDescription, st
         "Reply with ONLY this JSON object inside a single ```json fenced code block (so it shows a Copy button) — no text before or after the code block. " +
         "Echo request_id and job_ref back EXACTLY as given above so the app can verify the reply matches this request. " +
         "Build the resume FRESH from this JSON only, following `user_prompt` for content and this schema EXACTLY. " +
-        "Then answer any follow-up application questions per the FOLLOW-UP instruction: for EACH question, a bold question heading followed by its answer in its OWN separate canvas card (one canvas per question, even when several are asked at once).",
+        "Then answer any follow-up application questions per the FOLLOW-UP instruction: put EACH answer in its OWN canvas / text document (one canvas per question, titled with the question), so each shows in a large editable, copyable box — not a code block or plain text.",
       request_id: id,
       job_ref: jobRef,
       target: { role: "<verbatim job title>", company: "<company>", country: "<country, or Unknown>" },

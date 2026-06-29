@@ -11,7 +11,8 @@
     "dev": "concurrently -k -n NEXT,ELECTRON -c blue,green \"npm:dev:next\" \"npm:dev:electron\"",
     "build:next": "next build renderer",
     "start": "npm run build:next && electron .",
-    "dist": "npm run build:next && electron-builder"
+    "dist": "npm run build:next && electron-builder",
+    "dist:dir": "npm run build:next && electron-builder --dir"
   },
   "dependencies": {
     "flag-icons": "^7.5.0",

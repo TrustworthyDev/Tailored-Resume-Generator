@@ -50,3 +50,8 @@ export const modelLabel = (provider, id) => {
 
 // Short model name (no "— description" suffix), e.g. "Gemini 2.5 Pro".
 export const modelShort = (provider, id) => modelLabel(provider, id).split(" — ")[0];
+
+// Even shorter — the brand word dropped — for compact key lists, e.g.
+// "Gemini 2.5 Flash" -> "2.5 Flash", "Claude 3.5 Sonnet" -> "3.5 Sonnet".
+export const modelTiny = (provider, id) =>
+  modelShort(provider, id).replace(/^(Gemini|Claude)\s+/i, "");

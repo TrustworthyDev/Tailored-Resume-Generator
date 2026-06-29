@@ -2,7 +2,8 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { buildResumeHtml, buildCoverLetterHtml } from "../lib/resumeHtml";
 import { styleThumb } from "../lib/styleThumbs";
-import { modelShort, providerLabel } from "../lib/aiModels";
+import { modelTiny, providerLabel } from "../lib/aiModels";
+import { friendlyError } from "../lib/errors";
 import FlagSelect from "./FlagSelect";
 
 const STYLES = [
@@ -65,7 +66,8 @@ const SIZE_OPTIONS = ["", "9", "9.5", "10", "10.5", "11", "11.5", "12"];
 // Shown when the user tweaks a style/colour/font but hasn't generated a resume.
 const NO_CONTENT_MSG = "There is no resume content yet. Please generate a resume first.";
 
-export default function ResumeGenerator() {
+export default function ResumeGenerator({ variant = "v1" }) {
+  const isV2 = variant === "v2";
   const [accounts, setAccounts] = useState([]);
   const [accountId, setAccountId] = useState("");
   const [keys, setKeys] = useState([]);
@@ -97,9 +99,11 @@ export default function ResumeGenerator() {
   const [prefsReady, setPrefsReady] = useState(false); // toggles render after load
   const [copied, setCopied] = useState(false);
   const [acctInfo, setAcctInfo] = useState(null); // contact info for the live viewer
+  const [eduRows, setEduRows] = useState([]); // structured education for the resume
   const [view, setView] = useState("generate"); // "generate" | "preview" sub-tab
   const [pickersOpen, setPickersOpen] = useState(true); // colors & font section expanded
   const [pdfUrl, setPdfUrl] = useState(""); // blob URL of the saved PDF for inline viewing
+  const [v2Waiting, setV2Waiting] = useState(false); // V2: waiting for the ChatGPT reply on the clipboard
   const pastedRef = useRef(false);
   const busyRef = useRef(false); // guards overlapping PDF renders
 
@@ -122,7 +126,7 @@ export default function ResumeGenerator() {
     (async () => {
       const [accs, ks, instrs, accPref, stylePref, px, autoPref, accentPref, nameColorPref, openModalPref, autoGenPref, jdPref, savedPathPref, savedAtPref, coverPref, styleOrderPref, fontPref, fontSizePref] = await Promise.all([
         api().listAccounts(),
-        api().listApiKeys(),
+        api().listApiKeys(isV2 ? "v2" : "v1"),
         api().listInstructions(),
         api().getPref("selected_account_id"),
         api().getPref("resume_style"),
@@ -190,11 +194,17 @@ export default function ResumeGenerator() {
   // Keep the selected account's contact info handy so the live resume viewer
   // renders the same authoritative header the exported PDF uses.
   useEffect(() => {
-    if (!accountId) { setAcctInfo(null); return; }
+    if (!accountId) { setAcctInfo(null); setEduRows([]); return; }
     let cancelled = false;
     api().getAccount(Number(accountId)).then((a) => { if (!cancelled) setAcctInfo(a || null); });
+    api().listEducation(Number(accountId)).then((rows) => { if (!cancelled) setEduRows(rows || []); });
     return () => { cancelled = true; };
   }, [accountId]);
+
+  // V2: if the user leaves this tab while a clipboard watch is running, stop it.
+  useEffect(() => {
+    return () => { if (isV2) api().cancelChatgptClipboard(); };
+  }, [isV2]);
 
   // Load the saved PDF's bytes into a blob URL so the preview tab can render the
   // real, paginated PDF inline. Re-runs on each new generation (savedAt changes).
@@ -294,7 +304,8 @@ export default function ResumeGenerator() {
         result,
         { ...styleObj, accent: effectiveAccent, head: accent, nameColor, font, fontSize },
         accountTitle(),
-        acctInfo
+        acctInfo,
+        eduRows
       )
     : "";
 
@@ -322,9 +333,10 @@ export default function ResumeGenerator() {
     if (!opts.skipCover) setSavedPath("");
     try {
       const acc = await api().getAccount(Number(accountId));
+      const edu = await api().listEducation(Number(accountId));
 
       let coverHtml = null;
-      if (coverLetter && !opts.skipCover) {
+      if (coverLetter && !opts.skipCover && !isV2) {
         try {
           const cl = await api().generateCoverLetter({
             accountId: Number(accountId),
@@ -337,12 +349,12 @@ export default function ResumeGenerator() {
             coverHtml = buildCoverLetterHtml(cl.text, { ...styleObj, accent: effectiveAccent, head: accent, nameColor, font, fontSize }, acc);
           }
         } catch (e) {
-          setError(`Cover letter skipped: ${e.message || String(e)}`);
+          setError(`Cover letter skipped — ${friendlyError(e)}`);
         }
       }
 
       const exp = await api().exportResumePdf({
-        html: buildResumeHtml(content, { ...styleObj, accent: effectiveAccent, head: accent, nameColor, font, fontSize }, accountTitle(), acc),
+        html: buildResumeHtml(content, { ...styleObj, accent: effectiveAccent, head: accent, nameColor, font, fontSize }, accountTitle(), acc, edu),
         coverHtml,
         accountId: Number(accountId),
         role,
@@ -359,9 +371,9 @@ export default function ResumeGenerator() {
         api().setPref("gen_saved_at", exp.savedAt || "");
         setView("preview"); // jump to the Preview Resume tab once generated
         if (!opts.skipCover) copyFolderToClipboard(exp.path);
-      } else if (!opts.skipCover) setError(`PDF failed: ${(exp && exp.error) || "unknown error"}`);
+      } else if (!opts.skipCover) setError(`Couldn't save the PDF — ${friendlyError({ message: (exp && exp.error) || "unknown error" })}`);
     } catch (e) {
-      if (!opts.skipCover) setError(e.message || String(e));
+      if (!opts.skipCover) setError(friendlyError(e));
     } finally {
       setLoading(false);
       busyRef.current = false;
@@ -403,10 +415,93 @@ export default function ResumeGenerator() {
         await exportPdf(res.text || "", res.jobRole || "", res.jobCompany || "", res.jobCountry || "", useJd);
       }
     } catch (e) {
-      setError(e.message || String(e));
+      setError(friendlyError(e));
     } finally {
       setLoading(false);
     }
+  };
+
+  // Generate V2: build the same prompt, hand it to the user's signed-in ChatGPT
+  // in the embedded browser, and wait for the reply to arrive on the clipboard
+  // (recognised by the unique handshake id). Then render exactly like V1.
+  const previewV2 = async (jdValue) => {
+    const useJd = typeof jdValue === "string" ? jdValue : jd;
+    if (!useJd || !useJd.trim()) {
+      toast("Job description is required. Paste the target job description to generate a tailored resume.", "danger");
+      return;
+    }
+    if (!accountId) { setError("Select an account first."); return; }
+    setLoading(true);
+    setError("");
+    setSavedPath("");
+    try {
+      const { id, prompt, copied, jobRef } = await api().chatgptBuildPrompt({
+        accountId: Number(accountId),
+        jobDescription: useJd,
+        style,
+        instructionId: promptId ? Number(promptId) : undefined,
+      });
+      // The JSON prompt is copied natively in the main process (more reliable
+      // than navigator.clipboard here); fall back to the renderer copy if that
+      // fails.
+      let onClipboard = !!copied;
+      if (!onClipboard) {
+        try { await navigator.clipboard.writeText(prompt); onClipboard = true; } catch (_) {}
+      }
+      await api().openChatgpt();
+      setV2Waiting(true);
+      toast(
+        onClipboard
+          ? "Prompt copied. In ChatGPT: paste (Ctrl+V), send, then copy the whole reply."
+          : "Couldn't copy the prompt automatically — copy it manually from the preview, then paste into ChatGPT.",
+        onClipboard ? "info" : "warning"
+      );
+      // Wait for the verified reply on the clipboard before building anything —
+      // the resume is never generated until the matching content is copied back.
+      const res = await api().awaitChatgptClipboard(id, prompt, jobRef);
+      setV2Waiting(false);
+      if (!res || !res.ok) {
+        if (res && res.canceled) return;
+        if (res && res.closed) {
+          setError("Stopped — the ChatGPT window was closed before a reply arrived. Click Generate Resume to try again.");
+          return;
+        }
+        setError(
+          res && res.timeout
+            ? "Timed out waiting for the ChatGPT reply. Click Generate Resume to try again."
+            : res && res.mismatch
+            ? (res.detail === "job"
+                ? "That reply was generated for a different job description. Re-send this prompt in ChatGPT and copy the new reply."
+                : "That reply doesn't match this request. Re-send this prompt in ChatGPT and copy the new reply.")
+            : "Could not read the ChatGPT reply from the clipboard. Make sure you copied the whole answer."
+        );
+        return;
+      }
+      setResult(res.text || "");
+      setJobRole(res.jobRole || "");
+      setJobCompany(res.jobCompany || "");
+      setJobCountry(res.jobCountry || "");
+      if (openModalAfterPreview) setShowPreview(true);
+      if (res.text) {
+        setView("preview");
+        await exportPdf(res.text || "", res.jobRole || "", res.jobCompany || "", res.jobCountry || "", useJd);
+        toast("Resume generated from your ChatGPT reply.", "success");
+      }
+    } catch (e) {
+      setV2Waiting(false);
+      setError(friendlyError(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Route the Generate action to the Gemini API (V1) or ChatGPT browser (V2).
+  const runGenerate = (jdValue) => (isV2 ? previewV2(jdValue) : preview(jdValue));
+
+  const cancelV2 = async () => {
+    await api().cancelChatgptClipboard();
+    setV2Waiting(false);
+    setLoading(false);
   };
 
   const openFolder = async () => {
@@ -629,9 +724,24 @@ export default function ResumeGenerator() {
         {view === "generate" ? (
         <>
         <p className="muted">
-          Generates a resume tailored to the job description below using the
-          selected account, prompt and API key. A job description is required.
-          {!proxyActive && " Activate a proxy in Proxy Settings to generate."}
+          {isV2 ? (
+            <>
+              Builds the tailored prompt, then hands it to your signed-in ChatGPT
+              in an embedded browser. Paste it (Ctrl+V), send, and copy the reply —
+              the app picks it up automatically. You can then type any extra
+              application questions straight into ChatGPT; it answers each
+              positively, aligned with the resume, in a copyable code block. A job
+              description is required. If an active Gemini key is set in Settings →
+              API (V2), it refines the prompt first; otherwise the built-in prompt
+              is used.
+            </>
+          ) : (
+            <>
+              Generates a resume tailored to the job description below using the
+              selected account, prompt and API key. A job description is required.
+              {!proxyActive && " Activate a proxy in Proxy Settings to generate."}
+            </>
+          )}
         </p>
 
         <div className="grid2">
@@ -650,14 +760,20 @@ export default function ResumeGenerator() {
           </div>
 
           <div className="field">
-            <span className="field-label">Active AI API Key</span>
+            <span className="field-label">{isV2 ? "Prompt Refiner Key (Gemini, optional)" : "Active AI API Key"}</span>
             <FlagSelect
               value={keyId}
               onChange={onKey}
-              placeholder={keys.length ? "Select key" : "No keys — add one first"}
+              placeholder={
+                keys.length
+                  ? "Select key"
+                  : isV2
+                  ? "No V2 keys — add in Settings → API (V2)"
+                  : "No keys — add one first"
+              }
               options={keys.map((k) => ({
                 value: k.id,
-                name: `${k.name || "(unnamed key)"} — ${providerLabel(k.provider)} · ${modelShort(k.provider, k.model)}`,
+                name: `${k.name || "(unnamed key)"} - ${providerLabel(k.provider)} ( ${modelTiny(k.provider, k.model)} )`,
               }))}
             />
           </div>
@@ -694,7 +810,7 @@ export default function ResumeGenerator() {
               // work. Run it with the EXACT pasted text (not state) so the very
               // first request never uses a stale/previous JD.
               if (pastedRef.current && autoOnPaste && v.trim() && accountId && !loading) {
-                preview(v);
+                runGenerate(v);
               }
               pastedRef.current = false;
             }}
@@ -722,6 +838,7 @@ export default function ResumeGenerator() {
               <span className="toggle-track"><span className="toggle-thumb" /></span>
               <span className="toggle-label">Open preview modal</span>
             </label>
+            {!isV2 && (
             <label className="toggle" title="Also generate a matching cover letter (Cover Letter.pdf) in the same folder">
               <input
                 type="checkbox"
@@ -731,22 +848,37 @@ export default function ResumeGenerator() {
               <span className="toggle-track"><span className="toggle-thumb" /></span>
               <span className="toggle-label">Cover letter</span>
             </label>
+            )}
             </>)}
           </div>
           <div className="action-group">
-            <button className="btn primary" onClick={() => preview()} disabled={loading}>
-              {loading ? "Generating…" : "Generate Resume"}
+            <button className="btn primary" onClick={() => runGenerate()} disabled={loading}>
+              {loading ? (isV2 ? "Waiting for ChatGPT…" : "Generating…") : "Generate Resume"}
             </button>
           </div>
         </div>
+        {isV2 && v2Waiting && (
+          <div className="v2-wait">
+            <span className="spinner small" />
+            <div className="v2-wait-text">
+              <strong>Waiting for your ChatGPT reply…</strong>
+              <span className="muted small">
+                In the ChatGPT window: paste the prompt (Ctrl+V), send it, then
+                select &amp; copy the entire reply. This page detects it automatically.
+              </span>
+            </div>
+            <button className="btn small" onClick={cancelV2}>Cancel</button>
+            <button className="btn small" onClick={() => api().openChatgpt()}>Open ChatGPT</button>
+          </div>
+        )}
         {error && <div className="error">{error}</div>}
         </>
         ) : (
         <>
         <div className="action-row preview-actions">
           <div className="action-group">
-            <button className="btn primary" onClick={() => preview()} disabled={loading}>
-              {loading ? "Generating…" : "Generate Resume"}
+            <button className="btn primary" onClick={() => runGenerate()} disabled={loading}>
+              {loading ? (isV2 ? "Waiting for ChatGPT…" : "Generating…") : "Generate Resume"}
             </button>
             <button className="btn" onClick={openFolder} disabled={loading || !savedPath}>
               Open Folder

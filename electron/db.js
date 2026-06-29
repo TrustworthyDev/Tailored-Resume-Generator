@@ -19,6 +19,7 @@ const SCHEMA = `
       api_key    TEXT,
       provider   TEXT,
       model      TEXT,
+      kind       TEXT DEFAULT 'v1',
       is_active  INTEGER DEFAULT 0,
       sort_order INTEGER,
       created_at TEXT
@@ -35,6 +36,7 @@ const SCHEMA = `
       linkedin  TEXT,
       portfolio TEXT,
       main_stack TEXT,
+      additional_info TEXT,
       sort_order INTEGER,
       created_at TEXT
     );
@@ -160,6 +162,12 @@ function migrate() {
     db.run("ALTER TABLE accounts ADD COLUMN main_stack TEXT");
   }
 
+  // Ensure accounts has an additional_info column (free-text extras fed to the AI:
+  // certifications, languages, awards, notes — anything not covered by the other tabs).
+  if (!acctCols.some((c) => c.name === "additional_info")) {
+    db.run("ALTER TABLE accounts ADD COLUMN additional_info TEXT");
+  }
+
   // Ensure api_keys has a provider column (multi-provider support).
   const keyCols = all("PRAGMA table_info(api_keys)");
   if (!keyCols.some((c) => c.name === "provider")) {
@@ -171,6 +179,14 @@ function migrate() {
   if (!keyCols.some((c) => c.name === "model")) {
     db.run("ALTER TABLE api_keys ADD COLUMN model TEXT");
   }
+
+  // Ensure api_keys has a kind column. Keys are split into 'v1' (direct resume
+  // generation: Gemini/OpenAI/Anthropic) and 'v2' (a Gemini key that refines the
+  // ChatGPT prompt). Existing keys are all V1.
+  if (!keyCols.some((c) => c.name === "kind")) {
+    db.run("ALTER TABLE api_keys ADD COLUMN kind TEXT DEFAULT 'v1'");
+  }
+  db.run("UPDATE api_keys SET kind = 'v1' WHERE kind IS NULL OR kind = ''");
 
   // Ensure api_keys has a sort_order column (drag-and-drop ranking).
   if (!keyCols.some((c) => c.name === "sort_order")) {
@@ -437,11 +453,11 @@ function importSelected(filePath, selection = {}) {
         const a = srcGet(src, "SELECT * FROM accounts WHERE id = ?", [id]);
         if (!a) return;
         insert(
-          `INSERT INTO accounts (name, title, email, phone, address, country, linkedin, portfolio, main_stack, sort_order, created_at)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO accounts (name, title, email, phone, address, country, linkedin, portfolio, main_stack, additional_info, sort_order, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [a.name ?? null, a.title ?? null, a.email ?? null, a.phone ?? null, a.address ?? null,
            a.country ?? null, a.linkedin ?? null, a.portfolio ?? null, a.main_stack ?? null,
-           nextOrder("accounts"), a.created_at ?? nowIso]
+           a.additional_info ?? null, nextOrder("accounts"), a.created_at ?? nowIso]
         );
         // sql.js resets last_insert_rowid() on export, so read the new id back.
         const maxRow = get("SELECT MAX(id) AS id FROM accounts");
