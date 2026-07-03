@@ -1,0 +1,4 @@
+- The unique id should be stored in each apply history and the show it in Application history
+- When making the prompt for Gemini, focus on getting Position Title, Company and Country Name, too.
+- Add the function to export the Application history
+- Remove the function not choosing the same color in Resume Styles, but for this style, it should work.

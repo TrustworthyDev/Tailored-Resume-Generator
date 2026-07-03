@@ -104,6 +104,11 @@ export default function ResumeGenerator({ variant = "v1" }) {
   const [pickersOpen, setPickersOpen] = useState(true); // colors & font section expanded
   const [pdfUrl, setPdfUrl] = useState(""); // blob URL of the saved PDF for inline viewing
   const [v2Waiting, setV2Waiting] = useState(false); // V2: waiting for the ChatGPT reply on the clipboard
+  const [chatHome, setChatHome] = useState(""); // V2: saved ChatGPT Project Home URL ("" = default)
+  const [connMode, setConnMode] = useState("direct"); // V2 browser: "direct" (local IP) | "proxy"
+  const [proxyList, setProxyList] = useState([]); // V2: proxies to choose from
+  const [chatProxyId, setChatProxyId] = useState(""); // V2: chosen proxy id
+  const [showPromptModal, setShowPromptModal] = useState(false); // view active prompt content
   const pastedRef = useRef(false);
   const busyRef = useRef(false); // guards overlapping PDF renders
 
@@ -206,6 +211,27 @@ export default function ResumeGenerator({ variant = "v1" }) {
     return () => { if (isV2) api().cancelChatgptClipboard(); };
   }, [isV2]);
 
+  // V2: load the saved ChatGPT Project Home URL + the browser connection choice.
+  useEffect(() => {
+    if (!isV2) return;
+    api().getChatgptHome().then((r) => setChatHome((r && r.url) || ""));
+    (async () => {
+      const [modePref, pidPref, list] = await Promise.all([
+        api().getPref("chat_conn_mode"),
+        api().getPref("chat_proxy_id"),
+        api().listProxies(),
+      ]);
+      setProxyList(list || []);
+      if (modePref && modePref.value) setConnMode(modePref.value);
+      if (pidPref && pidPref.value) setChatProxyId(String(pidPref.value));
+    })();
+    // Update the displayed home when saved from inside the embedded browser.
+    const off = api().onChatgptHomeChanged
+      ? api().onChatgptHomeChanged((url) => setChatHome(url || ""))
+      : null;
+    return () => { if (typeof off === "function") off(); };
+  }, [isV2]);
+
   // Load the saved PDF's bytes into a blob URL so the preview tab can render the
   // real, paginated PDF inline. Re-runs on each new generation (savedAt changes).
   useEffect(() => {
@@ -264,16 +290,19 @@ export default function ResumeGenerator({ variant = "v1" }) {
     setStyles((arr) => { api().setPref("style_order", arr.map((s) => s.id).join(",")); return arr; });
   };
 
+  // Name and Content may share a colour on every style EXCEPT "cards", whose
+  // coloured header would hide a same-coloured name — there the clash is blocked.
+  const colorLock = style === "cards";
   const chooseAccent = (v) => {
-    if (v && nameColor && v.toLowerCase() === nameColor.toLowerCase()) {
-      toast("That colour is already used by the Name picker — choose a different one.", "warning");
+    if (colorLock && v && nameColor && v.toLowerCase() === nameColor.toLowerCase()) {
+      toast("On the Cards style the name sits on a coloured header — pick a different Content colour.", "warning");
       return;
     }
     setAccent(v); api().setPref("resume_accent", v); if (!result) toast(NO_CONTENT_MSG, "warning");
   };
   const chooseNameColor = (v) => {
-    if (v && accent && v.toLowerCase() === accent.toLowerCase()) {
-      toast("That colour is already used by the Content picker — choose a different one.", "warning");
+    if (colorLock && v && accent && v.toLowerCase() === accent.toLowerCase()) {
+      toast("On the Cards style the name sits on a coloured header — pick a different Name colour.", "warning");
       return;
     }
     setNameColor(v); api().setPref("resume_name_color", v); if (!result) toast(NO_CONTENT_MSG, "warning");
@@ -360,6 +389,8 @@ export default function ResumeGenerator({ variant = "v1" }) {
         role,
         company,
         country,
+        // V2 handshake id, recorded on the application history entry (empty for V1).
+        requestId: opts.requestId || "",
         // Colour/style/font re-render: overwrite the existing file in place
         // rather than creating a new folder.
         overwritePath: opts.skipCover && savedPath ? savedPath : undefined,
@@ -448,7 +479,9 @@ export default function ResumeGenerator({ variant = "v1" }) {
       if (!onClipboard) {
         try { await navigator.clipboard.writeText(prompt); onClipboard = true; } catch (_) {}
       }
-      await api().openChatgpt();
+      // Close any existing ChatGPT window and open a brand-new one (at the saved
+      // Project Home, if set) for this generation.
+      await api().openChatgpt({ fresh: true });
       setV2Waiting(true);
       toast(
         onClipboard
@@ -484,7 +517,7 @@ export default function ResumeGenerator({ variant = "v1" }) {
       if (openModalAfterPreview) setShowPreview(true);
       if (res.text) {
         setView("preview");
-        await exportPdf(res.text || "", res.jobRole || "", res.jobCompany || "", res.jobCountry || "", useJd);
+        await exportPdf(res.text || "", res.jobRole || "", res.jobCompany || "", res.jobCountry || "", useJd, { requestId: id });
         toast("Resume generated from your ChatGPT reply.", "success");
       }
     } catch (e) {
@@ -503,6 +536,33 @@ export default function ResumeGenerator({ variant = "v1" }) {
     setV2Waiting(false);
     setLoading(false);
   };
+
+  // V2 Project Home: saving is done from inside the embedded browser (a floating
+  // button on the page). Reset reverts to the default ChatGPT site.
+  const resetChatHome = async () => {
+    await api().clearChatgptHome();
+    setChatHome("");
+    toast("Project Home reset to the default ChatGPT site.", "info");
+  };
+
+  // V2 browser connection: local IP (direct) or a chosen proxy. Takes effect the
+  // next time the ChatGPT window opens (Generate opens a fresh one).
+  const chooseConnMode = (mode) => {
+    setConnMode(mode);
+    api().setPref("chat_conn_mode", mode);
+    // Default the proxy selection to the active one the first time Proxy is picked.
+    if (mode === "proxy" && !chatProxyId && proxyList.length) {
+      const active = proxyList.find((p) => p.is_active) || proxyList[0];
+      const id = String(active.id);
+      setChatProxyId(id);
+      api().setPref("chat_proxy_id", id);
+    }
+  };
+  const chooseChatProxy = (id) => {
+    setChatProxyId(id);
+    api().setPref("chat_proxy_id", id);
+  };
+  const proxyLabel = (p) => [p.url, p.port].filter(Boolean).join(":") || `Proxy ${p.id}`;
 
   const openFolder = async () => {
     if (!savedPath) { toast("Generate a resume first — then Open Folder will reveal the saved PDF.", "warning"); return; }
@@ -571,8 +631,8 @@ export default function ResumeGenerator({ variant = "v1" }) {
                   className={"swatch" + (on ? " active" : "")}
                   style={{ background: c.value }}
                   onClick={() => chooseNameColor(c.value)}
-                  disabled={taken && !on}
-                  title={taken ? `${c.name} — already used by the Content picker` : c.name}
+                  disabled={colorLock && taken && !on}
+                  title={colorLock && taken ? `${c.name} — used by the Content picker (Cards style)` : c.name}
                   aria-label={c.name}
                 >
                   {on ? "✓" : ""}
@@ -584,8 +644,8 @@ export default function ResumeGenerator({ variant = "v1" }) {
               className={"swatch swatch-white" + (nameColor.toLowerCase() === "#ffffff" ? " active" : "")}
               style={{ background: "#ffffff" }}
               onClick={() => chooseNameColor("#ffffff")}
-              disabled={accent.toLowerCase() === "#ffffff" && nameColor.toLowerCase() !== "#ffffff"}
-              title={accent.toLowerCase() === "#ffffff" ? "White — already used by the Content picker" : "White"}
+              disabled={colorLock && accent.toLowerCase() === "#ffffff" && nameColor.toLowerCase() !== "#ffffff"}
+              title={colorLock && accent.toLowerCase() === "#ffffff" ? "White — used by the Content picker (Cards style)" : "White"}
               aria-label="White"
             >
               {nameColor.toLowerCase() === "#ffffff" ? "✓" : ""}
@@ -621,8 +681,8 @@ export default function ResumeGenerator({ variant = "v1" }) {
                   className={"swatch" + (on ? " active" : "")}
                   style={{ background: c.value }}
                   onClick={() => chooseAccent(c.value)}
-                  disabled={taken && !on}
-                  title={taken ? `${c.name} — already used by the Name picker` : c.name}
+                  disabled={colorLock && taken && !on}
+                  title={colorLock && taken ? `${c.name} — used by the Name picker (Cards style)` : c.name}
                   aria-label={c.name}
                 >
                   {on ? "✓" : ""}
@@ -634,8 +694,8 @@ export default function ResumeGenerator({ variant = "v1" }) {
               className={"swatch swatch-white" + (accent.toLowerCase() === "#ffffff" ? " active" : "")}
               style={{ background: "#ffffff" }}
               onClick={() => chooseAccent("#ffffff")}
-              disabled={nameColor.toLowerCase() === "#ffffff" && accent.toLowerCase() !== "#ffffff"}
-              title={nameColor.toLowerCase() === "#ffffff" ? "White — already used by the Name picker" : "White"}
+              disabled={colorLock && nameColor.toLowerCase() === "#ffffff" && accent.toLowerCase() !== "#ffffff"}
+              title={colorLock && nameColor.toLowerCase() === "#ffffff" ? "White — used by the Name picker (Cards style)" : "White"}
               aria-label="White"
             >
               {accent.toLowerCase() === "#ffffff" ? "✓" : ""}
@@ -723,26 +783,64 @@ export default function ResumeGenerator({ variant = "v1" }) {
 
         {view === "generate" ? (
         <>
-        <p className="muted">
-          {isV2 ? (
-            <>
-              Builds the tailored prompt, then hands it to your signed-in ChatGPT
-              in an embedded browser. Paste it (Ctrl+V), send, and copy the reply —
-              the app picks it up automatically. You can then type any extra
-              application questions straight into ChatGPT; it answers each
-              positively, aligned with the resume, in a copyable code block. A job
-              description is required. If an active Gemini key is set in Settings →
-              API (V2), it refines the prompt first; otherwise the built-in prompt
-              is used.
-            </>
-          ) : (
-            <>
-              Generates a resume tailored to the job description below using the
-              selected account, prompt and API key. A job description is required.
-              {!proxyActive && " Activate a proxy in Proxy Settings to generate."}
-            </>
-          )}
-        </p>
+        {isV2 && (
+          <div className="v2-controls">
+            <div className="chat-home">
+              <div className="chat-home-info">
+                <span className="field-label" style={{ margin: 0 }}>ChatGPT Project Home</span>
+                <span className="muted small chat-home-url" title={chatHome || undefined}>
+                  {chatHome || "Default (chatgpt.com)"}
+                </span>
+              </div>
+              <div className="chat-home-actions">
+                <button className="btn small" onClick={() => api().openChatgpt()} title="Open the embedded browser — use the in-page button to save a page as Project Home">
+                  Open ChatGPT
+                </button>
+                {chatHome && (
+                  <button className="btn small" onClick={resetChatHome} title="Revert to the default ChatGPT site">
+                    Reset
+                  </button>
+                )}
+              </div>
+            </div>
+
+            <div className="chat-home">
+              <div className="chat-home-info">
+                <span className="field-label" style={{ margin: 0 }}>Browser Connection</span>
+                <span className="muted small">
+                  {connMode === "proxy" ? "Routing through a proxy" : "Using this computer's IP"} · applies on the next open
+                </span>
+              </div>
+              <div className="chat-home-actions">
+                <div className="conn-group">
+                  {connMode === "proxy" && (
+                    <select
+                      className="input conn-proxy-select"
+                      value={chatProxyId}
+                      onChange={(e) => chooseChatProxy(e.target.value)}
+                    >
+                      {proxyList.length === 0 && <option value="">No proxies — add one in Settings → Proxy</option>}
+                      {proxyList.map((p) => (
+                        <option key={p.id} value={String(p.id)}>
+                          {proxyLabel(p)}{p.is_active ? " (active)" : ""}
+                        </option>
+                      ))}
+                    </select>
+                  )}
+                  <label className="toggle" title="Toggle between your local IP and a proxy">
+                    <input
+                      type="checkbox"
+                      checked={connMode === "proxy"}
+                      onChange={(e) => chooseConnMode(e.target.checked ? "proxy" : "direct")}
+                    />
+                    <span className="toggle-track"><span className="toggle-thumb" /></span>
+                    <span className="toggle-label">{connMode === "proxy" ? "Proxy" : "Local IP"}</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="grid2">
           <div className="field">
@@ -780,18 +878,24 @@ export default function ResumeGenerator({ variant = "v1" }) {
         </div>
 
         <div className="field">
-          <span className="field-label">Active Prompt</span>
+          <span className="field-label field-label-row">
+            Active Prompt
+            <button
+              type="button"
+              className="btn small"
+              onClick={() => setShowPromptModal(true)}
+              disabled={!selectedPrompt}
+              title="View this prompt's content"
+            >
+              View
+            </button>
+          </span>
           <FlagSelect
             value={promptId}
             onChange={onPrompt}
             placeholder={prompts.length ? "Select a prompt" : "No prompts — add in Instructions"}
             options={prompts.map((p) => ({ value: p.id, name: p.name || "(untitled)" }))}
           />
-        </div>
-        <div className="prompt-preview">
-          {selectedPrompt
-            ? selectedPrompt.body || "(this prompt is empty)"
-            : "Select a prompt to see its content."}
         </div>
 
         <label className="field jd-field">
@@ -929,6 +1033,22 @@ export default function ResumeGenerator({ variant = "v1" }) {
           {result
             ? <pre className="resume-output">{result}</pre>
             : <p className="muted">No content.</p>}
+        </div>
+      </div>
+    )}
+
+    {showPromptModal && (
+      <div className="modal-overlay" onClick={() => setShowPromptModal(false)}>
+        <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+          <div className="card-head">
+            <h2>{selectedPrompt ? (selectedPrompt.name || "Prompt") : "Prompt"}</h2>
+            <div className="list-actions">
+              <button className="btn small" onClick={() => setShowPromptModal(false)}>Close</button>
+            </div>
+          </div>
+          {selectedPrompt && selectedPrompt.body
+            ? <pre className="resume-output">{selectedPrompt.body}</pre>
+            : <p className="muted">This prompt is empty.</p>}
         </div>
       </div>
     )}

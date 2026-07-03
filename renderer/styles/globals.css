@@ -215,6 +215,54 @@ select.input {
 }
 .v2-wait-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 
+/* Generate V2 — grouped controls (Project Home + Browser Connection). */
+.v2-controls { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
+.v2-controls .chat-home { margin: 0; }
+
+/* A field label with an inline action (e.g. Active Prompt + View button). */
+.field-label-row { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+
+/* Generate V2 — ChatGPT Project Home row. Fixed row height so the section size
+   stays constant regardless of its contents. */
+.chat-home {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+  margin: 6px 0 12px; padding: 10px 14px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--panel-2);
+  height: 62px; box-sizing: border-box;
+}
+.chat-home-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.chat-home-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
+.chat-home-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
+/* Keep the Local IP/Proxy toggle and its proxy dropdown together as one unit,
+   in a FIXED-WIDTH area so toggling Proxy/Local IP never resizes the section
+   (the dropdown fills reserved space; the toggle stays pinned to the right). */
+.conn-group {
+  display: inline-flex; align-items: center; justify-content: flex-end;
+  gap: 10px; flex-wrap: nowrap; width: 380px; flex-shrink: 0;
+}
+.conn-group .toggle { margin-right: 0; }
+/* Fixed toggle label width (fits the longer "Local IP") so switching to "Proxy"
+   never changes the toggle's footprint. */
+.conn-group .toggle-label { display: inline-block; width: 56px; text-align: left; white-space: nowrap; }
+/* Compact fixed-height dropdown so showing it doesn't grow the row. */
+.conn-proxy-select {
+  width: 240px; min-width: 240px; flex-shrink: 0;
+  height: 34px; padding-top: 4px; padding-bottom: 4px; font-size: 13px;
+}
+.toggle-radio { display: inline-flex; align-items: center; gap: 5px; font-size: 13px; cursor: pointer; }
+.toggle-radio input { cursor: pointer; }
+
+/* Input with a trailing icon button (e.g. show/hide the API key). */
+.input-with-btn { position: relative; display: flex; align-items: center; }
+.input-with-btn .input { padding-right: 44px; width: 100%; }
+.input-eye {
+  position: absolute; right: 6px; top: 50%; transform: translateY(-50%);
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; padding: 0; border: none; border-radius: 8px;
+  background: transparent; color: var(--muted); cursor: pointer;
+}
+.input-eye:hover { color: var(--text, #e6e9ef); background: rgba(255, 255, 255, 0.06); }
+
 /* Lists (api keys, prompts, proxies) */
 .subcard {
   margin-top: 14px; background: var(--panel-2); border: 1px solid var(--border);

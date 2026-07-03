@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Notification, dialog, shell, clipboard, session } = require("electron");
+const { app, BrowserWindow, ipcMain, Notification, dialog, shell, clipboard, session, screen } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const db = require("./db");
@@ -9,6 +9,22 @@ const {
 const license = require("./license");
 
 const isDev = !!process.env.ELECTRON_DEV;
+
+// Give the UNPACKED build its own userData (database + ChatGPT session), separate
+// from the INSTALLED app, so testing the unpacked exe never touches real data.
+// electron-builder puts the unpacked exe in a "win-unpacked" folder; the NSIS
+// install goes elsewhere. This MUST run before any userData path is read
+// (crash logging, DB init), i.e. here at module load.
+let isUnpackedBuild = false;
+try {
+  const exeDir = path.basename(path.dirname(process.execPath)).toLowerCase();
+  isUnpackedBuild = app.isPackaged && exeDir === "win-unpacked";
+  if (isUnpackedBuild) {
+    const devData = path.join(app.getPath("appData"), "Careerva (Unpacked)");
+    fs.mkdirSync(devData, { recursive: true });
+    app.setPath("userData", devData);
+  }
+} catch (_) {}
 
 // Write startup/runtime failures to a log next to the app so packaged builds
 // are diagnosable (GUI binaries don't print to a console).
@@ -82,6 +98,8 @@ function createWindow() {
     minHeight: 640,
     center: true,
     title: "Careerva",
+    // Match the app's dark theme so there's no white flash before the UI paints.
+    backgroundColor: "#0c0e13",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -342,7 +360,7 @@ function registerIpc() {
   // Application history for one account (most recent first).
   ipcMain.handle("applications:byAccount", (_e, accountId) =>
     db.all(
-      `SELECT ap.id, ap.role, ap.company, ap.country, ap.applied_at, ap.pdf_path,
+      `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
               ac.main_stack AS account_stack
        FROM applications ap
        LEFT JOIN accounts ac ON ac.id = ap.account_id
@@ -355,7 +373,7 @@ function registerIpc() {
   // most recent first — feeds the "All Applications" tab.
   ipcMain.handle("applications:all", () =>
     db.all(
-      `SELECT ap.id, ap.role, ap.company, ap.country, ap.applied_at, ap.pdf_path,
+      `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
               ac.name AS account_name, ac.main_stack AS account_stack
        FROM applications ap
        LEFT JOIN accounts ac ON ac.id = ap.account_id
@@ -367,16 +385,54 @@ function registerIpc() {
   ipcMain.handle("applications:search", (_e, query) => {
     const like = `%${(query || "").trim().toLowerCase()}%`;
     return db.all(
-      `SELECT ap.id, ap.role, ap.company, ap.country, ap.applied_at, ap.pdf_path,
+      `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
               ac.name AS account_name, ac.main_stack AS account_stack
        FROM applications ap
        LEFT JOIN accounts ac ON ac.id = ap.account_id
        WHERE LOWER(IFNULL(ac.name, '')) LIKE ?
           OR LOWER(IFNULL(ap.role, '')) LIKE ?
           OR LOWER(IFNULL(ap.company, '')) LIKE ?
+          OR LOWER(IFNULL(ap.request_id, '')) LIKE ?
        ORDER BY ap.id DESC`,
-      [like, like, like]
+      [like, like, like, like]
     );
+  });
+
+  // Export the whole application history to a CSV file the user picks.
+  ipcMain.handle("applications:export", async () => {
+    try {
+      const rows = db.all(
+        `SELECT ap.applied_at, ac.name AS account_name, ac.main_stack AS account_stack,
+                ap.role, ap.company, ap.country, ap.request_id, ap.pdf_path
+         FROM applications ap
+         LEFT JOIN accounts ac ON ac.id = ap.account_id
+         ORDER BY ap.id DESC`
+      );
+      if (!rows.length) return { ok: false, error: "No applications to export." };
+
+      const res = await dialog.showSaveDialog(mainWindow, {
+        title: "Export application history",
+        defaultPath: "applications.csv",
+        filters: [{ name: "CSV", extensions: ["csv"] }],
+      });
+      if (res.canceled || !res.filePath) return { canceled: true };
+
+      // Quote every field so commas/quotes/newlines in values stay intact.
+      const esc = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+      const header = ["Applied At", "Account", "Stack", "Role", "Company", "Country", "Unique ID", "PDF Path"];
+      const lines = [header.map(esc).join(",")];
+      rows.forEach((r) => {
+        lines.push([
+          r.applied_at, r.account_name, r.account_stack, r.role,
+          r.company, r.country, r.request_id, r.pdf_path,
+        ].map(esc).join(","));
+      });
+      // BOM so Excel opens UTF-8 correctly.
+      fs.writeFileSync(res.filePath, "﻿" + lines.join("\r\n"), "utf8");
+      return { ok: true, path: res.filePath, count: rows.length };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
   });
 
   // Education (scoped to an account)
@@ -860,20 +916,23 @@ function registerIpc() {
       }
 
       // Update the single existing entry for a duplicate; otherwise add a new one.
+      const recRequestId = (d.requestId || "").trim();
       if (isDuplicate) {
         notify(
           "Duplicate application",
           `Updated the existing "${recRole}" at ${recCompany} — no new entry created.`
         );
+        // Keep the existing id when this regeneration carries none (e.g. a V1
+        // re-render), otherwise refresh it with the new handshake id.
         db.run(
-          "UPDATE applications SET pdf_path = ?, country = ?, applied_at = ? WHERE id = ?",
-          [savedFile, recCountry, nowIso(), dup.id]
+          "UPDATE applications SET pdf_path = ?, country = ?, applied_at = ?, request_id = COALESCE(NULLIF(?, ''), request_id) WHERE id = ?",
+          [savedFile, recCountry, nowIso(), recRequestId, dup.id]
         );
       } else {
         db.insert(
-          `INSERT INTO applications (account_id, role, company, country, position, applied_at, pdf_path)
-           VALUES (?, ?, ?, ?, ?, ?, ?)`,
-          [d.accountId, recRole, recCompany, recCountry, recRole, nowIso(), savedFile]
+          `INSERT INTO applications (account_id, role, company, country, position, request_id, applied_at, pdf_path)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+          [d.accountId, recRole, recCompany, recCountry, recRole, recRequestId, nowIso(), savedFile]
         );
       }
       return { ok: true, path: savedFile, coverPath: coverFile, duplicate: isDuplicate, savedAt: stamp.display };
@@ -974,27 +1033,79 @@ function registerIpc() {
   let chatWin = null;
   let clipWatch = null; // { timer, resolve }
   let chatProxyAuth = null; // { username, password } for the embedded browser's proxy
+  let chatProxyKey = null;  // last-applied session proxy ("direct" | "host:port") to avoid redundant setProxy calls
 
-  // Route the embedded ChatGPT browser through the SAME proxy the user configured
-  // for V1 API calls (the active row in `proxies`). Applied to the persistent
-  // chat session, so the ChatGPT page and its OAuth pop-ups all use the proxy.
+  // Injected into the ChatGPT page: a floating button that saves the current
+  // page as the Project Home via the preload bridge (window.careerva.saveHome).
+  const CHAT_SAVE_BUTTON_JS = `(function(){
+    try {
+      if (!window.careerva || document.getElementById('careerva-savehome')) return;
+      var b = document.createElement('button');
+      b.id = 'careerva-savehome';
+      var idle = '📌 Save as Project Home';
+      b.textContent = idle;
+      b.style.cssText = 'position:fixed;right:16px;bottom:16px;z-index:2147483647;padding:10px 14px;border-radius:10px;border:none;background:#4f8cff;color:#fff;font:600 13px Segoe UI,Arial,sans-serif;cursor:pointer;box-shadow:0 6px 20px rgba(0,0,0,.4)';
+      b.onclick = async function(){
+        b.textContent = 'Saving…';
+        try { var r = await window.careerva.saveHome(); b.textContent = (r && r.ok) ? 'Saved ✓' : 'Could not save'; }
+        catch(e){ b.textContent = 'Could not save'; }
+        setTimeout(function(){ b.textContent = idle; }, 1600);
+      };
+      document.body.appendChild(b);
+    } catch(e){}
+  })();`;
+
+  const CHAT_HOME_DEFAULT = "https://chatgpt.com/";
+  // The URL the embedded browser opens at — a user-saved ChatGPT "Project Home",
+  // or the default ChatGPT site when none is saved.
+  function chatHomeUrl() {
+    const row = db.get("SELECT value FROM prefs WHERE key = 'chatgpt_home_url'");
+    const v = row && row.value ? String(row.value).trim() : "";
+    return v || CHAT_HOME_DEFAULT;
+  }
+
+  // Route the embedded ChatGPT browser per the V2 connection choice:
+  //   chat_conn_mode = "direct" → local IP (no proxy)
+  //   chat_conn_mode = "proxy"  → the proxy chosen in chat_proxy_id
+  //                               (falls back to the active proxy if unset)
+  // Applied to the persistent chat session, so the ChatGPT page and its OAuth
+  // pop-ups all use the same connection.
   async function applyChatProxy() {
     const ses = session.fromPartition(CHAT_PARTITION);
-    const active = db.get(
-      "SELECT url, port, username, password FROM proxies WHERE is_active = 1 LIMIT 1"
-    );
+    const modeRow = db.get("SELECT value FROM prefs WHERE key = 'chat_conn_mode'");
+    const mode = modeRow && modeRow.value ? modeRow.value : "direct";
+
+    let active = null;
+    if (mode === "proxy") {
+      const idRow = db.get("SELECT value FROM prefs WHERE key = 'chat_proxy_id'");
+      const pid = idRow && idRow.value ? Number(idRow.value) : null;
+      if (pid) {
+        active = db.get("SELECT url, port, username, password FROM proxies WHERE id = ?", [pid]);
+      }
+      if (!active) {
+        active = db.get("SELECT url, port, username, password FROM proxies WHERE is_active = 1 LIMIT 1");
+      }
+    }
+
     if (!active || !String(active.url || "").trim()) {
       chatProxyAuth = null;
-      try { await ses.setProxy({ mode: "direct" }); } catch (_) {}
+      // Skip the (potentially slow) setProxy call when nothing changed.
+      if (chatProxyKey !== "direct") {
+        try { await ses.setProxy({ mode: "direct" }); } catch (_) {}
+        chatProxyKey = "direct";
+      }
       return;
     }
     const host = String(active.url).trim().replace(/^https?:\/\//i, "").replace(/\/+$/, "");
     const port = String(active.port || "").trim();
     const server = port ? `${host}:${port}` : host;
-    try { await ses.setProxy({ proxyRules: server }); } catch (_) {}
     const username = String(active.username || "").trim();
     const password = String(active.password || "").trim();
     chatProxyAuth = username || password ? { username, password } : null;
+    if (chatProxyKey !== server) {
+      try { await ses.setProxy({ proxyRules: server }); } catch (_) {}
+      chatProxyKey = server;
+    }
   }
 
   // Supply proxy credentials when the embedded browser's proxy requires auth.
@@ -1052,40 +1163,146 @@ function registerIpc() {
   });
 
   // Open (or focus) the embedded, session-persistent ChatGPT browser.
-  ipcMain.handle("chatgpt:open", async () => {
+  ipcMain.handle("chatgpt:open", async (_e, opts) => {
+    const fresh = !!(opts && opts.fresh);
     const ses = session.fromPartition(CHAT_PARTITION);
     ses.setUserAgent(CHAT_UA);
-    // Pick up the latest active proxy each time the browser is opened/focused.
-    await applyChatProxy();
-    if (chatWin && !chatWin.isDestroyed()) {
+    // Pick up the latest active proxy each time the browser is opened/focused —
+    // but NEVER let a proxy error prevent the window from opening.
+    try { await applyChatProxy(); } catch (_) {}
+
+    // Fresh open (used by Generate): close the existing window first so a brand-
+    // new one always opens. Detach chatWin before destroying so the old window's
+    // "closed" handler is a no-op (see the identity guard below).
+    if (fresh && chatWin && !chatWin.isDestroyed()) {
+      const old = chatWin;
+      chatWin = null;
+      try { old.destroy(); } catch (_) {}
+    }
+    // Not fresh, and one is already open → just focus it.
+    if (!fresh && chatWin && !chatWin.isDestroyed()) {
       chatWin.show();
       chatWin.focus();
       return { ok: true };
     }
-    chatWin = new BrowserWindow({
+
+    // Open on the SAME display as the main app window (multi-monitor setups),
+    // centered within that display's work area.
+    const winOpts = {
       width: 1180, height: 860, title: "ChatGPT — Careerva V2",
       autoHideMenuBar: true,
-      webPreferences: { partition: CHAT_PARTITION, contextIsolation: true, sandbox: true },
+      show: true,
+      webPreferences: {
+        partition: CHAT_PARTITION, contextIsolation: true, sandbox: true,
+        preload: path.join(__dirname, "chatPreload.js"),
+      },
+    };
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const wa = screen.getDisplayMatching(mainWindow.getBounds()).workArea;
+        const w = Math.min(winOpts.width, wa.width);
+        const h = Math.min(winOpts.height, wa.height);
+        winOpts.width = w;
+        winOpts.height = h;
+        winOpts.x = Math.round(wa.x + (wa.width - w) / 2);
+        winOpts.y = Math.round(wa.y + (wa.height - h) / 2);
+      }
+    } catch (_) {}
+    const win = new BrowserWindow(winOpts);
+    chatWin = win;
+    win.webContents.setUserAgent(CHAT_UA);
+    // Inject a floating "Save as Project Home" button into the ChatGPT page so
+    // the location can be saved from inside the browser window itself.
+    win.webContents.on("did-finish-load", () => {
+      let url = "";
+      try { url = win.webContents.getURL() || ""; } catch (_) {}
+      if (!/^https?:\/\//i.test(url)) return; // skip the local error page
+      win.webContents.executeJavaScript(CHAT_SAVE_BUTTON_JS).catch(() => {});
     });
-    chatWin.webContents.setUserAgent(CHAT_UA);
     // Keep OAuth pop-ups (Google sign-in) inside the same persistent session.
-    chatWin.webContents.setWindowOpenHandler(() => ({
+    win.webContents.setWindowOpenHandler(() => ({
       action: "allow",
       overrideBrowserWindowOptions: {
         autoHideMenuBar: true,
         webPreferences: { partition: CHAT_PARTITION, contextIsolation: true, sandbox: true },
       },
     }));
-    // Closing the ChatGPT window aborts any in-flight wait — there's no longer a
-    // place for the reply to come from, so stop the generation instead of hanging.
-    chatWin.on("closed", () => {
+    // Closing the CURRENT window aborts any in-flight wait. The identity guard
+    // means a superseded (destroyed-on-fresh-open) window never clears state.
+    win.on("closed", () => {
+      if (chatWin !== win) return;
       chatWin = null;
       if (clipWatch) { clipWatch.resolve({ ok: false, closed: true }); clipWatch = null; }
     });
-    try {
-      await chatWin.loadURL("https://chatgpt.com/");
-    } catch (_) {}
+    // If the page can't load (commonly a proxy that can't reach chatgpt.com),
+    // show a readable message instead of a blank window.
+    win.webContents.on("did-fail-load", (_e2, errorCode, errorDesc, _url, isMainFrame) => {
+      if (!isMainFrame || errorCode === -3 /* ERR_ABORTED (redirects) */) return;
+      const via = chatProxyAuth ? "the active (authenticated) proxy" : "the active proxy";
+      const html =
+        "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;background:#111;color:#eee;padding:40px;line-height:1.5\">" +
+        "<h2>Couldn't load ChatGPT</h2>" +
+        `<p>The page failed to load through ${via} (${errorDesc || "network error"}).</p>` +
+        "<p>Open <b>Settings → Proxy</b> and check the active proxy (or deactivate it), then reopen this window.</p>" +
+        "</body></html>";
+      try { if (!win.isDestroyed()) win.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html)); } catch (_) {}
+    });
+    // Start loading but DON'T await it — the window is already visible and the
+    // app can proceed immediately; the page finishes loading in the background.
+    win.loadURL(chatHomeUrl()).catch(() => {});
     return { ok: true };
+  });
+
+  // Save the current embedded-browser page (or an explicit URL) as the ChatGPT
+  // "Project Home" the browser opens at from now on.
+  ipcMain.handle("chatgpt:saveHome", (_e, url) => {
+    let target = String(url || "").trim();
+    if (!target && chatWin && !chatWin.isDestroyed()) {
+      try { target = chatWin.webContents.getURL() || ""; } catch (_) {}
+    }
+    target = target.trim();
+    if (!/^https?:\/\//i.test(target)) {
+      return { ok: false, error: "Open the ChatGPT page you want (e.g. your Project) first, then save it as Project Home." };
+    }
+    db.run(
+      `INSERT INTO prefs (key, value) VALUES ('chatgpt_home_url', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      [target]
+    );
+    return { ok: true, url: target };
+  });
+
+  // Current saved Project Home ("" = the default ChatGPT site).
+  ipcMain.handle("chatgpt:getHome", () => {
+    const row = db.get("SELECT value FROM prefs WHERE key = 'chatgpt_home_url'");
+    return { url: row && row.value ? row.value : "", default: CHAT_HOME_DEFAULT };
+  });
+
+  // Clear the saved Project Home (revert to the default ChatGPT site).
+  ipcMain.handle("chatgpt:clearHome", () => {
+    db.run("DELETE FROM prefs WHERE key = 'chatgpt_home_url'");
+    return { ok: true };
+  });
+
+  // Called from the in-browser "Save as Project Home" button: save the URL the
+  // embedded browser is currently showing.
+  ipcMain.handle("chatgpt:saveHomeFromBrowser", () => {
+    if (!chatWin || chatWin.isDestroyed()) return { ok: false };
+    let url = "";
+    try { url = chatWin.webContents.getURL() || ""; } catch (_) {}
+    url = url.trim();
+    if (!/^https?:\/\//i.test(url)) return { ok: false };
+    db.run(
+      `INSERT INTO prefs (key, value) VALUES ('chatgpt_home_url', ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      [url]
+    );
+    notify("Project Home saved", url);
+    // Let the app update its displayed Project Home value.
+    if (mainWindow && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
+      mainWindow.webContents.send("chatgpt:homeChanged", url);
+    }
+    return { ok: true, url };
   });
 
   // Is the user already signed in (so V2 won't make them log in again)?
@@ -1312,7 +1529,8 @@ function registerIpc() {
 
 app.whenReady().then(async () => {
   try {
-    migrateLegacyData();
+    // The unpacked build is a separate sandbox — don't pull in legacy data.
+    if (!isUnpackedBuild) migrateLegacyData();
     await db.initDb(app.getPath("userData"));
     // Re-apply the active proxy before any API calls.
     const activeProxy = db.get(
