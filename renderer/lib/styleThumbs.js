@@ -116,6 +116,57 @@ export function styleThumb(style) {
       for (let i = 0; i < 2; i++) inner += rc(20, yy + 32 + i * 8, 200, 4, G);
       break;
     }
+    case "timeline": {
+      inner += rc(20, 18, 120, 15, nameC || "#1a1a1a", 2);   // name
+      inner += rc(20, 38, 96, 6, titleC || a);               // title (accent)
+      inner += rc(20, 50, 150, 4, G);                        // contacts
+      inner += rc(20, 66, 54, 7, a);                         // SUMMARY heading
+      inner += rc(20, 77, 200, 1, head || R);
+      inner += rc(20, 84, 200, 4, G);
+      inner += rc(20, 92, 188, 4, G);
+      inner += rc(20, 106, 66, 7, a);                        // EXPERIENCE heading
+      inner += rc(20, 117, 200, 1, head || R);
+      const lx = 74;
+      inner += rc(lx, 126, 1.6, 150, R);                     // vertical timeline line
+      let y = 128;
+      for (let k = 0; k < 3; k++) {
+        inner += rc(30, y, 40, 5, "#333333");                // date
+        inner += rc(40, y + 8, 30, 4, G);                    // location
+        inner += `<circle cx='${lx + 0.8}' cy='${y + 3}' r='4' fill='#1f2937'/>`;
+        inner += rc(86, y, 70, 6, "#333333");                // role
+        inner += rc(86, y + 9, 45, 5, a);                    // company (accent)
+        for (let i = 0; i < 3; i++) inner += rc(86, y + 18 + i * 7, 130, 3.5, G);
+        y += 48;
+      }
+      break;
+    }
+    case "classic": {
+      inner += rc(70, 20, 100, 14, nameC || "#111111", 2);   // centered name
+      inner += rc(55, 40, 130, 6, titleC || "#333333");      // centered title
+      inner += rc(20, 54, 200, 2, "#111111");                // double rule (thick)
+      inner += rc(20, 58, 200, 1, "#111111");                // double rule (thin)
+      inner += rc(64, 64, 112, 4, G);                        // centered contacts
+      inner += rc(20, 80, 80, 8, head || "#111111");         // Summary heading
+      inner += rc(20, 92, 200, 4, G);
+      inner += rc(20, 100, 188, 4, G);
+      inner += rc(20, 114, 60, 8, head || "#111111");        // Skills heading
+      for (let i = 0; i < 3; i++) {
+        inner += `<circle cx='24' cy='${129 + i * 8}' r='1.6' fill='#333333'/>`;
+        inner += rc(30, 127 + i * 8, 190, 3.5, G);
+      }
+      inner += rc(20, 158, 92, 8, head || "#111111");        // Experience heading
+      let y = 172;
+      for (let k = 0; k < 2; k++) {
+        inner += rc(20, y, 112, 6, "#111111");               // Role, Dates (bold)
+        inner += rc(20, y + 9, 70, 4, "#666666");            // Company (italic)
+        for (let i = 0; i < 3; i++) {
+          inner += `<circle cx='24' cy='${y + 21 + i * 7}' r='1.6' fill='#333333'/>`;
+          inner += rc(30, y + 19 + i * 7, 180, 3.5, G);
+        }
+        y += 52;
+      }
+      break;
+    }
     default: // professional
       inner += rc(20, 20, 7, 42, a, 1);
       inner += rc(36, 24, 100, 16, nameC || "#1f2937", 3);

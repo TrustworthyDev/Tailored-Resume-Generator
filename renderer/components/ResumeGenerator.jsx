@@ -14,6 +14,8 @@ const STYLES = [
   { id: "academic", label: "Academic", accent: "#334155" },
   { id: "compact", label: "Compact", accent: "#475569" },
   { id: "cards", label: "Cards", accent: "#0d9488" },
+  { id: "timeline", label: "Timeline", accent: "#2563eb" },
+  { id: "classic", label: "Classic", accent: "#1f2937" },
 ];
 
 // Sample colors. The Content picker applies one to EVERY template's borders,
