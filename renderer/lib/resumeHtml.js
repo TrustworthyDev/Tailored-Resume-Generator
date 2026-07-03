@@ -179,6 +179,41 @@ a{color:${accent};}
 .skill-items{font-size:9.5pt;color:#3a4250;}
 .role-org{color:#6a7280;font-size:9.5pt;font-weight:400;margin:0 0 4px;}
 .role-dates{float:right;color:#7a8390;font-weight:400;font-size:9.5pt;}`;
+    case "timeline":
+      return `body{font-family:Calibri,"Segoe UI",Arial,sans-serif;}
+header{margin-bottom:14px;}
+header h1{margin:0;font-size:26pt;font-weight:800;color:#1a1a1a;letter-spacing:.3px;}
+.title{margin-top:3px;color:${accent};font-weight:700;font-size:12.5pt;white-space:normal;}
+.contacts{margin-top:6px;color:#5a6573;}
+main h2{font-size:12pt;color:${accent};text-transform:uppercase;letter-spacing:1px;border-bottom:1.5px solid ${head || "#d7dde5"};padding-bottom:3px;margin:18px 0 8px;font-weight:700;}
+main p.skills strong{color:${accent};}
+a{color:${accent};}
+/* Timeline experience: date/location on the left, a vertical line with a dot,
+   role + blue company + bullets on the right. */
+.tl-entry{display:grid;grid-template-columns:118px 1fr;column-gap:16px;margin:0;}
+.tl-side{text-align:right;padding-top:1px;}
+.tl-date{font-weight:700;color:#333333;font-size:9.5pt;white-space:nowrap;}
+.tl-loc{color:#6a7280;font-size:9pt;margin-top:2px;}
+.tl-main{border-left:2px solid #d5dae2;padding:0 0 14px 18px;position:relative;}
+.tl-main::before{content:"";position:absolute;box-sizing:border-box;left:-6px;top:3px;width:10px;height:10px;border-radius:50%;background:#1f2937;border:2px solid #ffffff;}
+.tl-main h3{margin:0 0 1px;}
+.tl-company{color:${accent};font-weight:700;font-size:10.5pt;margin:0 0 5px;}
+.tl-main ul{margin:3px 0 0;padding-left:16px;}`;
+    case "classic":
+      // A traditional, centered serif header (small-caps name + title, double
+      // rule) with left bold section headings; each role shows "Role, Dates"
+      // bold with the company/location italic below.
+      return `body{font-family:Calibri,"Segoe UI",Arial,sans-serif;color:#111;}
+header{text-align:center;margin-bottom:16px;}
+header h1{margin:0;font-family:Georgia,"Times New Roman",serif;font-variant:small-caps;font-weight:600;font-size:24pt;letter-spacing:1px;color:#111;}
+.title{font-family:Georgia,"Times New Roman",serif;font-variant:small-caps;font-weight:600;font-size:12pt;letter-spacing:.5px;color:#111;margin-top:4px;white-space:normal;}
+.contacts{border-top:3px double #111;margin-top:8px;padding-top:7px;color:#333;font-size:9pt;text-align:center;}
+main h2{font-size:13pt;font-weight:700;color:${head || "#111"};text-transform:none;border:none;margin:16px 0 7px;}
+main h3{font-size:11pt;font-weight:700;color:#111;margin:10px 0 0;}
+.role-dates{float:right;font-weight:400;color:#6a7280;font-size:9.5pt;}
+.role-org{font-style:italic;color:#333;font-size:10pt;margin:0 0 4px;}
+main p.skills strong{color:${head || "#111"};}
+a{color:${accent};}`;
     default: // professional
       return `body{font-family:Calibri,"Segoe UI",Arial,sans-serif;}
 header{border-left:5px solid ${accent};padding-left:16px;margin-bottom:18px;}
@@ -327,7 +362,9 @@ function headerHtml(id, name, title, contacts) {
 // wins over the template defaults.
 function fontOverride(style) {
   let css = "";
-  if (style && style.font) css += `body{font-family:${style.font};}`;
+  // Apply the chosen font to the header (name + title) too — templates set the
+  // header font themselves, so `body` alone wouldn't change it.
+  if (style && style.font) css += `body,header h1,.title{font-family:${style.font};}`;
   if (style && style.fontSize) css += `body{font-size:${style.fontSize}pt;}`;
   return css ? "\n" + css : "";
 }
@@ -549,7 +586,42 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
     }
   );
 
+  // Timeline style: rebuild each experience entry (role heading + company·location
+  // line + bullets) into a two-column row — dates/location on the left, a
+  // vertical line with a dot, and the role + blue company + bullets on the right.
+  if (id === "timeline") {
+    body = body.replace(
+      /<h3\b([^>]*)>([\s\S]*?)<\/h3>\s*(?:<div class="role-org">([\s\S]*?)<\/div>)?\s*(<ul\b[\s\S]*?<\/ul>)/g,
+      (m, attr, h3inner, org, ul) => {
+        const dm = h3inner.match(/<span class="role-dates">([\s\S]*?)<\/span>/);
+        const dates = dm ? dm[1].trim() : "";
+        const roleTitle = h3inner.replace(/<span class="role-dates">[\s\S]*?<\/span>/, "").trim();
+        let company = (org || "").trim();
+        let location = "";
+        const parts = (org || "").split(/\s*[·•]\s*/);
+        if (parts.length > 1) { company = parts[0].trim(); location = parts.slice(1).join(" · ").trim(); }
+        const side =
+          `<div class="tl-side">${dates ? `<div class="tl-date">${dates}</div>` : ""}` +
+          `${location ? `<div class="tl-loc">${location}</div>` : ""}</div>`;
+        const main =
+          `<div class="tl-main"><h3${attr}>${roleTitle}</h3>` +
+          `${company ? `<div class="tl-company">${company}</div>` : ""}${ul}</div>`;
+        return `<div class="tl-entry">${side}${main}</div>`;
+      }
+    );
+  }
+
+  // Classic style: render the company·location line as "Company, Location".
+  if (id === "classic") {
+    body = body.replace(
+      /(<div class="role-org">)([\s\S]*?)(<\/div>)/g,
+      (m, a, inner, c) => a + inner.replace(/\s*·\s*/g, ", ") + c
+    );
+  }
+
   // Keep each role heading (and its org line) with at least its first bullet.
+  // (Timeline entries were already restructured above, so this no longer matches
+  // them — they flow naturally.)
   body = body.replace(
     /<h3\b([^>]*)>([\s\S]*?)<\/h3>\s*(<div class="role-org">[\s\S]*?<\/div>)?\s*<ul>\s*(<li\b[\s\S]*?<\/li>)([\s\S]*?)<\/ul>/g,
     (m, attr, head, org, firstLi, restLis) => {
