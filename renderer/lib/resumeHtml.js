@@ -195,7 +195,7 @@ a{color:${accent};}
 .tl-date{font-weight:700;color:#333333;font-size:9.5pt;white-space:nowrap;}
 .tl-loc{color:#6a7280;font-size:9pt;margin-top:2px;}
 .tl-main{border-left:2px solid #d5dae2;padding:0 0 14px 18px;position:relative;}
-.tl-main::before{content:"";position:absolute;left:-6px;top:3px;width:10px;height:10px;border-radius:50%;background:#1f2937;border:2px solid #ffffff;}
+.tl-main::before{content:"";position:absolute;box-sizing:border-box;left:-6px;top:3px;width:10px;height:10px;border-radius:50%;background:#1f2937;border:2px solid #ffffff;}
 .tl-main h3{margin:0 0 1px;}
 .tl-company{color:${accent};font-weight:700;font-size:10.5pt;margin:0 0 5px;}
 .tl-main ul{margin:3px 0 0;padding-left:16px;}`;
@@ -210,8 +210,7 @@ header h1{margin:0;font-family:Georgia,"Times New Roman",serif;font-variant:smal
 .contacts{border-top:3px double #111;margin-top:8px;padding-top:7px;color:#333;font-size:9pt;text-align:center;}
 main h2{font-size:13pt;font-weight:700;color:${head || "#111"};text-transform:none;border:none;margin:16px 0 7px;}
 main h3{font-size:11pt;font-weight:700;color:#111;margin:10px 0 0;}
-.role-dates{float:none;font-weight:700;color:#111;font-size:11pt;}
-.role-dates::before{content:", ";}
+.role-dates{float:right;font-weight:400;color:#6a7280;font-size:9.5pt;}
 .role-org{font-style:italic;color:#333;font-size:10pt;margin:0 0 4px;}
 main p.skills strong{color:${head || "#111"};}
 a{color:${accent};}`;
@@ -363,7 +362,9 @@ function headerHtml(id, name, title, contacts) {
 // wins over the template defaults.
 function fontOverride(style) {
   let css = "";
-  if (style && style.font) css += `body{font-family:${style.font};}`;
+  // Apply the chosen font to the header (name + title) too — templates set the
+  // header font themselves, so `body` alone wouldn't change it.
+  if (style && style.font) css += `body,header h1,.title{font-family:${style.font};}`;
   if (style && style.fontSize) css += `body{font-size:${style.fontSize}pt;}`;
   return css ? "\n" + css : "";
 }
