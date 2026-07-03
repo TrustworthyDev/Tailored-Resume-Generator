@@ -75,6 +75,12 @@ export default function Applications() {
     await loadAll();
   };
 
+  const doExport = async () => {
+    const r = await api().exportApplications();
+    if (r && r.ok) setFileMsg(`Exported ${r.count} application${r.count === 1 ? "" : "s"} to ${r.path}`);
+    else if (r && !r.canceled) setFileMsg(r && r.error ? r.error : "Could not export the history.");
+  };
+
   const fmtDate = (iso) => {
     if (!iso) return "";
     const d = new Date(iso);
@@ -128,6 +134,9 @@ export default function Applications() {
           <span className="app-role">{a.role || "(untitled role)"}</span>
           <span className="app-date muted">{fmtDate(a.applied_at)}</span>
         </div>
+        {a.request_id && (
+          <div className="muted small app-reqid" title="Unique generation ID">ID: {a.request_id}</div>
+        )}
         {meta.length > 0 && (
           <div className="app-sub">
             {meta.map((m, i) => (
@@ -211,6 +220,14 @@ export default function Applications() {
                   All dates
                 </button>
               )}
+              <button
+                className="btn small"
+                onClick={doExport}
+                disabled={counts.total === 0}
+                title="Export the whole history to a CSV file"
+              >
+                Export
+              </button>
               <button
                 className="btn small danger"
                 onClick={() => setConfirmReset(true)}

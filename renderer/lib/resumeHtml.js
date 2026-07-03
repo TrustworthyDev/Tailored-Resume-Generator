@@ -393,10 +393,12 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
     rest = lines.join("\n");
   }
 
-  // The header reflects the account's Personal Info, never the model's text.
+  // Name + contacts stay authoritative from the account, but the TITLE is the
+  // tailored, per-job professional title the model generated — keep it, and only
+  // fall back to the account's title when the resume didn't supply one.
   if (contactInfo) {
     if (contactInfo.name) name = contactInfo.name;
-    title = (contactInfo.title || "").trim();
+    if (!title) title = (contactInfo.title || "").trim();
   }
   const built = buildContacts(contactInfo);
   if (built) contacts = built;

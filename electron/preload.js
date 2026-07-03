@@ -82,7 +82,10 @@ contextBridge.exposeInMainWorld("api", {
 
   // Generate V2 — ChatGPT-in-a-browser via a clipboard handshake.
   chatgptBuildPrompt: (data) => invoke("chatgpt:buildPrompt", data),
-  openChatgpt: () => invoke("chatgpt:open"),
+  openChatgpt: (opts) => invoke("chatgpt:open", opts),
+  saveChatgptHome: (url) => invoke("chatgpt:saveHome", url),
+  getChatgptHome: () => invoke("chatgpt:getHome"),
+  clearChatgptHome: () => invoke("chatgpt:clearHome"),
   chatgptSignedIn: () => invoke("chatgpt:signedIn"),
   awaitChatgptClipboard: (id, prompt, jobRef) => invoke("chatgpt:awaitClipboard", id, prompt, jobRef),
   cancelChatgptClipboard: () => invoke("chatgpt:cancelClipboard"),
@@ -100,6 +103,7 @@ contextBridge.exposeInMainWorld("api", {
   allApplications: () => invoke("applications:all"),
   applicationCounts: () => invoke("applications:counts"),
   searchApplications: (query) => invoke("applications:search", query),
+  exportApplications: () => invoke("applications:export"),
   deleteApplication: (id) => invoke("app:delete", id),
   resetApplications: () => invoke("app:resetAll"),
   startSession: () => invoke("session:start"),
@@ -114,5 +118,12 @@ contextBridge.exposeInMainWorld("api", {
     const handler = (_e, body) => cb(body);
     ipcRenderer.on("app:notify", handler);
     return () => ipcRenderer.removeListener("app:notify", handler);
+  },
+
+  // Fired when the Project Home is saved from inside the embedded browser.
+  onChatgptHomeChanged: (cb) => {
+    const handler = (_e, url) => cb(url);
+    ipcRenderer.on("chatgpt:homeChanged", handler);
+    return () => ipcRenderer.removeListener("chatgpt:homeChanged", handler);
   },
 });

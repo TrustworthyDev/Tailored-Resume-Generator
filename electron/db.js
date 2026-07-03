@@ -86,6 +86,7 @@ const SCHEMA = `
       company    TEXT,
       country    TEXT,
       position   TEXT,
+      request_id TEXT,
       applied_at TEXT,
       pdf_path   TEXT
     );
@@ -230,6 +231,7 @@ function migrate() {
     ["role", "TEXT"],
     ["country", "TEXT"],
     ["pdf_path", "TEXT"],
+    ["request_id", "TEXT"], // V2 handshake id, shown in the history
   ].forEach(([col, type]) => {
     if (!appCols.some((c) => c.name === col)) {
       db.run(`ALTER TABLE applications ADD COLUMN ${col} ${type}`);
@@ -385,7 +387,11 @@ function scanFile(filePath) {
       groups.push({
         id: "api_keys", label: "API Keys",
         items: srcAll(src, "SELECT * FROM api_keys ORDER BY id").map((r) => ({
-          id: r.id, label: (r.name || "(unnamed)") + (r.provider ? ` · ${r.provider}` : ""),
+          id: r.id,
+          label:
+            (r.name || "(unnamed)") +
+            ` · ${r.kind === "v2" ? "V2" : "V1"}` +
+            (r.provider ? ` ${r.provider}` : ""),
         })),
       });
     }
@@ -440,10 +446,12 @@ function importSelected(filePath, selection = {}) {
       ids("api_keys").forEach((id) => {
         const r = srcGet(src, "SELECT * FROM api_keys WHERE id = ?", [id]);
         if (!r) return;
+        // Preserve the model and V1/V2 kind so imported API (V2) keys stay V2.
         insert(
-          `INSERT INTO api_keys (name, api_key, provider, is_active, sort_order, created_at)
-           VALUES (?, ?, ?, 0, ?, ?)`,
-          [r.name ?? null, r.api_key ?? null, r.provider ?? "gemini", nextOrder("api_keys"), r.created_at ?? nowIso]
+          `INSERT INTO api_keys (name, api_key, provider, model, kind, is_active, sort_order, created_at)
+           VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
+          [r.name ?? null, r.api_key ?? null, r.provider ?? "gemini", r.model ?? null,
+           r.kind === "v2" ? "v2" : "v1", nextOrder("api_keys"), r.created_at ?? nowIso]
         );
         counts.api_keys++;
       });

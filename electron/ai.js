@@ -218,7 +218,7 @@ function buildPrompt(personal, work, education, projects, jobDescription, style,
   if (jobDescription && jobDescription.trim()) {
     lines.push("");
     lines.push(
-      "FORMAT: The VERY FIRST line of your output must be exactly `TARGET: <job title> | <company> | <country>`. For <job title>, copy the COMPLETE title VERBATIM from the job description, including every word and symbol such as parentheses, slashes, or qualifiers (e.g. `AI Engineer (Full Remote)`) — do NOT shorten or summarize it. Use Unknown for any part not found. Then a blank line, then the resume Markdown."
+      "FORMAT: The VERY FIRST line of your output must be exactly `TARGET: <job title> | <company> | <country>`. For <job title>, copy the COMPLETE title VERBATIM from the job description, including every word and symbol such as parentheses, slashes, or qualifiers (e.g. `AI Engineer (Full Remote)`) — do NOT shorten or summarize it. For <company>, use the hiring company's name. For <country>, give a plain country name, inferring it from the job location, office, or phrases like `Remote (US)` / `based in Berlin` (map a city to its country, e.g. Tallinn → Estonia). Use Unknown only for a part genuinely absent. Then a blank line, then the resume Markdown."
     );
   }
 
@@ -340,7 +340,7 @@ function buildPromptJson(personal, work, education, projects, jobDescription, st
     "Follow `user_prompt` (below) as the PRIMARY guide for the resume's content, wording, tone and emphasis. The rules below are ONLY about output format and data fidelity — they must not override or water down user_prompt.",
     "Tailor the resume to `job_description`. Use ONLY the provided candidate data; do NOT invent employers, dates, or achievements.",
     "Fill EVERY field of `resume` in `response_format` and follow that schema EXACTLY. Keep company, location, dates, degree, university and period EXACTLY as provided.",
-    "For `target.role`, copy the COMPLETE job title VERBATIM from job_description (keep all words and symbols, e.g. `AI Engineer (Full Remote)`); use \"Unknown\" for any part not found.",
+    "Fill `target` carefully — it is used to name and file the application: `target.role` = the COMPLETE job title copied VERBATIM from job_description (keep all words/symbols, e.g. `AI Engineer (Full Remote)`); `target.company` = the hiring company's name; `target.country` = the job's country as a plain country name (infer it from the job location, office, or phrases like `Remote (US)` / `based in Berlin`; map a city to its country, e.g. Tallinn → Estonia). Use \"Unknown\" only for a part genuinely absent.",
     "Build this resume FRESH from this JSON only; do not reuse a resume produced earlier in this conversation for a different job.",
     // PERMANENT rule: each follow-up answer goes in its OWN ChatGPT Canvas (the
     // big editable / copyable / expandable card), not in the chat text.
@@ -535,17 +535,18 @@ async function callGemini(apiKey, prompt, model, opts = {}) {
 }
 
 async function callOpenAI(apiKey, prompt, model) {
+  const mdl = model || MODELS.openai;
+  // Reasoning models (o1/o3/o4/gpt-5…) reject a custom `temperature`; omit it.
+  const isReasoning = /^o\d/i.test(mdl) || /^gpt-5/i.test(mdl);
+  const body = { model: mdl, messages: [{ role: "user", content: prompt }] };
+  if (!isReasoning) body.temperature = 0.7;
   const res = await uFetch("https://api.openai.com/v1/chat/completions", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
       Authorization: `Bearer ${apiKey}`,
     },
-    body: JSON.stringify({
-      model: model || MODELS.openai,
-      messages: [{ role: "user", content: prompt }],
-      temperature: 0.7,
-    }),
+    body: JSON.stringify(body),
     dispatcher: proxyAgent || undefined,
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
@@ -853,6 +854,29 @@ async function callGeminiPdf(apiKey, base64, prompt, model) {
   );
 }
 
+// PDF import via Gemini, resilient to a single model being overloaded (503) or
+// rate-limited (429): try the key's model first (if any), then a chain of known-
+// good document models, moving on ONLY for transient errors. A non-transient
+// error (bad key, bad request) stops immediately.
+async function callGeminiPdfWithFallback(apiKey, base64, prompt, model) {
+  const chain = [];
+  const add = (m) => { if (m && !chain.includes(m)) chain.push(m); };
+  add((model || "").trim() || undefined);
+  ["gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-2.5-pro"].forEach(add);
+
+  let lastErr;
+  for (const m of chain) {
+    try {
+      return await callGeminiPdf(apiKey, base64, prompt, m);
+    } catch (e) {
+      lastErr = e;
+      if (!isTransient(e)) throw e; // bad key / bad request → don't keep trying
+      // transient (overloaded / rate-limited) → try the next model
+    }
+  }
+  throw lastErr;
+}
+
 // Send a base64 PDF + prompt to Anthropic (document content block).
 async function callAnthropicPdf(apiKey, base64, prompt, model) {
   const res = await uFetch("https://api.anthropic.com/v1/messages", {
@@ -908,11 +932,10 @@ async function parseResumeFile({ provider, apiKey, model, base64 }) {
   }
   let raw;
   try {
-    raw = await withRetry(() =>
+    raw =
       p === "anthropic" || p === "claude"
-        ? callAnthropicPdf(apiKey, base64, prompt, m)
-        : callGeminiPdf(apiKey, base64, prompt, m)
-    );
+        ? await withRetry(() => callAnthropicPdf(apiKey, base64, prompt, m))
+        : await callGeminiPdfWithFallback(apiKey, base64, prompt, m);
   } catch (e) {
     throw new Error(describeError(e));
   }
