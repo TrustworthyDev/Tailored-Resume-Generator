@@ -87,6 +87,9 @@ const SCHEMA = `
       country    TEXT,
       position   TEXT,
       request_id TEXT,
+      job_description TEXT,
+      resume_content  TEXT,
+      gpt_url    TEXT,
       applied_at TEXT,
       pdf_path   TEXT
     );
@@ -232,6 +235,9 @@ function migrate() {
     ["country", "TEXT"],
     ["pdf_path", "TEXT"],
     ["request_id", "TEXT"], // V2 handshake id, shown in the history
+    ["job_description", "TEXT"], // stored with the application for reference
+    ["resume_content", "TEXT"],  // the generated resume markdown
+    ["gpt_url", "TEXT"],         // the ChatGPT conversation URL — "Open GPT" reopens it
   ].forEach(([col, type]) => {
     if (!appCols.some((c) => c.name === col)) {
       db.run(`ALTER TABLE applications ADD COLUMN ${col} ${type}`);

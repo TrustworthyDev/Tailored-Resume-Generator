@@ -83,6 +83,9 @@ contextBridge.exposeInMainWorld("api", {
   // Generate V2 — ChatGPT-in-a-browser via a clipboard handshake.
   chatgptBuildPrompt: (data) => invoke("chatgpt:buildPrompt", data),
   openChatgpt: (opts) => invoke("chatgpt:open", opts),
+  chatgptSessionInfo: () => invoke("chatgpt:sessionInfo"),
+  chatgptSessionDirect: () => invoke("chatgpt:sessionDirect"),
+  clipboardWrite: (text) => invoke("clipboard:write", text),
   saveChatgptHome: (url) => invoke("chatgpt:saveHome", url),
   getChatgptHome: () => invoke("chatgpt:getHome"),
   clearChatgptHome: () => invoke("chatgpt:clearHome"),
@@ -104,6 +107,7 @@ contextBridge.exposeInMainWorld("api", {
   applicationCounts: () => invoke("applications:counts"),
   searchApplications: (query) => invoke("applications:search", query),
   exportApplications: () => invoke("applications:export"),
+  openGptForApplication: (id) => invoke("application:openGpt", id),
   deleteApplication: (id) => invoke("app:delete", id),
   resetApplications: () => invoke("app:resetAll"),
   startSession: () => invoke("session:start"),

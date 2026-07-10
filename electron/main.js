@@ -107,6 +107,8 @@ function createWindow() {
       // Enable Chromium's built-in PDF viewer so the resume preview can render
       // the generated PDF inline as real, paginated pages.
       plugins: true,
+      // Allow the embedded <webview> tab that hosts ChatGPT inside the app.
+      webviewTag: true,
     },
   });
 
@@ -361,6 +363,7 @@ function registerIpc() {
   ipcMain.handle("applications:byAccount", (_e, accountId) =>
     db.all(
       `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
+              ap.gpt_url, (CASE WHEN IFNULL(ap.gpt_url,'') <> '' THEN 1 ELSE 0 END) AS has_gpt,
               ac.main_stack AS account_stack
        FROM applications ap
        LEFT JOIN accounts ac ON ac.id = ap.account_id
@@ -374,6 +377,7 @@ function registerIpc() {
   ipcMain.handle("applications:all", () =>
     db.all(
       `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
+              ap.gpt_url, (CASE WHEN IFNULL(ap.gpt_url,'') <> '' THEN 1 ELSE 0 END) AS has_gpt,
               ac.name AS account_name, ac.main_stack AS account_stack
        FROM applications ap
        LEFT JOIN accounts ac ON ac.id = ap.account_id
@@ -386,6 +390,7 @@ function registerIpc() {
     const like = `%${(query || "").trim().toLowerCase()}%`;
     return db.all(
       `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
+              ap.gpt_url, (CASE WHEN IFNULL(ap.gpt_url,'') <> '' THEN 1 ELSE 0 END) AS has_gpt,
               ac.name AS account_name, ac.main_stack AS account_stack
        FROM applications ap
        LEFT JOIN accounts ac ON ac.id = ap.account_id
@@ -917,22 +922,30 @@ function registerIpc() {
 
       // Update the single existing entry for a duplicate; otherwise add a new one.
       const recRequestId = (d.requestId || "").trim();
+      const recJd = (d.jobDescription || "").trim();
+      const recResume = (d.resumeContent || "").trim();
+      const recGptUrl = (d.gptUrl || "").trim();
       if (isDuplicate) {
         notify(
           "Duplicate application",
           `Updated the existing "${recRole}" at ${recCompany} — no new entry created.`
         );
-        // Keep the existing id when this regeneration carries none (e.g. a V1
-        // re-render), otherwise refresh it with the new handshake id.
+        // Keep existing values when this regeneration carries none (e.g. a V1
+        // re-render), otherwise refresh them.
         db.run(
-          "UPDATE applications SET pdf_path = ?, country = ?, applied_at = ?, request_id = COALESCE(NULLIF(?, ''), request_id) WHERE id = ?",
-          [savedFile, recCountry, nowIso(), recRequestId, dup.id]
+          `UPDATE applications SET pdf_path = ?, country = ?, applied_at = ?,
+             request_id = COALESCE(NULLIF(?, ''), request_id),
+             job_description = COALESCE(NULLIF(?, ''), job_description),
+             resume_content = COALESCE(NULLIF(?, ''), resume_content),
+             gpt_url = COALESCE(NULLIF(?, ''), gpt_url)
+           WHERE id = ?`,
+          [savedFile, recCountry, nowIso(), recRequestId, recJd, recResume, recGptUrl, dup.id]
         );
       } else {
         db.insert(
-          `INSERT INTO applications (account_id, role, company, country, position, request_id, applied_at, pdf_path)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-          [d.accountId, recRole, recCompany, recCountry, recRole, recRequestId, nowIso(), savedFile]
+          `INSERT INTO applications (account_id, role, company, country, position, request_id, job_description, resume_content, gpt_url, applied_at, pdf_path)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [d.accountId, recRole, recCompany, recCountry, recRole, recRequestId, recJd, recResume, recGptUrl, nowIso(), savedFile]
         );
       }
       return { ok: true, path: savedFile, coverPath: coverFile, duplicate: isDuplicate, savedAt: stamp.display };
@@ -1162,9 +1175,40 @@ function registerIpc() {
     return { id, prompt, copied, jobRef, refined };
   });
 
-  // Open (or focus) the embedded, session-persistent ChatGPT browser.
-  ipcMain.handle("chatgpt:open", async (_e, opts) => {
+  // Prepare the persistent ChatGPT session for the embedded <webview> tab:
+  // set the UA and apply the current browser-connection proxy, then return what
+  // the renderer needs to configure and load the webview.
+  ipcMain.handle("chatgpt:sessionInfo", async () => {
+    try { session.fromPartition(CHAT_PARTITION).setUserAgent(CHAT_UA); } catch (_) {}
+    try { await applyChatProxy(); } catch (_) {}
+    return { ua: CHAT_UA, partition: CHAT_PARTITION, homeUrl: chatHomeUrl(), proxied: chatProxyKey && chatProxyKey !== "direct" };
+  });
+
+  // Fallback for the embedded webview: drop the proxy and use the local IP
+  // (ChatGPT/Cloudflare frequently blocks proxy IPs). The renderer reloads after.
+  ipcMain.handle("chatgpt:sessionDirect", async () => {
+    try { await session.fromPartition(CHAT_PARTITION).setProxy({ mode: "direct" }); } catch (_) {}
+    chatProxyKey = "direct";
+    chatProxyAuth = null;
+    return { ok: true };
+  });
+
+  // Write text to the system clipboard from the renderer (used to reliably place
+  // the auto-captured ChatGPT reply JSON on the clipboard for the reply watcher).
+  ipcMain.handle("clipboard:write", (_e, text) => {
+    try { clipboard.writeText(String(text == null ? "" : text)); return { ok: true }; }
+    catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
+  });
+
+  // Open (or focus) the embedded, session-persistent ChatGPT browser (window).
+  // Still used by the Application history "Open GPT".
+  ipcMain.handle("chatgpt:open", (_e, opts) => openChatWindow(opts));
+
+  async function openChatWindow(opts) {
     const fresh = !!(opts && opts.fresh);
+    // A specific URL (e.g. an application's saved conversation) overrides the
+    // Project Home for this open.
+    const targetUrl = opts && /^https?:\/\//i.test(opts.url || "") ? opts.url : chatHomeUrl();
     const ses = session.fromPartition(CHAT_PARTITION);
     ses.setUserAgent(CHAT_UA);
     // Pick up the latest active proxy each time the browser is opened/focused —
@@ -1234,22 +1278,46 @@ function registerIpc() {
       chatWin = null;
       if (clipWatch) { clipWatch.resolve({ ok: false, closed: true }); clipWatch = null; }
     });
-    // If the page can't load (commonly a proxy that can't reach chatgpt.com),
-    // show a readable message instead of a blank window.
-    win.webContents.on("did-fail-load", (_e2, errorCode, errorDesc, _url, isMainFrame) => {
+    // If the page can't load AND we were routing through a proxy, automatically
+    // retry once on the LOCAL IP — ChatGPT/Cloudflare frequently blocks proxy
+    // IPs ("Unable to load site"). This keeps V2 working without the user having
+    // to hunt through settings. If it still fails, show a readable message.
+    let triedDirect = false;
+    win.webContents.on("did-fail-load", async (_e2, errorCode, errorDesc, _url, isMainFrame) => {
       if (!isMainFrame || errorCode === -3 /* ERR_ABORTED (redirects) */) return;
-      const via = chatProxyAuth ? "the active (authenticated) proxy" : "the active proxy";
+      if (!triedDirect && chatProxyKey && chatProxyKey !== "direct") {
+        triedDirect = true;
+        chatProxyAuth = null;
+        try { await ses.setProxy({ mode: "direct" }); chatProxyKey = "direct"; } catch (_) {}
+        notify("Proxy couldn't reach ChatGPT", "Retrying on your local IP…");
+        try { if (!win.isDestroyed()) win.loadURL(targetUrl); } catch (_) {}
+        return;
+      }
       const html =
         "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;background:#111;color:#eee;padding:40px;line-height:1.5\">" +
         "<h2>Couldn't load ChatGPT</h2>" +
-        `<p>The page failed to load through ${via} (${errorDesc || "network error"}).</p>` +
-        "<p>Open <b>Settings → Proxy</b> and check the active proxy (or deactivate it), then reopen this window.</p>" +
+        `<p>The page failed to load (${errorDesc || "network error"}).</p>` +
+        "<p>Check your internet connection (and the active proxy in <b>Settings → Proxy</b> if you're using one), then reopen this window.</p>" +
         "</body></html>";
       try { if (!win.isDestroyed()) win.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html)); } catch (_) {}
     });
     // Start loading but DON'T await it — the window is already visible and the
     // app can proceed immediately; the page finishes loading in the background.
-    win.loadURL(chatHomeUrl()).catch(() => {});
+    win.loadURL(targetUrl).catch(() => {});
+    return { ok: true };
+  }
+
+  // From the Application history: reopen the exact ChatGPT conversation where
+  // this resume was generated (it already contains the app's prompt + the resume
+  // result), so the user can continue asking follow-up questions in that thread.
+  ipcMain.handle("application:openGpt", async (_e, id) => {
+    const ap = db.get("SELECT gpt_url FROM applications WHERE id = ?", [id]);
+    if (!ap) return { ok: false, error: "Application not found." };
+    const url = (ap.gpt_url || "").trim();
+    if (!/^https?:\/\//i.test(url)) {
+      return { ok: false, error: "No ChatGPT conversation was saved for this application (generated before this feature, or the reply was pasted from elsewhere). Re-generate it to enable Open GPT." };
+    }
+    await openChatWindow({ fresh: true, url });
     return { ok: true };
   });
 
@@ -1343,7 +1411,17 @@ function registerIpc() {
           // The prompt itself is JSON with the same tokens — never treat it as the reply.
           if (clip.trim() !== promptTrim) {
             const res = parseResumeJson(clip, { id, jobRef });
-            if (res.ok) { finish(res); return; }
+            if (res.ok) {
+              // Capture the ChatGPT conversation URL the user is on now, so the
+              // application's "Open GPT" can reopen this exact thread later.
+              try {
+                if (chatWin && !chatWin.isDestroyed()) {
+                  const u = chatWin.webContents.getURL() || "";
+                  if (/^https?:\/\//i.test(u)) res.gptUrl = u;
+                }
+              } catch (_) {}
+              finish(res); return;
+            }
             // A real resume reply, but for a different id/job description: stop
             // and report it rather than rendering the wrong resume.
             if (res.reason === "mismatch") {
