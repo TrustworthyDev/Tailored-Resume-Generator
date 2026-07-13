@@ -234,6 +234,27 @@ function jobRefFor(jobDescription) {
   return crypto.createHash("sha256").update(norm).digest("hex").slice(0, 12);
 }
 
+// Quick Gemini extraction of the job title + company (+ country) from a job
+// description — used to check for a duplicate application BEFORE running the full
+// ChatGPT generation. Fast + cheap; returns empty strings on any failure.
+async function extractJdTarget({ apiKey, model, jobDescription }) {
+  const empty = { role: "", company: "", country: "" };
+  const jd = String(jobDescription || "").trim();
+  if (!apiKey || !jd) return empty;
+  const prompt =
+    "From the job posting below, extract the exact job title, the hiring company name, and the country. " +
+    'Return ONLY a JSON object: {"role":"","company":"","country":""}. ' +
+    "Copy the job title VERBATIM (keep every word/symbol). Use \"\" for anything not found.\n\nJOB POSTING:\n" + jd;
+  let raw;
+  try { raw = await callGemini(apiKey, prompt, model, { temperature: 0, maxOutputTokens: 512, timeoutMs: 20000 }); }
+  catch (_) { return empty; }
+  if (!raw) return empty;
+  let obj;
+  try { obj = extractJson(raw); } catch (_) { return empty; }
+  const s = (v) => (v == null ? "" : String(v)).trim();
+  return { role: s(obj.role), company: s(obj.company), country: s(obj.country) };
+}
+
 // Convert a structured resume object (the V2 reply schema) into the exact
 // Markdown the renderer expects, so the PDF/preview pipeline (buildResumeHtml)
 // stays unchanged. The renderer overrides the header (name/title/contacts) and
@@ -761,7 +782,8 @@ function parseInstructions() {
     "- linkedin / portfolio: full URLs when present.",
     "- additional_info: extras that don't fit the fields above — certifications, languages, awards, volunteering, a skills summary. Keep the resume's original wording; leave \"\" if none.",
     "- education: pick only the most recent or highest degree.",
-    '- work_duration / period: the date range exactly as written (e.g. "2021–2024" or "Jan 2021 – Present").',
+    '- work_duration is REQUIRED for EVERY work entry: capture the role\'s FULL date range EXACTLY as written on the resume — e.g. "May 2022 - Mar 2026", "2021–2024", "Jan 2021 – Present". The dates may appear beside, above, or in a separate column from the role/company (common in modern templates); still attach each date range to its matching role. Never leave work_duration empty when the resume shows dates for that role.',
+    '- period (education): the study date range exactly as written.',
     "- Order work entries most recent first. Keep values concise and faithful to the resume.",
   ].join("\n");
 }
@@ -802,10 +824,11 @@ function normalizeParsed(data) {
       period: str(edu.period),
     },
     work: (Array.isArray(d.work) ? d.work : []).map((w) => ({
-      role_name: str(w.role_name),
-      company_name: str(w.company_name),
+      role_name: str(w.role_name || w.role || w.title),
+      company_name: str(w.company_name || w.company || w.employer),
       location: str(w.location),
-      work_duration: str(w.work_duration),
+      // Accept whatever key the model used for the date range.
+      work_duration: str(w.work_duration || w.duration || w.dates || w.period || w.date_range || w.dateRange),
     })),
     projects: (Array.isArray(d.projects) ? d.projects : []).map((pr) => ({
       title: str(pr.title),
@@ -954,5 +977,5 @@ async function parseResumeFile({ provider, apiKey, model, base64 }) {
 module.exports = {
   generateResume, generateCoverLetter, parseResumeFile, setProxy, checkProxy,
   buildPrompt, parseResumeMarkdown, buildPromptJson, parseResumeJson, jobRefFor,
-  refineV2Prompt,
+  refineV2Prompt, extractJdTarget,
 };

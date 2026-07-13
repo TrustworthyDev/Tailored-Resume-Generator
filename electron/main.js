@@ -4,7 +4,7 @@ const fs = require("fs");
 const db = require("./db");
 const {
   generateResume, generateCoverLetter, parseResumeFile, setProxy, checkProxy,
-  buildPromptJson, parseResumeJson, refineV2Prompt,
+  buildPromptJson, parseResumeJson, refineV2Prompt, extractJdTarget,
 } = require("./ai");
 const license = require("./license");
 
@@ -109,6 +109,10 @@ function createWindow() {
       plugins: true,
       // Allow the embedded <webview> tab that hosts ChatGPT inside the app.
       webviewTag: true,
+      // Keep timers/JS at full speed when the app is in the background, so V2
+      // generation (auto-send + auto-copy poll loops) finishes even while the
+      // user works in other windows.
+      backgroundThrottling: false,
     },
   });
 
@@ -401,6 +405,26 @@ function registerIpc() {
        ORDER BY ap.id DESC`,
       [like, like, like, like]
     );
+  });
+
+  // Does an application already exist for this account + company + role? Used to
+  // confirm before generating another resume for the same company and job title.
+  ipcMain.handle("applications:findDuplicate", (_e, accountId, role, company) => {
+    const r = (role || "").trim();
+    const c = (company || "").trim();
+    if (!accountId || !r || !c) return { exists: false };
+    // Match on the dedicated index columns (match_company / match_role — the
+    // Gemini JD extraction). Fall back to the display columns so applications
+    // saved before these columns existed are still detected.
+    const row = db.get(
+      `SELECT id FROM applications
+       WHERE account_id = ?
+         AND LOWER(COALESCE(NULLIF(match_company, ''), company)) = LOWER(?)
+         AND LOWER(COALESCE(NULLIF(match_role, ''), role)) = LOWER(?)
+       LIMIT 1`,
+      [accountId, c, r]
+    );
+    return { exists: !!row, id: row ? row.id : null };
   });
 
   // Export the whole application history to a CSV file the user picks.
@@ -844,12 +868,21 @@ function registerIpc() {
       const recRole = (d.role || "").trim();
       const recCompany = (d.company || "").trim();
       const recCountry = (d.country || "").trim();
+      // Dedicated duplicate-detection index: the Gemini JD extraction when
+      // available (matchRole/matchCompany), else the display role/company.
+      // The account name is stored alongside for a self-describing record.
+      const matchRole = ((d.matchRole || d.role) || "").trim();
+      const matchCompany = ((d.matchCompany || d.company) || "").trim();
+      const matchAccount = sani(acct && acct.name);
       const dup = db.get(
         `SELECT id, pdf_path FROM applications
-         WHERE account_id = ? AND LOWER(company) = LOWER(?) AND LOWER(role) = LOWER(?) LIMIT 1`,
-        [d.accountId, recCompany, recRole]
+         WHERE account_id = ?
+           AND LOWER(COALESCE(NULLIF(match_company, ''), company)) = LOWER(?)
+           AND LOWER(COALESCE(NULLIF(match_role, ''), role)) = LOWER(?)
+         LIMIT 1`,
+        [d.accountId, matchCompany, matchRole]
       );
-      const isDuplicate = !!dup && !!recCompany && !!recRole;
+      const isDuplicate = !!dup && !!matchCompany && !!matchRole;
 
       // For a duplicate, overwrite the existing PDF in place (one resume per
       // company+role) rather than creating a new folder. New applications get a
@@ -926,26 +959,28 @@ function registerIpc() {
       const recResume = (d.resumeContent || "").trim();
       const recGptUrl = (d.gptUrl || "").trim();
       if (isDuplicate) {
-        notify(
-          "Duplicate application",
-          `Updated the existing "${recRole}" at ${recCompany} — no new entry created.`
-        );
-        // Keep existing values when this regeneration carries none (e.g. a V1
-        // re-render), otherwise refresh them.
+        // Silently update the existing entry (the renderer handles the user-facing
+        // duplicate confirmation before it gets here). Keep existing values when
+        // this regeneration carries none (e.g. a V1 colour re-render).
         db.run(
           `UPDATE applications SET pdf_path = ?, country = ?, applied_at = ?,
              request_id = COALESCE(NULLIF(?, ''), request_id),
              job_description = COALESCE(NULLIF(?, ''), job_description),
              resume_content = COALESCE(NULLIF(?, ''), resume_content),
-             gpt_url = COALESCE(NULLIF(?, ''), gpt_url)
+             gpt_url = COALESCE(NULLIF(?, ''), gpt_url),
+             match_role = COALESCE(NULLIF(?, ''), match_role),
+             match_company = COALESCE(NULLIF(?, ''), match_company),
+             match_account = COALESCE(NULLIF(?, ''), match_account)
            WHERE id = ?`,
-          [savedFile, recCountry, nowIso(), recRequestId, recJd, recResume, recGptUrl, dup.id]
+          [savedFile, recCountry, nowIso(), recRequestId, recJd, recResume, recGptUrl,
+           matchRole, matchCompany, matchAccount, dup.id]
         );
       } else {
         db.insert(
-          `INSERT INTO applications (account_id, role, company, country, position, request_id, job_description, resume_content, gpt_url, applied_at, pdf_path)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [d.accountId, recRole, recCompany, recCountry, recRole, recRequestId, recJd, recResume, recGptUrl, nowIso(), savedFile]
+          `INSERT INTO applications (account_id, role, company, country, position, request_id, job_description, resume_content, gpt_url, match_role, match_company, match_account, applied_at, pdf_path)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [d.accountId, recRole, recCompany, recCountry, recRole, recRequestId, recJd, recResume, recGptUrl,
+           matchRole, matchCompany, matchAccount, nowIso(), savedFile]
         );
       }
       return { ok: true, path: savedFile, coverPath: coverFile, duplicate: isDuplicate, savedAt: stamp.display };
@@ -1165,6 +1200,23 @@ function registerIpc() {
       if (out && out !== basePrompt) { prompt = out; refined = true; }
     }
 
+    // Extract the job title + company from the JD (fast Gemini call) so the app
+    // can check for a duplicate application BEFORE the ChatGPT generation. Uses
+    // the V2 key if set, otherwise an active/any V1 Gemini key.
+    const gemKey =
+      (v2Key && v2Key.api_key ? v2Key : null) ||
+      db.get("SELECT api_key, model FROM api_keys WHERE kind = 'v1' AND provider = 'gemini' AND is_active = 1 LIMIT 1") ||
+      db.get("SELECT api_key, model FROM api_keys WHERE kind = 'v1' AND provider = 'gemini' ORDER BY id DESC LIMIT 1");
+    let target = { role: "", company: "", country: "" };
+    if (gemKey && gemKey.api_key) {
+      try {
+        target = await extractJdTarget({
+          apiKey: gemKey.api_key, model: gemKey.model,
+          jobDescription: payload && payload.jobDescription,
+        });
+      } catch (_) {}
+    }
+
     // Copy the prompt to the clipboard from the main process. Electron's native
     // clipboard is more reliable than navigator.clipboard in the renderer (which
     // can silently fail on focus/permission), so the prompt is guaranteed to be
@@ -1172,7 +1224,7 @@ function registerIpc() {
     // watcher ignores a clipboard value equal to the prompt, so this is safe.
     let copied = false;
     try { clipboard.writeText(prompt); copied = true; } catch (_) {}
-    return { id, prompt, copied, jobRef, refined };
+    return { id, prompt, copied, jobRef, refined, target };
   });
 
   // Prepare the persistent ChatGPT session for the embedded <webview> tab:
@@ -1198,6 +1250,38 @@ function registerIpc() {
   ipcMain.handle("clipboard:write", (_e, text) => {
     try { clipboard.writeText(String(text == null ? "" : text)); return { ok: true }; }
     catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
+  });
+
+  // Windows system notification when a resume finishes generating. Clicking it
+  // brings the app window to the front.
+  ipcMain.handle("notify:resumeDone", (_e, d) => {
+    try {
+      const account = ((d && d.account) || "").trim();
+      const role = ((d && d.role) || "").trim();
+      const company = ((d && d.company) || "").trim();
+      // Four lines: title (with check icon), then Account / Company / Job Title,
+      // each on its own new line.
+      const body = [account, company, role].filter(Boolean).join("\n") || "Your tailored resume is ready.";
+      const n = new Notification({ title: "✅ Resume Prepared", body });
+      n.on("click", () => {
+        try {
+          if (mainWindow && !mainWindow.isDestroyed()) {
+            if (mainWindow.isMinimized()) mainWindow.restore();
+            mainWindow.show();
+            // Windows blocks a background app from stealing focus; toggling
+            // alwaysOnTop forces the window to the very top, then we release it
+            // so it behaves normally afterwards.
+            mainWindow.setAlwaysOnTop(true);
+            mainWindow.focus();
+            mainWindow.moveTop();
+            mainWindow.setAlwaysOnTop(false);
+            try { app.focus({ steal: true }); } catch (_) {}
+          }
+        } catch (_) {}
+      });
+      n.show();
+    } catch (_) {}
+    return { ok: true };
   });
 
   // Open (or focus) the embedded, session-persistent ChatGPT browser (window).
@@ -1607,6 +1691,8 @@ function registerIpc() {
 
 app.whenReady().then(async () => {
   try {
+    // Attribute Windows toast notifications to this app (and use its icon).
+    try { app.setAppUserModelId("com.careerva.app"); } catch (_) {}
     // The unpacked build is a separate sandbox — don't pull in legacy data.
     if (!isUnpackedBuild) migrateLegacyData();
     await db.initDb(app.getPath("userData"));

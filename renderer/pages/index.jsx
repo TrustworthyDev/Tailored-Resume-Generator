@@ -37,6 +37,14 @@ export default function Home() {
     api().licenseStatus().then((s) => setLicensed(!!(s && s.activated)));
   }, []);
 
+  // Auto-collapse the sidebar on small windows so the main content fits.
+  useEffect(() => {
+    const onResize = () => { if (window.innerWidth < 1200) setSidebarOpen(false); };
+    onResize();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
   // Single in-app toast. Fed by both the main process (replacing native OS
   // notifications) and in-app components via a window "app-notify" event.
   // A payload may be a plain string or { message, type } where type is one of
@@ -89,12 +97,28 @@ export default function Home() {
       </aside>
 
       <main className="content">
+        {/* Keep Generate V2 mounted from startup so its embedded ChatGPT WebView
+            pre-warms in the background (loads Project Home once) and stays alive
+            across tab switches. When V2 isn't the active tab it's parked
+            off-screen but still laid out — display:none would detach Electron's
+            webview guest and stop it loading. On the active tab, display:contents
+            makes this wrapper transparent so layout matches a direct child. */}
+        <div
+          style={
+            tab === "generate2"
+              ? { display: "contents" }
+              : { position: "fixed", left: "-99999px", top: 0, width: "1280px", height: "860px", overflow: "hidden", pointerEvents: "none" }
+          }
+          aria-hidden={tab !== "generate2"}
+        >
+          <ResumeGenerator variant="v2" />
+        </div>
+
         {tab === "settings" && <Settings />}
         {tab === "prompts" && <Instructions />}
         {tab === "account" && <AccountManagement />}
         {tab === "applications" && <Applications />}
         {tab === "generate" && <ResumeGenerator variant="v1" />}
-        {tab === "generate2" && <ResumeGenerator variant="v2" />}
         {tab === "tracker" && <Tracker />}
       </main>
 
