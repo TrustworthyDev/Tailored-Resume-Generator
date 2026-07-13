@@ -91,6 +91,13 @@ export default function Applications() {
     const r = await api().revealPdf(p);
     setFileMsg(r && !r.ok ? r.error || "Could not open the folder." : "");
   };
+  // Reopen the ChatGPT conversation where this resume was generated (it already
+  // contains the app's prompt and the resume result).
+  const openGpt = async (a) => {
+    setFileMsg("");
+    const r = await api().openGptForApplication(a.id);
+    if (!(r && r.ok)) setFileMsg((r && r.error) || "Could not open ChatGPT for this application.");
+  };
   const openAppFile = async (p) => {
     const r = await api().openPdf(p);
     setFileMsg(r && !r.ok ? r.error || "Could not open the file." : "");
@@ -147,17 +154,30 @@ export default function Applications() {
             ))}
           </div>
         )}
-        {a.pdf_path && (
+        {(a.pdf_path || a.has_gpt) && (
           <div className="app-actions">
-            <button className="btn small" onClick={() => copyLocation(a)}>
-              {copiedId === a.id ? "Copied ✓" : "Copy Location"}
-            </button>
-            <button className="btn small" onClick={() => openAppFolder(a.pdf_path)}>
-              Open Folder
-            </button>
-            <button className="btn small" onClick={() => openAppFile(a.pdf_path)}>
-              Open File
-            </button>
+            {a.has_gpt ? (
+              <button
+                className="btn small"
+                onClick={() => openGpt(a)}
+                title="Reopen the ChatGPT conversation where this resume was generated"
+              >
+                Open GPT
+              </button>
+            ) : null}
+            {a.pdf_path && (
+              <>
+                <button className="btn small" onClick={() => copyLocation(a)}>
+                  {copiedId === a.id ? "Copied ✓" : "Copy Location"}
+                </button>
+                <button className="btn small" onClick={() => openAppFolder(a.pdf_path)}>
+                  Open Folder
+                </button>
+                <button className="btn small" onClick={() => openAppFile(a.pdf_path)}>
+                  Open File
+                </button>
+              </>
+            )}
           </div>
         )}
       </div>

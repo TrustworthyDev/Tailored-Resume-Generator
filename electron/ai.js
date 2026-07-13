@@ -234,6 +234,27 @@ function jobRefFor(jobDescription) {
   return crypto.createHash("sha256").update(norm).digest("hex").slice(0, 12);
 }
 
+// Quick Gemini extraction of the job title + company (+ country) from a job
+// description — used to check for a duplicate application BEFORE running the full
+// ChatGPT generation. Fast + cheap; returns empty strings on any failure.
+async function extractJdTarget({ apiKey, model, jobDescription }) {
+  const empty = { role: "", company: "", country: "" };
+  const jd = String(jobDescription || "").trim();
+  if (!apiKey || !jd) return empty;
+  const prompt =
+    "From the job posting below, extract the exact job title, the hiring company name, and the country. " +
+    'Return ONLY a JSON object: {"role":"","company":"","country":""}. ' +
+    "Copy the job title VERBATIM (keep every word/symbol). Use \"\" for anything not found.\n\nJOB POSTING:\n" + jd;
+  let raw;
+  try { raw = await callGemini(apiKey, prompt, model, { temperature: 0, maxOutputTokens: 512, timeoutMs: 20000 }); }
+  catch (_) { return empty; }
+  if (!raw) return empty;
+  let obj;
+  try { obj = extractJson(raw); } catch (_) { return empty; }
+  const s = (v) => (v == null ? "" : String(v)).trim();
+  return { role: s(obj.role), company: s(obj.company), country: s(obj.country) };
+}
+
 // Convert a structured resume object (the V2 reply schema) into the exact
 // Markdown the renderer expects, so the PDF/preview pipeline (buildResumeHtml)
 // stays unchanged. The renderer overrides the header (name/title/contacts) and
@@ -337,14 +358,15 @@ function buildPromptJson(personal, work, education, projects, jobDescription, st
   // app's instructions are kept minimal and only cover output format + data
   // fidelity, so they never compete with or dilute the user's prompt.
   const instructions = [
-    "Follow `user_prompt` (below) as the PRIMARY guide for the resume's content, wording, tone and emphasis. The rules below are ONLY about output format and data fidelity — they must not override or water down user_prompt.",
+    "TASK: Generate the tailored resume now and return it as a JSON object matching `response_format` below, placed inside a ```json fenced code block. It is fine if the interface adds a short note or citation around the block — just make sure the resume JSON is in a ```json code block, and echo request_id and job_ref back exactly. (Any conflicting 'plain text only' or citation rules from the interface do not apply to the JSON itself; just keep the JSON in a code block.)",
+    "Follow `user_prompt` (below) as the PRIMARY guide for the resume's content, wording, tone and emphasis. The rules here are only about output format and data fidelity — they must not override or water down user_prompt.",
     "Tailor the resume to `job_description`. Use ONLY the provided candidate data; do NOT invent employers, dates, or achievements.",
     "Fill EVERY field of `resume` in `response_format` and follow that schema EXACTLY. Keep company, location, dates, degree, university and period EXACTLY as provided.",
     "Fill `target` carefully — it is used to name and file the application: `target.role` = the COMPLETE job title copied VERBATIM from job_description (keep all words/symbols, e.g. `AI Engineer (Full Remote)`); `target.company` = the hiring company's name; `target.country` = the job's country as a plain country name (infer it from the job location, office, or phrases like `Remote (US)` / `based in Berlin`; map a city to its country, e.g. Tallinn → Estonia). Use \"Unknown\" only for a part genuinely absent.",
     "Build this resume FRESH from this JSON only; do not reuse a resume produced earlier in this conversation for a different job.",
-    // PERMANENT rule: each follow-up answer goes in its OWN ChatGPT Canvas (the
-    // big editable / copyable / expandable card), not in the chat text.
-    "FOLLOW-UP — application questions (PERMANENT RULE for this entire conversation): Whenever the user later types one or MORE job-application questions, answer using the canvas tool — create a SEPARATE canvas document for EACH question's answer, so every answer appears in its own editable, copyable, expandable canvas card. Immediately before each canvas, write that question on its own line as a bold heading. ALWAYS exactly one canvas per question — even if several questions arrive in one message, create a separate bold-heading + canvas for each, in order; never put two answers in one canvas and never answer in plain chat text. This rule applies to every follow-up, no matter how many messages later. Each answer must be confident, positive, first-person, consistent with the resume above, tailored to job_description, and concise (about 2-5 sentences unless more is clearly needed).",
+    // Follow-up answers: conditional and non-blocking. Prefer canvas, but fall
+    // back to a code block if canvas isn't available — never refuse over this.
+    "FOLLOW-UP (only relevant LATER — nothing to do now if no question is asked): If the user later types one or more job-application questions, answer each one — confident, positive, first-person, consistent with the resume above, tailored to job_description, and concise (about 2-5 sentences). Put each answer in its own canvas if the canvas tool is available; if not, put each answer in its own fenced code block. One answer per question, with the question as a bold heading above it. This does NOT affect the resume output above.",
   ].filter(Boolean);
 
   const promptObj = {
@@ -376,10 +398,10 @@ function buildPromptJson(personal, work, education, projects, jobDescription, st
     job_description: jd,
     response_format: {
       note:
-        "Reply with ONLY this JSON object inside a single ```json fenced code block (so it shows a Copy button) — no text before or after the code block. " +
+        "Put this JSON object inside a ```json fenced code block (so it shows a Copy button). A short note or citation around the block is fine — just keep the JSON in the code block. " +
         "Echo request_id and job_ref back EXACTLY as given above so the app can verify the reply matches this request. " +
         "Build the resume FRESH from this JSON only, following `user_prompt` for content and this schema EXACTLY. " +
-        "Then answer any follow-up application questions per the FOLLOW-UP instruction: for EACH question, a bold question heading followed by its answer in its OWN separate canvas card (one canvas per question, even when several are asked at once).",
+        "Follow-up application questions, if any come later, are handled per the FOLLOW-UP instruction and do not affect this resume output.",
       request_id: id,
       job_ref: jobRef,
       target: { role: "<verbatim job title>", company: "<company>", country: "<country, or Unknown>" },
@@ -760,7 +782,8 @@ function parseInstructions() {
     "- linkedin / portfolio: full URLs when present.",
     "- additional_info: extras that don't fit the fields above — certifications, languages, awards, volunteering, a skills summary. Keep the resume's original wording; leave \"\" if none.",
     "- education: pick only the most recent or highest degree.",
-    '- work_duration / period: the date range exactly as written (e.g. "2021–2024" or "Jan 2021 – Present").',
+    '- work_duration is REQUIRED for EVERY work entry: capture the role\'s FULL date range EXACTLY as written on the resume — e.g. "May 2022 - Mar 2026", "2021–2024", "Jan 2021 – Present". The dates may appear beside, above, or in a separate column from the role/company (common in modern templates); still attach each date range to its matching role. Never leave work_duration empty when the resume shows dates for that role.',
+    '- period (education): the study date range exactly as written.',
     "- Order work entries most recent first. Keep values concise and faithful to the resume.",
   ].join("\n");
 }
@@ -801,10 +824,11 @@ function normalizeParsed(data) {
       period: str(edu.period),
     },
     work: (Array.isArray(d.work) ? d.work : []).map((w) => ({
-      role_name: str(w.role_name),
-      company_name: str(w.company_name),
+      role_name: str(w.role_name || w.role || w.title),
+      company_name: str(w.company_name || w.company || w.employer),
       location: str(w.location),
-      work_duration: str(w.work_duration),
+      // Accept whatever key the model used for the date range.
+      work_duration: str(w.work_duration || w.duration || w.dates || w.period || w.date_range || w.dateRange),
     })),
     projects: (Array.isArray(d.projects) ? d.projects : []).map((pr) => ({
       title: str(pr.title),
@@ -953,5 +977,5 @@ async function parseResumeFile({ provider, apiKey, model, base64 }) {
 module.exports = {
   generateResume, generateCoverLetter, parseResumeFile, setProxy, checkProxy,
   buildPrompt, parseResumeMarkdown, buildPromptJson, parseResumeJson, jobRefFor,
-  refineV2Prompt,
+  refineV2Prompt, extractJdTarget,
 };

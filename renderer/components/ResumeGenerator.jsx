@@ -5,6 +5,7 @@ import { styleThumb } from "../lib/styleThumbs";
 import { modelTiny, providerLabel } from "../lib/aiModels";
 import { friendlyError } from "../lib/errors";
 import FlagSelect from "./FlagSelect";
+import ConfirmModal from "./ConfirmModal";
 
 const STYLES = [
   { id: "modern", label: "Modern", accent: "#0d9488" },
@@ -106,11 +107,20 @@ export default function ResumeGenerator({ variant = "v1" }) {
   const [pickersOpen, setPickersOpen] = useState(true); // colors & font section expanded
   const [pdfUrl, setPdfUrl] = useState(""); // blob URL of the saved PDF for inline viewing
   const [v2Waiting, setV2Waiting] = useState(false); // V2: waiting for the ChatGPT reply on the clipboard
-  const [chatHome, setChatHome] = useState(""); // V2: saved ChatGPT Project Home URL ("" = default)
+  const [chatHome, setChatHome] = useState(""); // V2: saved ChatGPT Project Home URL (used for auto-navigation)
   const [connMode, setConnMode] = useState("direct"); // V2 browser: "direct" (local IP) | "proxy"
   const [proxyList, setProxyList] = useState([]); // V2: proxies to choose from
   const [chatProxyId, setChatProxyId] = useState(""); // V2: chosen proxy id
   const [showPromptModal, setShowPromptModal] = useState(false); // view active prompt content
+  const [dupConfirm, setDupConfirm] = useState(null); // { role, company } when confirming a duplicate
+  const dupResolveRef = useRef(null); // resolves the duplicate-confirm promise
+  const [chatUa, setChatUa] = useState(""); // V2: user-agent for the embedded ChatGPT webview
+  const webviewRef = useRef(null); // V2: the embedded ChatGPT <webview>
+  const chatRetriedRef = useRef(false); // V2: guard the one-time proxy→direct retry
+  const lastChatUrlRef = useRef(""); // V2: last URL loaded into the webview
+  const lastPromptRef = useRef(""); // V2: last prompt, for auto-send / manual re-send
+  const lastReqIdRef = useRef(""); // V2: last request_id, for auto-copying the reply
+  const autoSentIdRef = useRef(""); // V2: request_id already auto-sent (single-fire guard)
   const pastedRef = useRef(false);
   const busyRef = useRef(false); // guards overlapping PDF renders
 
@@ -213,10 +223,17 @@ export default function ResumeGenerator({ variant = "v1" }) {
     return () => { if (isV2) api().cancelChatgptClipboard(); };
   }, [isV2]);
 
+  // V2: prepare the embedded ChatGPT webview session (UA + proxy) so the tab
+  // renders with the right user-agent from the start.
+  useEffect(() => {
+    if (!isV2) return;
+    api().chatgptSessionInfo().then((r) => setChatUa((r && r.ua) || ""));
+  }, [isV2]);
+
   // V2: load the saved ChatGPT Project Home URL + the browser connection choice.
   useEffect(() => {
     if (!isV2) return;
-    api().getChatgptHome().then((r) => setChatHome((r && r.url) || ""));
+    api().getChatgptHome().then((r) => { setChatHome((r && r.url) || ""); });
     (async () => {
       const [modePref, pidPref, list] = await Promise.all([
         api().getPref("chat_conn_mode"),
@@ -229,7 +246,7 @@ export default function ResumeGenerator({ variant = "v1" }) {
     })();
     // Update the displayed home when saved from inside the embedded browser.
     const off = api().onChatgptHomeChanged
-      ? api().onChatgptHomeChanged((url) => setChatHome(url || ""))
+      ? api().onChatgptHomeChanged((url) => { setChatHome(url || ""); })
       : null;
     return () => { if (typeof off === "function") off(); };
   }, [isV2]);
@@ -348,15 +365,39 @@ export default function ResumeGenerator({ variant = "v1" }) {
       instructionId: promptId ? Number(promptId) : undefined,
     });
 
+  // Ask the user to confirm generating another resume for a company + title they
+  // already have an application for. Resolves true (proceed) / false (cancel).
+  const confirmDuplicate = (role, company) =>
+    new Promise((resolve) => {
+      dupResolveRef.current = resolve;
+      setDupConfirm({ role, company });
+    });
+
   // Build + save the PDF (and optional cover letter) from generated content.
   // opts.skipCover: re-render the resume only (used by the live color regen so
   // it never makes a fresh AI cover-letter call on every colour pick).
+  // Returns true when saved, false when cancelled/blocked.
   const exportPdf = async (content, role, company, country, jdValue, opts = {}) => {
     const useJd = typeof jdValue === "string" ? jdValue : jd;
-    if (!accountId) { if (!opts.skipCover) setError("Select an account first."); return; }
+    if (!accountId) { if (!opts.skipCover) setError("Select an account first."); return false; }
     if (!content) {
       if (!opts.skipCover) setError("Click Preview first to generate the content, then Generate to download the PDF.");
-      return;
+      return false;
+    }
+    // On a real generation (not a colour/font re-render): if the same company +
+    // job title already exists in the history, confirm before saving another.
+    if (!opts.skipCover && !opts.skipDupCheck) {
+      // Match on the index fields (Gemini JD extraction when available, else the
+      // display role/company) so this agrees with what gets stored.
+      const recRole = ((opts.matchRole || role) || "").trim();
+      const recCompany = ((opts.matchCompany || company) || "").trim();
+      if (recRole && recCompany) {
+        const dup = await api().findDuplicateApplication(Number(accountId), recRole, recCompany);
+        if (dup && dup.exists) {
+          const proceed = await confirmDuplicate(recRole, recCompany);
+          if (!proceed) { toast("Kept your existing resume — nothing new saved.", "info"); return false; }
+        }
+      }
     }
     busyRef.current = true;
     setLoading(true);
@@ -391,8 +432,18 @@ export default function ResumeGenerator({ variant = "v1" }) {
         role,
         company,
         country,
+        // Dedicated duplicate-detection index: the Gemini JD extraction (V2) so
+        // matching is stable regardless of what the reply/display shows. Falls
+        // back to role/company when no target was extracted (e.g. V1).
+        matchRole: opts.matchRole || role,
+        matchCompany: opts.matchCompany || company,
         // V2 handshake id, recorded on the application history entry (empty for V1).
         requestId: opts.requestId || "",
+        // Stored on the application: JD + resume for reference, and the ChatGPT
+        // conversation URL so "Open GPT" can reopen that exact thread.
+        jobDescription: useJd,
+        resumeContent: content,
+        gptUrl: opts.gptUrl || "",
         // Colour/style/font re-render: overwrite the existing file in place
         // rather than creating a new folder.
         overwritePath: opts.skipCover && savedPath ? savedPath : undefined,
@@ -403,10 +454,17 @@ export default function ResumeGenerator({ variant = "v1" }) {
         api().setPref("gen_saved_path", exp.path);
         api().setPref("gen_saved_at", exp.savedAt || "");
         setView("preview"); // jump to the Preview Resume tab once generated
-        if (!opts.skipCover) copyFolderToClipboard(exp.path);
+        if (!opts.skipCover) {
+          copyFolderToClipboard(exp.path);
+          // Windows notification (account + company + role + success). Not on colour re-renders.
+          try { api().notifyResumeDone({ account: (acc && acc.name) || "", role: role || jobRole, company: company || jobCompany }); } catch (_) {}
+        }
+        return true;
       } else if (!opts.skipCover) setError(`Couldn't save the PDF — ${friendlyError({ message: (exp && exp.error) || "unknown error" })}`);
+      return false;
     } catch (e) {
       if (!opts.skipCover) setError(friendlyError(e));
+      return false;
     } finally {
       setLoading(false);
       busyRef.current = false;
@@ -468,12 +526,29 @@ export default function ResumeGenerator({ variant = "v1" }) {
     setError("");
     setSavedPath("");
     try {
-      const { id, prompt, copied, jobRef } = await api().chatgptBuildPrompt({
+      // Open the ChatGPT tab IMMEDIATELY, in parallel with the Gemini prompt
+      // build. reuse:true starts a fresh chat inside the already-loaded tab
+      // (no full SPA reload) when possible, falling back to a full load.
+      const openPromise = openChatTab({ reuse: true });
+      const { id, prompt, copied, jobRef, target } = await api().chatgptBuildPrompt({
         accountId: Number(accountId),
         jobDescription: useJd,
         style,
         instructionId: promptId ? Number(promptId) : undefined,
       });
+      const opened = await openPromise; // { reused } — reused tab vs cold first load
+      // Duplicate guard BEFORE the (slow) ChatGPT round-trip. Gemini already
+      // extracted the target role/company from the JD while building the prompt,
+      // so we can catch an existing application (same Account + Company + Title)
+      // now and skip the whole generation if the user doesn't want a re-do.
+      if (target && target.company && target.role) {
+        let dup = null;
+        try { dup = await api().findDuplicateApplication(Number(accountId), target.role, target.company); } catch (_) {}
+        if (dup && dup.exists) {
+          const proceed = await confirmDuplicate(target.role, target.company);
+          if (!proceed) { setLoading(false); return; }
+        }
+      }
       // The JSON prompt is copied natively in the main process (more reliable
       // than navigator.clipboard here); fall back to the renderer copy if that
       // fails.
@@ -481,13 +556,20 @@ export default function ResumeGenerator({ variant = "v1" }) {
       if (!onClipboard) {
         try { await navigator.clipboard.writeText(prompt); onClipboard = true; } catch (_) {}
       }
-      // Close any existing ChatGPT window and open a brand-new one (at the saved
-      // Project Home, if set) for this generation.
-      await api().openChatgpt({ fresh: true });
+      // The tab was already opened + loading in parallel above. Auto-send the
+      // prompt (inject → wait for Send to enable → click); the clipboard copy
+      // remains a fallback if the auto-send can't find ChatGPT's composer.
+      lastPromptRef.current = prompt;
+      lastReqIdRef.current = id;
+      // Name the chat "Company - Job Title" from the Gemini target (already
+      // known now) so it's set the moment the conversation is created — the
+      // original name, not a later rename over ChatGPT's auto-title.
+      const chatLabel = [ (target && target.company) || "", (target && target.role) || "" ].filter(Boolean).join(" - ");
+      autoSendOnLoad(prompt, id, !!(opened && opened.reused), chatLabel);
       setV2Waiting(true);
       toast(
         onClipboard
-          ? "Prompt copied. In ChatGPT: paste (Ctrl+V), send, then copy the whole reply."
+          ? "Sending your prompt to ChatGPT automatically… then copy the whole reply."
           : "Couldn't copy the prompt automatically — copy it manually from the preview, then paste into ChatGPT.",
         onClipboard ? "info" : "warning"
       );
@@ -497,10 +579,7 @@ export default function ResumeGenerator({ variant = "v1" }) {
       setV2Waiting(false);
       if (!res || !res.ok) {
         if (res && res.canceled) return;
-        if (res && res.closed) {
-          setError("Stopped — the ChatGPT window was closed before a reply arrived. Click Generate Resume to try again.");
-          return;
-        }
+        setView("generate"); // show the error on the generate tab
         setError(
           res && res.timeout
             ? "Timed out waiting for the ChatGPT reply. Click Generate Resume to try again."
@@ -512,15 +591,39 @@ export default function ResumeGenerator({ variant = "v1" }) {
         );
         return;
       }
+      // Display uses the values ChatGPT reported in its reply. Duplicate
+      // matching uses the Gemini JD extraction (target) via dedicated index
+      // columns, kept separate so display and matching never interfere.
+      const hasTarget = !!(target && target.company && target.role);
       setResult(res.text || "");
       setJobRole(res.jobRole || "");
       setJobCompany(res.jobCompany || "");
-      setJobCountry(res.jobCountry || "");
+      setJobCountry(res.jobCountry || (target && target.country) || "");
       if (openModalAfterPreview) setShowPreview(true);
       if (res.text) {
+        // Capture the ChatGPT conversation URL from the webview for "Open GPT".
+        let gptUrl = "";
+        try { gptUrl = webviewRef.current ? webviewRef.current.getURL() : ""; } catch (_) {}
+        if (!/^https?:\/\//i.test(gptUrl)) gptUrl = res.gptUrl || "";
         setView("preview");
-        await exportPdf(res.text || "", res.jobRole || "", res.jobCompany || "", res.jobCountry || "", useJd, { requestId: id });
-        toast("Resume generated from your ChatGPT reply.", "success");
+        // Fallback naming: when there was no Gemini target, we couldn't name the
+        // chat at send time, so name it now from the reply's company/role.
+        if (!hasTarget) {
+          const fb = [res.jobCompany || "", res.jobRole || ""].filter(Boolean).join(" - ");
+          if (fb) { try { renameChat(fb); } catch (_) {} }
+        }
+        // Skip the late duplicate prompt only when the early check actually ran
+        // (target present). Without a Gemini target, let exportPdf run its own
+        // check so V2 still catches duplicates. Pass the Gemini target as the
+        // dedicated match index so storage + matching stay consistent.
+        const saved = await exportPdf(res.text || "", res.jobRole || "", res.jobCompany || "", res.jobCountry || "", useJd, {
+          requestId: id,
+          gptUrl,
+          skipDupCheck: hasTarget,
+          matchRole: hasTarget ? target.role : "",
+          matchCompany: hasTarget ? target.company : "",
+        });
+        if (saved) toast("Resume generated from your ChatGPT reply.", "success");
       }
     } catch (e) {
       setV2Waiting(false);
@@ -539,13 +642,311 @@ export default function ResumeGenerator({ variant = "v1" }) {
     setLoading(false);
   };
 
-  // V2 Project Home: saving is done from inside the embedded browser (a floating
-  // button on the page). Reset reverts to the default ChatGPT site.
-  const resetChatHome = async () => {
-    await api().clearChatgptHome();
-    setChatHome("");
-    toast("Project Home reset to the default ChatGPT site.", "info");
+  // Load a URL into the embedded ChatGPT webview (remembering it for reloads).
+  const loadWebview = (url) => {
+    const wv = webviewRef.current;
+    if (!wv || !url) return;
+    lastChatUrlRef.current = url;
+    try { wv.loadURL(url); } catch (_) { try { wv.src = url; } catch (__) {} }
   };
+
+  // Start a fresh chat INSIDE the already-loaded ChatGPT tab using its own
+  // in-app navigation — no full page reload, no SPA re-download, no re-auth.
+  // Prefers navigating back to the saved Project Home link (keeps that project's
+  // context); otherwise clicks ChatGPT's "New chat" button. Returns true on
+  // success so the caller can fall back to a full load if the DOM has changed.
+  const startFreshChat = async (homeUrl) => {
+    const wv = webviewRef.current;
+    if (!wv) return false;
+    let homePath = "/";
+    try { if (homeUrl) homePath = new URL(homeUrl).pathname || "/"; } catch (_) {}
+    const js =
+      "(async () => {" +
+      "  const sleep = ms => new Promise(r=>setTimeout(r,ms));" +
+      "  const homePath = " + JSON.stringify(homePath) + ";" +
+      "  const clickIt = (el) => { if(!el) return false; try{ el.scrollIntoView&&el.scrollIntoView(); }catch(e){} try{ el.click(); }catch(e){ return false; } return true; };" +
+      // A Project Home is saved: the new chat MUST be created INSIDE that
+      // project (its scoped composer), never a generic new chat that leaves the
+      // project. So get back onto the project home PAGE itself.
+      "  if (homePath && homePath !== '/') {" +
+      "    const cur = location.pathname || '';" +
+      // Already on the project home page → its composer is ready, reuse it.
+      "    if (cur === homePath) return true;" +
+      // Otherwise click the project's sidebar link (client-side) to return to it.
+      "    const pm = homePath.match(/\\/g\\/([^/]+)/); const projId = pm ? pm[1] : '';" +
+      "    let link = document.querySelector('a[href=\"'+homePath+'\"]');" +
+      "    if (!link && projId) link = Array.from(document.querySelectorAll('a')).find(a => (a.getAttribute('href')||'').indexOf(projId) !== -1);" +
+      "    if (clickIt(link)) {" +
+      // Wait until the URL actually lands on the project home page.
+      "      for (let i=0;i<20;i++){ if((location.pathname||'')===homePath) return true; await sleep(150); }" +
+      "      if ((location.pathname||'').indexOf(projId) !== -1) return true;" +
+      "    }" +
+      // Couldn't confirm we're in the project → let the caller do a full load
+      // of the Project Home URL (correct, just slower). NEVER a generic chat.
+      "    return false;" +
+      "  }" +
+      // No Project Home set: a plain new chat is correct.
+      "  let nb = document.querySelector('[data-testid=\"create-new-chat-button\"]');" +
+      "  if (!nb) nb = Array.from(document.querySelectorAll('a,button')).find(x => { const t=((x.getAttribute('data-testid')||'')+' '+(x.getAttribute('aria-label')||'')+' '+(x.getAttribute('href')||'')).toLowerCase(); return /new.?chat|create-new-chat/.test(t); });" +
+      "  if (clickIt(nb)) { await sleep(250); return true; }" +
+      "  return false;" +
+      "})();";
+    try { return await wv.executeJavaScript(js, true); } catch (_) { return false; }
+  };
+
+  // Switch to the embedded ChatGPT tab. opts.reuse: when the tab is already
+  // loaded on ChatGPT, start a fresh chat in-place (fast) instead of a full
+  // reload. opts.url: load an explicit URL (full load). Default = full reload.
+  const openChatTab = async (opts = {}) => {
+    const { reuse = false, url = "" } = typeof opts === "string" ? { url: opts } : opts;
+    setView("chatgpt");
+    // Fast path: reuse the already-loaded tab and start a fresh chat client-side.
+    if (reuse && !url) {
+      const wv = webviewRef.current;
+      try {
+        let cur = "";
+        try { cur = wv && !wv.isLoading() ? (wv.getURL() || "") : ""; } catch (_) {}
+        if (/^https?:\/\/(chatgpt\.com|chat\.openai\.com)/i.test(cur)) {
+          const ok = await startFreshChat(chatHome || "");
+          if (ok) return { reused: true };
+        }
+      } catch (_) {}
+    }
+    // Cold path: full load of the Project Home (or an explicit url).
+    chatRetriedRef.current = false;
+    const info = await api().chatgptSessionInfo(); // applies proxy, returns home
+    const target = /^https?:\/\//i.test(url || "") ? url : (info && info.homeUrl) || "https://chatgpt.com/";
+    loadWebview(target);
+    return { reused: false };
+  };
+
+  // Inject the prompt into ChatGPT's composer, wait for the Send button to enable,
+  // then click it — so the user doesn't have to paste + send by hand. Returns a
+  // short status string; falls back silently (the prompt is still on the clipboard
+  // and in the box) if ChatGPT's DOM has changed.
+  const autoSend = async (promptText) => {
+    const wv = webviewRef.current;
+    if (!wv || !promptText) return "no-webview";
+    const js =
+      "(async () => {" +
+      "  const text = " + JSON.stringify(String(promptText)) + ";" +
+      "  const sleep = (ms) => new Promise(r => setTimeout(r, ms));" +
+      "  const findEditor = () => document.querySelector('#prompt-textarea')" +
+      "    || document.querySelector('div.ProseMirror[contenteditable=\"true\"]')" +
+      "    || document.querySelector('main [contenteditable=\"true\"]')" +
+      "    || document.querySelector('form textarea');" +
+      "  const hasText = (el) => el && ((el.tagName==='TEXTAREA' ? el.value : el.textContent) || '').trim().length > 0;" +
+      "  const findSend = () => {" +
+      "    const direct = document.querySelector('button[data-testid=\"send-button\"],#composer-submit-button,button[data-testid=\"composer-send-button\"],button[aria-label=\"Send prompt\"]');" +
+      "    if (direct && !direct.disabled && direct.getAttribute('aria-disabled')!=='true') return direct;" +
+      "    const btns = Array.from(document.querySelectorAll('button'));" +
+      "    return btns.find(b => { const t=((b.getAttribute('data-testid')||'')+' '+(b.getAttribute('aria-label')||'')+' '+(b.id||'')).toLowerCase(); return /send/.test(t) && !b.disabled && b.getAttribute('aria-disabled')!=='true'; }) || null;" +
+      "  };" +
+      // Fire the click EXACTLY ONCE. The pointer/mouse down+up prime ChatGPT's
+      // button state; then a single native click() sends. (Dispatching a synthetic
+      // 'click' AND calling el.click() would double-send.)
+      "  const realClick = (el) => { const o={bubbles:true,cancelable:true,view:window};" +
+      "    try{ el.dispatchEvent(new PointerEvent('pointerdown',o)); }catch(e){}" +
+      "    el.dispatchEvent(new MouseEvent('mousedown',o));" +
+      "    try{ el.dispatchEvent(new PointerEvent('pointerup',o)); }catch(e){}" +
+      "    el.dispatchEvent(new MouseEvent('mouseup',o));" +
+      "    try{ el.click(); }catch(e){ el.dispatchEvent(new MouseEvent('click',o)); } };" +
+      "  const pressEnter = (el) => { el.focus(); ['keydown','keypress','keyup'].forEach(type => el.dispatchEvent(new KeyboardEvent(type,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}))); };" +
+      "  let editor = null;" +
+      "  for (let i=0;i<60;i++){ editor = findEditor(); if (editor) break; await sleep(200); }" +
+      "  if (!editor) return 'no-editor';" +
+      "  editor.focus();" +
+      "  const editorText = () => (editor.tagName==='TEXTAREA' ? editor.value : editor.textContent) || '';" +
+      // Wipe whatever is already in the box. ChatGPT's ProseMirror editor won't
+      // reliably replace a selection on insert, so any leftover characters break
+      // the paste — clear it to empty FIRST, then insert the fresh prompt.
+      "  const clearEditor = () => {" +
+      "    editor.focus();" +
+      "    if (editor.tagName === 'TEXTAREA') {" +
+      "      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;" +
+      "      setter.call(editor, '');" +
+      "      editor.dispatchEvent(new Event('input',{bubbles:true}));" +
+      "    } else {" +
+      "      const sel = window.getSelection(); sel.removeAllRanges();" +
+      "      const range = document.createRange(); range.selectNodeContents(editor); sel.addRange(range);" +
+      "      try { document.execCommand('selectAll', false, null); } catch(e){}" +
+      "      try { document.execCommand('delete', false, null); } catch(e){}" +
+      "      if (editorText().trim().length) { editor.innerHTML=''; }" +
+      "      editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'deleteContentBackward'}));" +
+      "    }" +
+      "  };" +
+      "  const insertText = () => {" +
+      "    editor.focus();" +
+      "    if (editor.tagName === 'TEXTAREA') {" +
+      "      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;" +
+      "      setter.call(editor, text);" +
+      "      editor.dispatchEvent(new Event('input',{bubbles:true}));" +
+      "    } else {" +
+      "      const sel = window.getSelection(); sel.removeAllRanges();" +
+      "      const range = document.createRange(); range.selectNodeContents(editor); range.collapse(false); sel.addRange(range);" +
+      "      document.execCommand('insertText', false, text);" +
+      "      editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));" +
+      "    }" +
+      "  };" +
+      // Clear → insert, and verify the box now holds exactly the prompt (ignoring
+      // whitespace the editor may reflow). Retry a few times if it didn't take.
+      "  try {" +
+      "    const want = text.replace(/\\s+/g,'');" +
+      "    for (let attempt=0; attempt<3; attempt++) {" +
+      "      clearEditor(); await sleep(40);" +
+      "      insertText(); await sleep(60);" +
+      "      if (editorText().replace(/\\s+/g,'') === want) break;" +
+      "    }" +
+      "  } catch(e){ return 'insert-error'; }" +
+      "  let btn = null;" +
+      "  for (let i=0;i<60;i++){ btn = findSend(); if (btn) break; await sleep(200); }" +
+      // Send ONCE, then wait up to ~3s to confirm it actually went (the composer
+      // clears on send). Only escalate to a fallback if it clearly did NOT send,
+      // so a single generation never produces two messages / two chats.
+      "  const waitSent = async () => { for(let i=0;i<15;i++){ if(!hasText(editor)) return true; await sleep(200); } return !hasText(editor); };" +
+      "  if (btn) { realClick(btn); if (await waitSent()) return 'sent'; }" +
+      "  pressEnter(editor); if (await waitSent()) return 'sent';" +
+      "  if (btn) { realClick(btn); if (await waitSent()) return 'sent'; }" +
+      "  return hasText(editor) ? 'not-sent' : 'sent';" +
+      "})();";
+    try { return await wv.executeJavaScript(js, true); } catch (_) { return "error"; }
+  };
+
+  // Rename the current ChatGPT conversation to "Company - Job Title" using
+  // ChatGPT's own backend (a same-origin fetch with the session token). This is
+  // far more robust than driving the sidebar rename menu, and survives DOM
+  // changes. No-ops silently if there's no conversation id / token yet.
+  const renameChat = async (label) => {
+    const wv = webviewRef.current;
+    if (!wv || !label) return "no-label";
+    const js =
+      "(async () => {" +
+      "  const label = " + JSON.stringify(String(label)) + ";" +
+      "  const sleep = ms => new Promise(r=>setTimeout(r,ms));" +
+      // Wait briefly for the conversation id to appear in the URL after sending.
+      "  let id=''; for(let i=0;i<20;i++){ const m=location.pathname.match(/\\/c\\/([^/?#]+)/); if(m){ id=m[1]; break; } await sleep(300); }" +
+      "  if(!id) return 'no-id';" +
+      "  let tok=''; try{ const s=await fetch('/api/auth/session',{credentials:'include'}).then(r=>r.json()); tok=(s&&s.accessToken)||''; }catch(e){}" +
+      "  if(!tok) return 'no-token';" +
+      // ChatGPT auto-generates a title after the first reply; set ours a moment
+      // later so it wins, then confirm it stuck.
+      "  const put = async () => { try{ const r=await fetch('/backend-api/conversation/'+id,{method:'PATCH',credentials:'include',headers:{'Content-Type':'application/json','Authorization':'Bearer '+tok},body:JSON.stringify({title:label})}); return r.ok; }catch(e){ return false; } };" +
+      "  let ok=await put(); await sleep(1200); await put();" +
+      "  return ok ? 'ok' : 'failed';" +
+      "})();";
+    try { return await wv.executeJavaScript(js, true); } catch (_) { return "error"; }
+  };
+
+  // Wait for the completed resume-JSON reply (request_id matches, valid JSON with
+  // a `resume` object), click its code-block Copy button, and also place the JSON
+  // on the clipboard directly so the reply watcher reliably picks it up.
+  const autoCopyReply = async (reqId) => {
+    const wv = webviewRef.current;
+    if (!wv || !reqId) return;
+    const js =
+      "(async () => {" +
+      "  const reqId = " + JSON.stringify(String(reqId)) + ";" +
+      "  const sleep = ms => new Promise(r=>setTimeout(r,ms));" +
+      "  const complete = (pre) => { const t=(pre.textContent||'').trim(); if(!t.includes(reqId)) return null; let o; try{o=JSON.parse(t);}catch(e){return null;} return (o && String(o.request_id||'')===reqId && o.resume && typeof o.resume==='object') ? t : null; };" +
+      "  const findCopyBtn = (pre) => { let node=pre; for(let up=0;up<6&&node;up++){ node=node.parentElement; if(!node) break; let b=node.querySelector('button[aria-label*=\"opy\"],button[data-testid*=\"copy\"]'); if(!b){ b=Array.from(node.querySelectorAll('button')).find(x=>/copy/i.test(((x.textContent||'')+' '+(x.getAttribute('aria-label')||'')))); } if(b) return b; } return null; };" +
+      "  for (let i=0;i<900;i++){" +
+      "    let text=null, target=null; const pres=document.querySelectorAll('pre');" +
+      "    for(const p of pres){ const t=complete(p); if(t){ text=t; target=p; } }" +
+      "    if(text && target){ const b=findCopyBtn(target); if(b){ try{ b.click(); }catch(e){} } return text; }" +
+      "    await sleep(400);" +
+      "  }" +
+      "  return '';" +
+      "})();";
+    let text = "";
+    try { text = await wv.executeJavaScript(js, true); } catch (_) {}
+    if (text && typeof text === "string" && text.trim()) {
+      try { await api().clipboardWrite(text); } catch (_) {}
+    }
+  };
+
+  // Auto-send the prompt once the ChatGPT page has finished loading, then watch
+  // for the reply and auto-copy it.
+  const autoSendOnLoad = (promptText, reqId, reused, chatLabel) => {
+    const wv = webviewRef.current;
+    if (!wv) return;
+    // First time the WebView opens ChatGPT (cold full load), give it a 5s
+    // settle before injecting. A reused warm tab needs no wait.
+    const delay = reused ? 0 : 5000;
+    let started = false;
+    const run = () => {
+      if (started) return;
+      // Hard single-fire guard across the whole generation: even if a stale
+      // did-finish-load fires or autoSendOnLoad is somehow invoked twice for the
+      // same request_id, the prompt is auto-sent exactly once.
+      if (autoSentIdRef.current === reqId) return;
+      started = true;
+      autoSentIdRef.current = reqId;
+      wv.removeEventListener("did-finish-load", handler);
+      // autoSend() also polls internally for ChatGPT's composer to mount, so
+      // this works whether the page just finished loading or loaded earlier.
+      setTimeout(async () => {
+        const r = await autoSend(promptText);
+        if (r !== "sent") {
+          toast("Couldn't auto-send — paste the prompt (Ctrl+V) in the ChatGPT tab and send it.", "warning");
+        }
+        // Set the chat's name right after the message is sent (the conversation
+        // now exists) so it shows as the original name before ChatGPT auto-titles.
+        if (chatLabel) { try { renameChat(chatLabel); } catch (_) {} }
+        // Whether auto-sent or sent manually, watch for the reply and copy it.
+        autoCopyReply(reqId);
+      }, delay);
+    };
+    const handler = () => run();
+    wv.addEventListener("did-finish-load", handler);
+    // The page may have ALREADY finished loading (it was kicked off in parallel
+    // with the Gemini call), in which case did-finish-load won't fire again —
+    // detect that and run immediately.
+    try {
+      const cur = wv.getURL() || "";
+      if (!wv.isLoading() && cur && cur !== "about:blank") run();
+    } catch (_) {}
+  };
+
+  // Save whatever page the embedded ChatGPT tab is currently showing as Project Home.
+  const saveCurrentPageAsHome = async () => {
+    let url = "";
+    try { url = webviewRef.current ? webviewRef.current.getURL() : ""; } catch (_) {}
+    const r = await api().saveChatgptHome((url || "").trim());
+    if (r && r.ok) { setChatHome(r.url); toast("Saved as Project Home.", "success"); }
+    else toast((r && r.error) || "Open a ChatGPT page in the tab first.", "warning");
+  };
+
+  // Once the webview is ready, load ChatGPT (Project Home) automatically so the
+  // tab is never blank; and auto-retry on the local IP if a proxied load fails
+  // (ChatGPT/Cloudflare frequently blocks proxy IPs).
+  useEffect(() => {
+    if (!isV2) return;
+    const wv = webviewRef.current;
+    if (!wv) return;
+    const onReady = async () => {
+      let cur = "";
+      try { cur = wv.getURL() || ""; } catch (_) {}
+      if (!cur || cur === "about:blank") {
+        try { await api().chatgptSessionInfo(); } catch (_) {} // apply proxy first
+        const r = await api().getChatgptHome();
+        loadWebview((r && r.url) || "https://chatgpt.com/");
+      }
+    };
+    const onFail = async (e) => {
+      if (!e || e.isMainFrame === false || e.errorCode === -3) return;
+      if (chatRetriedRef.current) return;
+      chatRetriedRef.current = true;
+      try { await api().chatgptSessionDirect(); } catch (_) {}
+      loadWebview(lastChatUrlRef.current || "https://chatgpt.com/");
+    };
+    wv.addEventListener("dom-ready", onReady);
+    wv.addEventListener("did-fail-load", onFail);
+    return () => {
+      try { wv.removeEventListener("dom-ready", onReady); } catch (_) {}
+      try { wv.removeEventListener("did-fail-load", onFail); } catch (_) {}
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isV2, chatUa]);
 
   // V2 browser connection: local IP (direct) or a chosen proxy. Takes effect the
   // next time the ChatGPT window opens (Generate opens a fresh one).
@@ -765,6 +1166,15 @@ export default function ResumeGenerator({ variant = "v1" }) {
           >
             Generate Resume
           </button>
+          {isV2 && (
+            <button
+              type="button"
+              className={"resume-tab" + (view === "chatgpt" ? " active" : "")}
+              onClick={() => setView("chatgpt")}
+            >
+              ChatGPT
+            </button>
+          )}
           <button
             type="button"
             className={"resume-tab" + (view === "preview" ? " active" : "")}
@@ -783,29 +1193,10 @@ export default function ResumeGenerator({ variant = "v1" }) {
           </span>
         </div>
 
-        {view === "generate" ? (
+        {view === "generate" && (
         <>
         {isV2 && (
           <div className="v2-controls">
-            <div className="chat-home">
-              <div className="chat-home-info">
-                <span className="field-label" style={{ margin: 0 }}>ChatGPT Project Home</span>
-                <span className="muted small chat-home-url" title={chatHome || undefined}>
-                  {chatHome || "Default (chatgpt.com)"}
-                </span>
-              </div>
-              <div className="chat-home-actions">
-                <button className="btn small" onClick={() => api().openChatgpt()} title="Open the embedded browser — use the in-page button to save a page as Project Home">
-                  Open ChatGPT
-                </button>
-                {chatHome && (
-                  <button className="btn small" onClick={resetChatHome} title="Revert to the default ChatGPT site">
-                    Reset
-                  </button>
-                )}
-              </div>
-            </div>
-
             <div className="chat-home">
               <div className="chat-home-info">
                 <span className="field-label" style={{ margin: 0 }}>Browser Connection</span>
@@ -969,17 +1360,18 @@ export default function ResumeGenerator({ variant = "v1" }) {
             <div className="v2-wait-text">
               <strong>Waiting for your ChatGPT reply…</strong>
               <span className="muted small">
-                In the ChatGPT window: paste the prompt (Ctrl+V), send it, then
+                In the ChatGPT tab: paste the prompt (Ctrl+V), send it, then
                 select &amp; copy the entire reply. This page detects it automatically.
               </span>
             </div>
             <button className="btn small" onClick={cancelV2}>Cancel</button>
-            <button className="btn small" onClick={() => api().openChatgpt()}>Open ChatGPT</button>
+            <button className="btn small" onClick={() => setView("chatgpt")}>Open ChatGPT tab</button>
           </div>
         )}
         {error && <div className="error">{error}</div>}
         </>
-        ) : (
+        )}
+        {view === "preview" && (
         <>
         <div className="action-row preview-actions">
           <div className="action-group">
@@ -1019,6 +1411,44 @@ export default function ResumeGenerator({ variant = "v1" }) {
         </div>
         </>
         )}
+        {isV2 && chatUa && (
+          <div
+            className="chat-embed"
+            style={
+              view === "chatgpt"
+                ? { display: "flex" }
+                // Keep the WebView laid out (off-screen) instead of display:none so
+                // it stays attached and pre-warmed; snaps into the card when active.
+                : { display: "flex", position: "absolute", left: "-99999px", top: 0, width: "1000px", height: "700px", pointerEvents: "none" }
+            }
+          >
+            <div className="chat-embed-bar">
+              <span className="muted small">
+                Paste the prompt (Ctrl+V), send it, then select &amp; copy the whole reply — the app detects it automatically.
+              </span>
+              <span className="resume-tabs-spacer" />
+              <button
+                className="btn small"
+                onClick={async () => { await autoSend(lastPromptRef.current); autoCopyReply(lastReqIdRef.current); }}
+                disabled={!lastPromptRef.current}
+                title="Type the last prompt into ChatGPT, send it, and auto-copy the reply"
+              >
+                Send prompt
+              </button>
+              <button className="btn small" onClick={() => openChatTab()} title="Reload the ChatGPT tab at your Project Home">Reload</button>
+              <button className="btn small" onClick={saveCurrentPageAsHome} title="Save the current page as your Project Home">Save as Project Home</button>
+            </div>
+            <webview
+              ref={webviewRef}
+              className="chat-webview"
+              partition="persist:chatgpt"
+              useragent={chatUa}
+              allowpopups="true"
+              webpreferences="backgroundThrottling=false"
+              src="about:blank"
+            />
+          </div>
+        )}
       </section>
     </div>
 
@@ -1054,6 +1484,19 @@ export default function ResumeGenerator({ variant = "v1" }) {
         </div>
       </div>
     )}
+
+    <ConfirmModal
+      open={!!dupConfirm}
+      title="Already applied to this role?"
+      message={
+        dupConfirm
+          ? `You already have an application for "${dupConfirm.role}"${dupConfirm.company ? ` at ${dupConfirm.company}` : ""}. Generate a new resume for it (this overwrites the existing one)?`
+          : ""
+      }
+      confirmLabel="Generate anyway"
+      onConfirm={() => { const r = dupResolveRef.current; dupResolveRef.current = null; setDupConfirm(null); if (r) r(true); }}
+      onCancel={() => { const r = dupResolveRef.current; dupResolveRef.current = null; setDupConfirm(null); if (r) r(false); }}
+    />
 
     </div>
   );

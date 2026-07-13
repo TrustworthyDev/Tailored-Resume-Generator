@@ -87,6 +87,12 @@ const SCHEMA = `
       country    TEXT,
       position   TEXT,
       request_id TEXT,
+      job_description TEXT,
+      resume_content  TEXT,
+      gpt_url    TEXT,
+      match_role    TEXT,
+      match_company TEXT,
+      match_account TEXT,
       applied_at TEXT,
       pdf_path   TEXT
     );
@@ -232,6 +238,16 @@ function migrate() {
     ["country", "TEXT"],
     ["pdf_path", "TEXT"],
     ["request_id", "TEXT"], // V2 handshake id, shown in the history
+    ["job_description", "TEXT"], // stored with the application for reference
+    ["resume_content", "TEXT"],  // the generated resume markdown
+    ["gpt_url", "TEXT"],         // the ChatGPT conversation URL — "Open GPT" reopens it
+    // Dedicated duplicate-detection index fields: the canonical job title +
+    // company extracted from the JD by Gemini, plus the account name. Matching
+    // uses THESE, so display role/company can differ (e.g. from the reply)
+    // without breaking duplicate detection.
+    ["match_role", "TEXT"],
+    ["match_company", "TEXT"],
+    ["match_account", "TEXT"],
   ].forEach(([col, type]) => {
     if (!appCols.some((c) => c.name === col)) {
       db.run(`ALTER TABLE applications ADD COLUMN ${col} ${type}`);

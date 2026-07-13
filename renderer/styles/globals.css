@@ -215,6 +215,16 @@ select.input {
 }
 .v2-wait-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 
+/* Generate V2 — embedded ChatGPT tab (webview). Fills the remaining card height
+   (the .resume-form card is a fixed-height flex column) so there's no black gap. */
+.chat-embed { flex-direction: column; gap: 8px; flex: 1 1 auto; min-height: 0; }
+.chat-embed-bar { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
+.chat-webview {
+  flex: 1 1 auto; min-height: 0; width: 100%;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: #ffffff; overflow: hidden;
+}
+
 /* Generate V2 — grouped controls (Project Home + Browser Connection). */
 .v2-controls { display: flex; flex-direction: column; gap: 8px; margin-bottom: 14px; }
 .v2-controls .chat-home { margin: 0; }
@@ -230,8 +240,9 @@ select.input {
   border-radius: 10px; background: var(--panel-2);
   height: 62px; box-sizing: border-box;
 }
-.chat-home-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.chat-home-info { display: flex; flex-direction: column; gap: 3px; min-width: 0; flex: 1; }
 .chat-home-url { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 420px; }
+.chat-home-input { height: 30px; padding: 4px 10px; font-size: 12px; width: 100%; }
 .chat-home-actions { display: flex; gap: 8px; flex-shrink: 0; align-items: center; }
 /* Keep the Local IP/Proxy toggle and its proxy dropdown together as one unit,
    in a FIXED-WIDTH area so toggling Proxy/Local IP never resizes the section
