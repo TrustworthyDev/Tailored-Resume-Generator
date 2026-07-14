@@ -37,6 +37,7 @@ const SCHEMA = `
       portfolio TEXT,
       main_stack TEXT,
       additional_info TEXT,
+      birth_date TEXT,
       sort_order INTEGER,
       created_at TEXT
     );
@@ -173,6 +174,12 @@ function migrate() {
   // certifications, languages, awards, notes — anything not covered by the other tabs).
   if (!acctCols.some((c) => c.name === "additional_info")) {
     db.run("ALTER TABLE accounts ADD COLUMN additional_info TEXT");
+  }
+
+  // Ensure accounts has a birth_date column (YYYY-MM-DD) — the person's age is
+  // computed from it and shown in the generator's "View info" modal.
+  if (!acctCols.some((c) => c.name === "birth_date")) {
+    db.run("ALTER TABLE accounts ADD COLUMN birth_date TEXT");
   }
 
   // Ensure api_keys has a provider column (multi-provider support).

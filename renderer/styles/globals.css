@@ -197,6 +197,19 @@ select.input {
 .modal-actions .btn { padding: 10px 20px; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 
+/* "View info" modal: label/value pairs for the account + target job. */
+.info-section {
+  margin: 16px 0 8px; font-size: 12px; font-weight: 600; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--muted);
+  border-bottom: 1px solid var(--border); padding-bottom: 6px;
+}
+.info-grid {
+  display: grid; grid-template-columns: 116px 1fr; gap: 8px 14px; align-items: baseline;
+}
+.info-grid > * { min-width: 0; }
+.info-k { color: var(--muted); font-size: 12.5px; }
+.info-v { font-size: 13.5px; color: var(--text); word-break: break-word; }
+
 /* Progress modal */
 .modal-progress { text-align: center; }
 .spinner {
@@ -473,14 +486,39 @@ select.input {
   display: flex; flex-direction: column;
 }
 .style-grid {
-  display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-top: 12px;
-  overflow-y: auto; flex: 1 1 auto; min-height: 160px; padding-right: 4px;
+  /* Exactly 2 columns x 4 rows in view; every further style scrolls. */
+  --style-row: 122px;
+  --style-gap: 12px;
+  display: grid; grid-template-columns: 1fr 1fr;
+  grid-auto-rows: var(--style-row);
+  gap: var(--style-gap); margin-top: 12px;
+  height: calc(var(--style-row) * 4 + var(--style-gap) * 3);
+  flex: 0 1 auto; min-height: 0;
+  /* Always reserve + show the scrollbar so it's obvious more styles are below. */
+  overflow-y: scroll; padding-right: 8px;
+  scrollbar-color: #5c6678 var(--panel-2);
+}
+.style-grid::-webkit-scrollbar { width: 10px; }
+.style-grid::-webkit-scrollbar-track {
+  background: var(--panel-2); border-radius: 8px;
+}
+.style-grid::-webkit-scrollbar-thumb {
+  background: #5c6678; border-radius: 8px;
+  border: 2px solid var(--panel-2); background-clip: padding-box;
+}
+.style-grid::-webkit-scrollbar-thumb:hover {
+  background: #6e7889; background-clip: padding-box;
 }
 .style-cell {
   position: relative; padding: 0; background: var(--panel-2);
   border: 2px solid var(--border); border-radius: 10px; cursor: pointer; overflow: hidden;
 }
-.style-cell img { display: block; width: 100%; height: auto; }
+/* Fill the fixed-height cell, anchored to the top so the header + first sections
+   (the part that actually distinguishes a template) stay visible. */
+.style-cell img {
+  display: block; width: 100%; height: 100%;
+  object-fit: cover; object-position: top center;
+}
 .style-cell:hover { border-color: var(--muted); }
 .style-cell.active { border-color: var(--primary); }
 .style-cell.dragging { opacity: 0.5; }

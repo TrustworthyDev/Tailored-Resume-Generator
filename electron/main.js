@@ -296,7 +296,8 @@ function registerIpc() {
   ipcMain.handle("accounts:save", (_e, d) => {
     db.run(
       `UPDATE accounts SET name = ?, title = ?, email = ?, phone = ?, address = ?,
-         country = ?, linkedin = ?, portfolio = ?, main_stack = ?, additional_info = ? WHERE id = ?`,
+         country = ?, linkedin = ?, portfolio = ?, main_stack = ?, additional_info = ?,
+         birth_date = ? WHERE id = ?`,
       [
         d.name || "",
         d.title || "",
@@ -308,6 +309,7 @@ function registerIpc() {
         d.portfolio || "",
         d.main_stack || "",
         d.additional_info || "",
+        d.birth_date || "",
         d.id,
       ]
     );

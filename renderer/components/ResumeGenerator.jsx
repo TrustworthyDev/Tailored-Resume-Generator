@@ -4,6 +4,7 @@ import { buildResumeHtml, buildCoverLetterHtml } from "../lib/resumeHtml";
 import { styleThumb } from "../lib/styleThumbs";
 import { modelTiny, providerLabel } from "../lib/aiModels";
 import { friendlyError } from "../lib/errors";
+import { ageFromBirthDate } from "../lib/age";
 import FlagSelect from "./FlagSelect";
 import ConfirmModal from "./ConfirmModal";
 
@@ -17,6 +18,8 @@ const STYLES = [
   { id: "cards", label: "Cards", accent: "#0d9488" },
   { id: "timeline", label: "Timeline", accent: "#2563eb" },
   { id: "classic", label: "Classic", accent: "#1f2937" },
+  { id: "centered", label: "Centered", accent: "#14b8a6" },
+  { id: "highlight", label: "Highlight", accent: "#c2410c" },
 ];
 
 // Sample colors. The Content picker applies one to EVERY template's borders,
@@ -112,6 +115,7 @@ export default function ResumeGenerator({ variant = "v1" }) {
   const [proxyList, setProxyList] = useState([]); // V2: proxies to choose from
   const [chatProxyId, setChatProxyId] = useState(""); // V2: chosen proxy id
   const [showPromptModal, setShowPromptModal] = useState(false); // view active prompt content
+  const [showInfo, setShowInfo] = useState(false); // "View info" modal (account + target job)
   const [dupConfirm, setDupConfirm] = useState(null); // { role, company } when confirming a duplicate
   const dupResolveRef = useRef(null); // resolves the duplicate-confirm promise
   const [chatUa, setChatUa] = useState(""); // V2: user-agent for the embedded ChatGPT webview
@@ -344,6 +348,7 @@ export default function ResumeGenerator({ variant = "v1" }) {
     const a = accounts.find((x) => String(x.id) === String(accountId));
     return (a && a.title) || "";
   };
+
 
   // Live, fully-styled preview of the generated resume — same HTML the PDF uses,
   // so it reflects the chosen style, colors and fonts in real time.
@@ -1182,6 +1187,17 @@ export default function ResumeGenerator({ variant = "v1" }) {
           >
             Preview Resume
           </button>
+          {/* Only meaningful once a resume exists — it reports the target job too. */}
+          {result && (
+            <button
+              type="button"
+              className="resume-tab"
+              onClick={() => setShowInfo(true)}
+              title="Show this account's personal info and the target job"
+            >
+              View info
+            </button>
+          )}
           <span className="resume-tabs-spacer" />
           <span className="field-label" style={{ margin: 0 }}>
             Proxy{" "}
@@ -1481,6 +1497,48 @@ export default function ResumeGenerator({ variant = "v1" }) {
           {selectedPrompt && selectedPrompt.body
             ? <pre className="resume-output">{selectedPrompt.body}</pre>
             : <p className="muted">This prompt is empty.</p>}
+        </div>
+      </div>
+    )}
+
+    {showInfo && (
+      <div className="modal-overlay" onClick={() => setShowInfo(false)}>
+        <div className="modal" onClick={(e) => e.stopPropagation()}>
+          <div className="card-head">
+            <h2>View info</h2>
+            <div className="list-actions">
+              <button className="btn small" onClick={() => setShowInfo(false)}>Close</button>
+            </div>
+          </div>
+
+          <div className="info-section">Project Info</div>
+          <div className="info-grid">
+            <div className="info-k">Company</div><div className="info-v">{jobCompany || "—"}</div>
+            <div className="info-k">Job Title</div><div className="info-v">{jobRole || "—"}</div>
+            <div className="info-k">Country</div><div className="info-v">{jobCountry || "—"}</div>
+          </div>
+
+          <div className="info-section">Personal Info</div>
+          {acctInfo ? (
+            <div className="info-grid">
+              <div className="info-k">Name</div><div className="info-v">{acctInfo.name || "—"}</div>
+              <div className="info-k">Title</div><div className="info-v">{acctInfo.title || "—"}</div>
+              <div className="info-k">DOB</div>
+              <div className="info-v">
+                {acctInfo.birth_date || <span className="muted">Not set (Accounts → Personal)</span>}
+              </div>
+              <div className="info-k">Age</div>
+              <div className="info-v">{ageFromBirthDate(acctInfo.birth_date) || "—"}</div>
+              <div className="info-k">Email</div><div className="info-v">{acctInfo.email || "—"}</div>
+              <div className="info-k">Phone</div><div className="info-v">{acctInfo.phone || "—"}</div>
+              <div className="info-k">Address</div><div className="info-v">{acctInfo.address || "—"}</div>
+              <div className="info-k">Country</div><div className="info-v">{acctInfo.country || "—"}</div>
+              <div className="info-k">LinkedIn</div><div className="info-v">{acctInfo.linkedin || "—"}</div>
+              <div className="info-k">Portfolio</div><div className="info-v">{acctInfo.portfolio || "—"}</div>
+            </div>
+          ) : (
+            <p className="muted">Select an account to see its details.</p>
+          )}
         </div>
       </div>
     )}

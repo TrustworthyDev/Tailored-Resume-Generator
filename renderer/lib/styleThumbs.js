@@ -167,6 +167,48 @@ export function styleThumb(style) {
       }
       break;
     }
+    case "centered": {
+      inner += rc(58, 16, 124, 18, nameC || "#111111", 2);        // big centered name
+      // Professional title in an outlined box.
+      inner += `<rect x='72' y='42' width='96' height='15' rx='1' fill='none' stroke='${a}' stroke-width='1.5'/>`;
+      inner += rc(82, 47, 76, 5, titleC || "#555555");
+      inner += rc(20, 65, 200, 13, "#efefef", 1);                 // grey contact band
+      inner += rc(46, 70, 148, 4, G);
+      let y = 92;
+      for (let k = 0; k < 3; k++) {
+        // Centered section heading flanked by short rules.
+        inner += rc(40, y + 3, 26, 2, a);
+        inner += rc(90, y, 60, 7, a);
+        inner += rc(174, y + 3, 26, 2, a);
+        inner += rc(75, y + 15, 90, 6, "#1a1a1a");                // company – location
+        inner += rc(85, y + 25, 70, 4, a);                        // role, dates (accent)
+        for (let i = 0; i < 3; i++) {
+          inner += `<circle cx='26' cy='${y + 37 + i * 8}' r='1.6' fill='#555555'/>`;
+          inner += rc(32, y + 35 + i * 8, 188, 3.5, G);
+        }
+        y += 70;
+      }
+      break;
+    }
+    case "highlight": {
+      inner += rc(20, 18, 118, 16, nameC || "#1a1a1a", 2);        // bold uppercase name
+      inner += rc(20, 40, 74, 5, titleC || a);                    // accent subtitle
+      for (let i = 0; i < 3; i++) inner += rc(150, 18 + i * 9, 70, 4, G); // stacked contacts (right)
+      inner += rc(20, 54, 200, 1, a);                             // rule under header
+      let y = 66;
+      for (let k = 0; k < 4; k++) {
+        inner += rc(20, y, 62, 12, "#ece7e1", 1);                 // shaded heading band
+        inner += rc(25, y + 4, 44, 5, "#1a1a1a");
+        inner += rc(20, y + 19, 96, 6, a);                        // accent role/degree title
+        inner += rc(20, y + 29, 76, 4, G);                        // company · dates
+        for (let i = 0; i < 3; i++) {
+          inner += `<circle cx='26' cy='${y + 41 + i * 8}' r='2' fill='none' stroke='${a}' stroke-width='1'/>`;
+          inner += rc(32, y + 39 + i * 8, 188, 3.5, G);
+        }
+        y += 62;
+      }
+      break;
+    }
     default: // professional
       inner += rc(20, 20, 7, 42, a, 1);
       inner += rc(36, 24, 100, 16, nameC || "#1f2937", 3);
@@ -174,6 +216,9 @@ export function styleThumb(style) {
       inner += sections(82, a, { rule: true });
   }
 
-  const svg = `<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 320'><rect width='240' height='320' fill='#ffffff'/>${inner}</svg>`;
+  // width/height are explicit so the <img> gets a real 240x320 intrinsic ratio
+  // (without them Chrome falls back to its default replaced-element ratio and
+  // the thumbnail renders squashed).
+  const svg = `<svg xmlns='http://www.w3.org/2000/svg' width='240' height='320' viewBox='0 0 240 320'><rect width='240' height='320' fill='#ffffff'/>${inner}</svg>`;
   return "data:image/svg+xml," + encodeURIComponent(svg);
 }

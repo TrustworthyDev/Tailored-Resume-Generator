@@ -214,6 +214,44 @@ main h3{font-size:11pt;font-weight:700;color:#111;margin:10px 0 0;}
 .role-org{font-style:italic;color:#333;font-size:10pt;margin:0 0 4px;}
 main p.skills strong{color:${head || "#111"};}
 a{color:${accent};}`;
+    case "centered":
+      // Big centered serif name, the professional title in an outlined box, a
+      // full-width grey contact band, and centered section headings flanked by
+      // short rules. Each role shows "Company – Location" bold above an italic
+      // accent "Job Title, Dates" line (both centered).
+      return `body{font-family:Georgia,"Times New Roman",serif;color:#2b2b2b;}
+header{text-align:center;margin-bottom:14px;}
+header h1{margin:0;font-family:Georgia,"Times New Roman",serif;font-size:29pt;font-weight:700;color:#111;letter-spacing:.5px;}
+.title{display:inline-block;margin-top:10px;padding:4px 16px;border:1px solid ${accent};color:#333;font-family:Arial,Helvetica,sans-serif;font-size:9pt;letter-spacing:1.2px;text-transform:uppercase;white-space:normal;}
+.contacts{margin-top:12px;padding:7px 10px;background:#efefef;color:#333;font-family:Arial,Helvetica,sans-serif;font-size:8.5pt;text-align:center;white-space:normal;}
+main h2{display:flex;align-items:center;justify-content:center;gap:12px;border:none;font-size:11pt;font-weight:700;color:${accent};text-transform:uppercase;letter-spacing:1.4px;margin:16px 0 6px;}
+main h2::before,main h2::after{content:"";flex:0 0 auto;width:42px;height:2px;background:${accent};}
+main ul{list-style:disc;padding-left:26px;}
+main li{margin:2px 0;}
+/* Centered role block: company/location bold, then "Role, Dates" in accent italic. */
+.ctr-head{text-align:center;margin:10px 0 4px;break-inside:avoid;break-after:avoid;}
+.ctr-org{font-weight:700;color:#1a1a1a;font-size:11pt;}
+.ctr-role{margin-top:1px;color:${accent};font-style:italic;font-size:10pt;}
+a{color:${accent};}`;
+    case "highlight":
+      // Bold uppercase name on the left with the contacts stacked on the right,
+      // a rule under the header, and section headings sitting in a shaded band.
+      // Role/degree titles take the accent; bullets are hollow circles.
+      return `body{font-family:"Segoe UI",Arial,Helvetica,sans-serif;color:#333;}
+header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;column-gap:20px;border-bottom:1px solid ${accent};padding-bottom:12px;margin-bottom:14px;}
+header h1{grid-column:1;grid-row:1;margin:0;font-size:24pt;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#1a1a1a;line-height:1.06;}
+.title{grid-column:1;grid-row:2;margin-top:6px;color:${accent};text-transform:uppercase;letter-spacing:1px;font-weight:700;font-size:9pt;white-space:normal;}
+.contacts{grid-column:2;grid-row:1/3;align-self:start;justify-self:end;text-align:right;color:#333;font-size:8.5pt;line-height:1.7;white-space:normal;max-width:250px;word-break:break-word;}
+main h2{display:inline-block;background:#ece7e1;color:#1a1a1a;font-size:10pt;font-weight:700;text-transform:uppercase;letter-spacing:.8px;border:none;padding:3px 9px;margin:14px 0 7px;}
+main h3{color:${accent};font-weight:700;font-size:10.5pt;margin:8px 0 0;}
+.role-dates{float:right;color:#6a7280;font-weight:400;font-size:9.5pt;}
+.role-org{color:#6a7280;font-size:9.5pt;margin:1px 0 5px;}
+main ul{list-style:none;padding-left:18px;}
+main li{position:relative;padding-left:14px;}
+main li::before{content:"\\25CB";color:${accent};position:absolute;left:0;top:2px;font-size:7pt;}
+.edu-line .edu-degree{color:${accent};}
+main p.skills strong{color:#1a1a1a;}
+a{color:${accent};}`;
     default: // professional
       return `body{font-family:Calibri,"Segoe UI",Arial,sans-serif;}
 header{border-left:5px solid ${accent};padding-left:16px;margin-bottom:18px;}
@@ -341,8 +379,9 @@ function linkifyContact(part) {
 }
 
 // Shared header markup (used by both the resume and the cover letter). For the
-// "cards" style the contact items stack vertically on the right. Each contact
-// item is linkified so it's clickable in the PDF.
+// "cards" and "highlight" styles the contact items stack vertically on the
+// right. Each contact item is linkified so it's clickable in the PDF.
+const STACKED_CONTACTS = new Set(["cards", "highlight"]);
 function headerHtml(id, name, title, contacts) {
   if (!name) return "";
   const items = String(contacts || "")
@@ -350,7 +389,7 @@ function headerHtml(id, name, title, contacts) {
     .map((s) => s.trim())
     .filter(Boolean)
     .map(linkifyContact);
-  const contactsHtml = id === "cards" ? items.join("<br>") : items.join("  •  ");
+  const contactsHtml = STACKED_CONTACTS.has(id) ? items.join("<br>") : items.join("  •  ");
   return (
     `<header><h1>${escapeHtml(name)}</h1>` +
     `${title ? `<div class="title">${escapeHtml(title)}</div>` : ""}` +
@@ -616,6 +655,31 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
     body = body.replace(
       /(<div class="role-org">)([\s\S]*?)(<\/div>)/g,
       (m, a, inner, c) => a + inner.replace(/\s*·\s*/g, ", ") + c
+    );
+  }
+
+  // Centered style: invert each role heading into a centered two-line block —
+  // "Company – Location" in bold on top, then "Job Title, Dates" in accent
+  // italic below. Runs before the keep-with-first-bullet pass (which matches
+  // <h3>, so it no longer applies here — these entries flow naturally).
+  if (id === "centered") {
+    body = body.replace(
+      /<h3\b[^>]*>([\s\S]*?)<\/h3>\s*(?:<div class="role-org">([\s\S]*?)<\/div>)?/g,
+      (m, h3inner, org) => {
+        const dm = h3inner.match(/<span class="role-dates">([\s\S]*?)<\/span>/);
+        const dates = dm ? dm[1].trim() : "";
+        const roleTitle = h3inner
+          .replace(/<span class="role-dates">[\s\S]*?<\/span>/, "")
+          .trim();
+        const orgText = (org || "").trim().replace(/\s*·\s*/g, " – ");
+        const roleLine = [roleTitle, dates].filter(Boolean).join(", ");
+        return (
+          `<div class="ctr-head">` +
+          (orgText ? `<div class="ctr-org">${orgText}</div>` : "") +
+          (roleLine ? `<div class="ctr-role">${roleLine}</div>` : "") +
+          `</div>`
+        );
+      }
     );
   }
 
