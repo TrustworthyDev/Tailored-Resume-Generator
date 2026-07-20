@@ -72,7 +72,10 @@ const SIZE_OPTIONS = ["", "9", "9.5", "10", "10.5", "11", "11.5", "12"];
 // Shown when the user tweaks a style/colour/font but hasn't generated a resume.
 const NO_CONTENT_MSG = "There is no resume content yet. Please generate a resume first.";
 
-export default function ResumeGenerator({ variant = "v1" }) {
+// `active` = this generator's tab is the one on screen. V2 stays mounted for the
+// whole session (its ChatGPT WebView pre-warms in the background), so it uses
+// this to refresh lists that would otherwise go stale — see the effect below.
+export default function ResumeGenerator({ variant = "v1", active = true }) {
   const isV2 = variant === "v2";
   const [accounts, setAccounts] = useState([]);
   const [accountId, setAccountId] = useState("");
@@ -88,6 +91,7 @@ export default function ResumeGenerator({ variant = "v1" }) {
   const [font, setFont] = useState("");
   const [fontSize, setFontSize] = useState("");
   const [jd, setJd] = useState("");
+  const [extraInfo, setExtraInfo] = useState(""); // per-generation notes fed into the prompt
   const [result, setResult] = useState("");
   const [jobRole, setJobRole] = useState("");
   const [jobCompany, setJobCompany] = useState("");
@@ -145,7 +149,7 @@ export default function ResumeGenerator({ variant = "v1" }) {
 
   useEffect(() => {
     (async () => {
-      const [accs, ks, instrs, accPref, stylePref, px, autoPref, accentPref, nameColorPref, openModalPref, autoGenPref, jdPref, savedPathPref, savedAtPref, coverPref, styleOrderPref, fontPref, fontSizePref] = await Promise.all([
+      const [accs, ks, instrs, accPref, stylePref, px, autoPref, accentPref, nameColorPref, openModalPref, autoGenPref, jdPref, savedPathPref, savedAtPref, coverPref, styleOrderPref, fontPref, fontSizePref, extraPref] = await Promise.all([
         api().listAccounts(),
         api().listApiKeys(isV2 ? "v2" : "v1"),
         api().listInstructions(),
@@ -164,6 +168,7 @@ export default function ResumeGenerator({ variant = "v1" }) {
         api().getPref("style_order"),
         api().getPref("resume_font"),
         api().getPref("resume_font_size"),
+        api().getPref("gen_extra_info"),
       ]);
       setAccounts(accs || []);
       setKeys(ks || []);
@@ -194,6 +199,7 @@ export default function ResumeGenerator({ variant = "v1" }) {
       if (coverPref && coverPref.value != null) setCoverLetter(coverPref.value === "1");
 
       if (jdPref && jdPref.value) setJd(jdPref.value);
+      if (extraPref && extraPref.value) setExtraInfo(extraPref.value);
       if (savedPathPref && savedPathPref.value) setSavedPath(savedPathPref.value);
       if (savedAtPref && savedAtPref.value) setSavedAt(savedAtPref.value);
 
@@ -211,6 +217,37 @@ export default function ResumeGenerator({ variant = "v1" }) {
       setPrefsReady(true);
     })();
   }, []);
+
+  // The lists above load once on mount, but V2 never unmounts (it stays alive so
+  // its ChatGPT WebView keeps pre-warming). Without this, a prompt/account/key
+  // added on another tab wouldn't show up here until an app restart. Re-fetch
+  // whenever this tab is opened, keeping the current selection when it's still
+  // valid and repairing it when it isn't (e.g. the item was deleted).
+  useEffect(() => {
+    if (!active) return;
+    let cancelled = false;
+    (async () => {
+      const [accs, ks, instrs] = await Promise.all([
+        api().listAccounts(),
+        api().listApiKeys(isV2 ? "v2" : "v1"),
+        api().listInstructions(),
+      ]);
+      if (cancelled) return;
+      const keep = (list, cur, pickActive) => {
+        if ((list || []).some((x) => String(x.id) === String(cur))) return cur;
+        const act = pickActive ? (list || []).find((x) => x.is_active) : null;
+        if (act) return String(act.id);
+        return list && list.length ? String(list[0].id) : "";
+      };
+      setAccounts(accs || []);
+      setAccountId((cur) => keep(accs, cur, false));
+      setKeys(ks || []);
+      setKeyId((cur) => keep(ks, cur, true));
+      setPrompts(instrs || []);
+      setPromptId((cur) => keep(instrs, cur, true));
+    })();
+    return () => { cancelled = true; };
+  }, [active, isV2]);
 
   // Keep the selected account's contact info handy so the live resume viewer
   // renders the same authoritative header the exported PDF uses.
@@ -368,6 +405,7 @@ export default function ResumeGenerator({ variant = "v1" }) {
       jobDescription: jdValue,
       style,
       instructionId: promptId ? Number(promptId) : undefined,
+      extraInfo,
     });
 
   // Ask the user to confirm generating another resume for a company + title they
@@ -540,6 +578,7 @@ export default function ResumeGenerator({ variant = "v1" }) {
         jobDescription: useJd,
         style,
         instructionId: promptId ? Number(promptId) : undefined,
+        extraInfo,
       });
       const opened = await openPromise; // { reused } — reused tab vs cold first load
       // Duplicate guard BEFORE the (slow) ChatGPT round-trip. Gemini already
@@ -1211,46 +1250,6 @@ export default function ResumeGenerator({ variant = "v1" }) {
 
         {view === "generate" && (
         <>
-        {isV2 && (
-          <div className="v2-controls">
-            <div className="chat-home">
-              <div className="chat-home-info">
-                <span className="field-label" style={{ margin: 0 }}>Browser Connection</span>
-                <span className="muted small">
-                  {connMode === "proxy" ? "Routing through a proxy" : "Using this computer's IP"} · applies on the next open
-                </span>
-              </div>
-              <div className="chat-home-actions">
-                <div className="conn-group">
-                  {connMode === "proxy" && (
-                    <select
-                      className="input conn-proxy-select"
-                      value={chatProxyId}
-                      onChange={(e) => chooseChatProxy(e.target.value)}
-                    >
-                      {proxyList.length === 0 && <option value="">No proxies — add one in Settings → Proxy</option>}
-                      {proxyList.map((p) => (
-                        <option key={p.id} value={String(p.id)}>
-                          {proxyLabel(p)}{p.is_active ? " (active)" : ""}
-                        </option>
-                      ))}
-                    </select>
-                  )}
-                  <label className="toggle" title="Toggle between your local IP and a proxy">
-                    <input
-                      type="checkbox"
-                      checked={connMode === "proxy"}
-                      onChange={(e) => chooseConnMode(e.target.checked ? "proxy" : "direct")}
-                    />
-                    <span className="toggle-track"><span className="toggle-thumb" /></span>
-                    <span className="toggle-label">{connMode === "proxy" ? "Proxy" : "Local IP"}</span>
-                  </label>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
         <div className="grid2">
           <div className="field">
             <span className="field-label">Account</span>
@@ -1286,25 +1285,64 @@ export default function ResumeGenerator({ variant = "v1" }) {
           </div>
         </div>
 
-        <div className="field">
-          <span className="field-label field-label-row">
-            Active Prompt
-            <button
-              type="button"
-              className="btn small"
-              onClick={() => setShowPromptModal(true)}
-              disabled={!selectedPrompt}
-              title="View this prompt's content"
-            >
-              View
-            </button>
-          </span>
-          <FlagSelect
-            value={promptId}
-            onChange={onPrompt}
-            placeholder={prompts.length ? "Select a prompt" : "No prompts — add in Instructions"}
-            options={prompts.map((p) => ({ value: p.id, name: p.name || "(untitled)" }))}
-          />
+        {/* Active Prompt with the V2 Browser Connection directly to its right. */}
+        <div className={isV2 ? "grid2" : ""}>
+          <div className="field">
+            <span className="field-label field-label-row">
+              Active Prompt
+              <button
+                type="button"
+                className="btn small"
+                onClick={() => setShowPromptModal(true)}
+                disabled={!selectedPrompt}
+                title="View this prompt's content"
+              >
+                View
+              </button>
+            </span>
+            <FlagSelect
+              value={promptId}
+              onChange={onPrompt}
+              placeholder={prompts.length ? "Select a prompt" : "No prompts — add in Instructions"}
+              options={prompts.map((p) => ({ value: p.id, name: p.name || "(untitled)" }))}
+            />
+          </div>
+
+          {isV2 && (
+            <div className="field">
+              <span className="field-label field-label-row">
+                Browser Connection
+                <span className="muted small">
+                  {connMode === "proxy" ? "Routing through a proxy" : "Using this computer's IP"} · applies on the next open
+                </span>
+              </span>
+              <div className="conn-box">
+                {connMode === "proxy" && (
+                  <select
+                    className="input conn-proxy-select"
+                    value={chatProxyId}
+                    onChange={(e) => chooseChatProxy(e.target.value)}
+                  >
+                    {proxyList.length === 0 && <option value="">No proxies — add one in Settings → Proxy</option>}
+                    {proxyList.map((p) => (
+                      <option key={p.id} value={String(p.id)}>
+                        {proxyLabel(p)}{p.is_active ? " (active)" : ""}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                <label className="toggle" title="Toggle between your local IP and a proxy">
+                  <input
+                    type="checkbox"
+                    checked={connMode === "proxy"}
+                    onChange={(e) => chooseConnMode(e.target.checked ? "proxy" : "direct")}
+                  />
+                  <span className="toggle-track"><span className="toggle-thumb" /></span>
+                  <span className="toggle-label">{connMode === "proxy" ? "Proxy" : "Local IP"}</span>
+                </label>
+              </div>
+            </div>
+          )}
         </div>
 
         <label className="field jd-field">
@@ -1330,6 +1368,26 @@ export default function ResumeGenerator({ variant = "v1" }) {
             onPaste={() => { pastedRef.current = true; }}
           />
         </label>
+
+        <label className="field">
+          <span className="field-label field-label-row">
+            Additional Info
+            <span className="muted small">optional · added to the prompt for this job</span>
+          </span>
+          <textarea
+            className="textarea"
+            rows={4}
+            placeholder="Notes for this application — e.g. emphasise Kubernetes, mention relocation to Lisbon, target a 2-page resume…"
+            value={extraInfo}
+            onChange={(e) => {
+              const v = e.target.value;
+              setExtraInfo(v);
+              api().setPref("gen_extra_info", v);
+              clearCache(); // the prompt changed — don't reuse a cached result
+            }}
+          />
+        </label>
+
         <div className="action-row">
           <div className="action-group">
             {prefsReady && (<>

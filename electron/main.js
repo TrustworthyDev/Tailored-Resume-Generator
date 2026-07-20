@@ -1065,6 +1065,7 @@ function registerIpc() {
       jobDescription: payload && payload.jobDescription,
       style: payload && payload.style,
       instruction: instrRow && instrRow.body,
+      extraInfo: payload && payload.extraInfo,
     });
     return out; // { text, jobRole, jobCompany }
   });
@@ -1186,7 +1187,8 @@ function registerIpc() {
     const id = (Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36)).slice(-10);
     const { prompt: basePrompt, jobRef } = buildPromptJson(
       personal, work, education, projects,
-      payload && payload.jobDescription, payload && payload.style, instrRow && instrRow.body, id
+      payload && payload.jobDescription, payload && payload.style, instrRow && instrRow.body, id,
+      payload && payload.extraInfo
     );
 
     // Optional refinement via the active V2 Gemini key (Settings → API (V2)).

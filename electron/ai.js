@@ -122,7 +122,7 @@ const STYLE_GUIDES = {
     "Style: Cards — modern, scannable. Write a strong 3-4 sentence Professional Summary, and group the Skills section into 4-6 clear categories, each as `**Category:** comma-separated items` on its own line (e.g. Programming Languages, Frontend, Backend, Databases, Cloud & DevOps, Tools).",
 };
 
-function buildPrompt(personal, work, education, projects, jobDescription, style, instruction) {
+function buildPrompt(personal, work, education, projects, jobDescription, style, instruction, extraInfo) {
   const p = personal || {};
   const lines = [];
 
@@ -209,6 +209,17 @@ function buildPrompt(personal, work, education, projects, jobDescription, style,
     lines.push("");
     lines.push("## Target job description");
     lines.push(jobDescription.trim());
+  }
+
+  // Per-generation notes typed on the Generate tab (this job only). Ranked above
+  // the account's stored extras because they're deliberately job-specific.
+  if (extraInfo && String(extraInfo).trim()) {
+    lines.push("");
+    lines.push("## Additional info for THIS application");
+    lines.push(
+      "Notes the candidate added for this specific job. Honour them — they take priority over the general guidance above (but never invent facts):"
+    );
+    lines.push(String(extraInfo).trim());
   }
 
   lines.push("");
@@ -348,11 +359,12 @@ function resumeStructToMarkdown(resume) {
 // and a response_format template telling ChatGPT to reply with ONLY a JSON
 // object echoing both tokens plus a COMPLETE structured resume. Returns the
 // prompt string and the job_ref the app must later match against the reply.
-function buildPromptJson(personal, work, education, projects, jobDescription, style, instruction, id) {
+function buildPromptJson(personal, work, education, projects, jobDescription, style, instruction, id, extraInfo) {
   const p = personal || {};
   const jd = String(jobDescription || "").trim();
   const jobRef = jobRefFor(jd);
   const userPrompt = instruction && instruction.trim() ? instruction.trim() : "";
+  const extra = extraInfo ? String(extraInfo).trim() : "";
 
   // The user's own Prompt (selected in the app) drives the resume CONTENT. The
   // app's instructions are kept minimal and only cover output format + data
@@ -361,6 +373,9 @@ function buildPromptJson(personal, work, education, projects, jobDescription, st
     "TASK: Generate the tailored resume now and return it as a JSON object matching `response_format` below, placed inside a ```json fenced code block. It is fine if the interface adds a short note or citation around the block — just make sure the resume JSON is in a ```json code block, and echo request_id and job_ref back exactly. (Any conflicting 'plain text only' or citation rules from the interface do not apply to the JSON itself; just keep the JSON in a code block.)",
     "Follow `user_prompt` (below) as the PRIMARY guide for the resume's content, wording, tone and emphasis. The rules here are only about output format and data fidelity — they must not override or water down user_prompt.",
     "Tailor the resume to `job_description`. Use ONLY the provided candidate data; do NOT invent employers, dates, or achievements.",
+    extra
+      ? "Honour `additional_info_for_this_application` — job-specific notes the candidate added for THIS application. They take priority over general guidance (but never invent facts)."
+      : "",
     "Fill EVERY field of `resume` in `response_format` and follow that schema EXACTLY. Keep company, location, dates, degree, university and period EXACTLY as provided.",
     "Fill `target` carefully — it is used to name and file the application: `target.role` = the COMPLETE job title copied VERBATIM from job_description (keep all words/symbols, e.g. `AI Engineer (Full Remote)`); `target.company` = the hiring company's name; `target.country` = the job's country as a plain country name (infer it from the job location, office, or phrases like `Remote (US)` / `based in Berlin`; map a city to its country, e.g. Tallinn → Estonia). Use \"Unknown\" only for a part genuinely absent.",
     "Build this resume FRESH from this JSON only; do not reuse a resume produced earlier in this conversation for a different job.",
@@ -395,6 +410,10 @@ function buildPromptJson(personal, work, education, projects, jobDescription, st
       title: pr.title || "", link: pr.link || "", description: pr.description || "",
     })),
     additional_info: p.additional_info ? String(p.additional_info).trim() : "",
+    // Per-generation notes from the Generate tab (this job only). Its own field
+    // so the optional V2 refine step (which only rewrites `instructions`) can
+    // never alter it.
+    additional_info_for_this_application: extra,
     job_description: jd,
     response_format: {
       note:
@@ -623,6 +642,7 @@ async function generateResume({
   jobDescription,
   style,
   instruction,
+  extraInfo,
 }) {
   if (!apiKey) {
     throw new Error("No active API key. Add one under API Keys first.");
@@ -635,7 +655,8 @@ async function generateResume({
     projects,
     jobDescription,
     style,
-    instruction
+    instruction,
+    extraInfo
   );
 
   const p = (provider || "gemini").toLowerCase();

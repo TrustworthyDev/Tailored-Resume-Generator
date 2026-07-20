@@ -111,7 +111,7 @@ export default function Home() {
           }
           aria-hidden={tab !== "generate2"}
         >
-          <ResumeGenerator variant="v2" />
+          <ResumeGenerator variant="v2" active={tab === "generate2"} />
         </div>
 
         {tab === "settings" && <Settings />}
