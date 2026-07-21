@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import { detectCountry, countryFlag } from "../lib/flags";
 import { friendlyError } from "../lib/errors";
+import { ageFromBirthDate } from "../lib/age";
 import Field from "./Field";
 
 const EMPTY_ROLE = {
@@ -177,6 +178,16 @@ export default function AccountForm({ accountId, onSaved }) {
               <Field label="Phone Number" value={info.phone} onChange={setI("phone")} />
               <label className="field">
                 <span className="field-label">
+                  Date of Birth
+                  {ageFromBirthDate(info.birth_date) ? (
+                    <span className="detect-flag">{ageFromBirthDate(info.birth_date)} years old</span>
+                  ) : null}
+                </span>
+                <input className="input" type="date" value={info.birth_date || ""}
+                  onChange={(e) => setI("birth_date")(e.target.value)} />
+              </label>
+              <label className="field">
+                <span className="field-label">
                   Address
                   {detected ? (
                     <span className="detect-flag">
@@ -321,6 +332,11 @@ export default function AccountForm({ accountId, onSaved }) {
             <ViewRow label="Title" value={info.title} />
             <ViewRow label="Email" value={info.email} />
             <ViewRow label="Phone" value={info.phone} />
+            <ViewRow label="Age" value={
+              ageFromBirthDate(info.birth_date)
+                ? `${ageFromBirthDate(info.birth_date)} (born ${info.birth_date})`
+                : null
+            } />
             <ViewRow label="Address" value={
               info.address ? (
                 <>

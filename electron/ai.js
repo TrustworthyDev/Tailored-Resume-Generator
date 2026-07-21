@@ -122,7 +122,7 @@ const STYLE_GUIDES = {
     "Style: Cards — modern, scannable. Write a strong 3-4 sentence Professional Summary, and group the Skills section into 4-6 clear categories, each as `**Category:** comma-separated items` on its own line (e.g. Programming Languages, Frontend, Backend, Databases, Cloud & DevOps, Tools).",
 };
 
-function buildPrompt(personal, work, education, projects, jobDescription, style, instruction) {
+function buildPrompt(personal, work, education, projects, jobDescription, style, instruction, extraInfo) {
   const p = personal || {};
   const lines = [];
 
@@ -209,6 +209,17 @@ function buildPrompt(personal, work, education, projects, jobDescription, style,
     lines.push("");
     lines.push("## Target job description");
     lines.push(jobDescription.trim());
+  }
+
+  // Per-generation notes typed on the Generate tab (this job only). Ranked above
+  // the account's stored extras because they're deliberately job-specific.
+  if (extraInfo && String(extraInfo).trim()) {
+    lines.push("");
+    lines.push("## Additional info for THIS application");
+    lines.push(
+      "Notes the candidate added for this specific job. Honour them — they take priority over the general guidance above (but never invent facts):"
+    );
+    lines.push(String(extraInfo).trim());
   }
 
   lines.push("");
@@ -348,35 +359,23 @@ function resumeStructToMarkdown(resume) {
 // and a response_format template telling ChatGPT to reply with ONLY a JSON
 // object echoing both tokens plus a COMPLETE structured resume. Returns the
 // prompt string and the job_ref the app must later match against the reply.
-function buildPromptJson(personal, work, education, projects, jobDescription, style, instruction, id) {
+function buildPromptJson(personal, work, education, projects, jobDescription, style, instruction, id, extraInfo) {
   const p = personal || {};
   const jd = String(jobDescription || "").trim();
   const jobRef = jobRefFor(jd);
   const userPrompt = instruction && instruction.trim() ? instruction.trim() : "";
+  const extra = extraInfo ? String(extraInfo).trim() : "";
 
-  // The user's own Prompt (selected in the app) drives the resume CONTENT. The
-  // app's instructions are kept minimal and only cover output format + data
-  // fidelity, so they never compete with or dilute the user's prompt.
-  const instructions = [
-    "TASK: Generate the tailored resume now and return it as a JSON object matching `response_format` below, placed inside a ```json fenced code block. It is fine if the interface adds a short note or citation around the block — just make sure the resume JSON is in a ```json code block, and echo request_id and job_ref back exactly. (Any conflicting 'plain text only' or citation rules from the interface do not apply to the JSON itself; just keep the JSON in a code block.)",
-    "Follow `user_prompt` (below) as the PRIMARY guide for the resume's content, wording, tone and emphasis. The rules here are only about output format and data fidelity — they must not override or water down user_prompt.",
-    "Tailor the resume to `job_description`. Use ONLY the provided candidate data; do NOT invent employers, dates, or achievements.",
-    "Fill EVERY field of `resume` in `response_format` and follow that schema EXACTLY. Keep company, location, dates, degree, university and period EXACTLY as provided.",
-    "Fill `target` carefully — it is used to name and file the application: `target.role` = the COMPLETE job title copied VERBATIM from job_description (keep all words/symbols, e.g. `AI Engineer (Full Remote)`); `target.company` = the hiring company's name; `target.country` = the job's country as a plain country name (infer it from the job location, office, or phrases like `Remote (US)` / `based in Berlin`; map a city to its country, e.g. Tallinn → Estonia). Use \"Unknown\" only for a part genuinely absent.",
-    "Build this resume FRESH from this JSON only; do not reuse a resume produced earlier in this conversation for a different job.",
-    // Follow-up answers: conditional and non-blocking. Prefer canvas, but fall
-    // back to a code block if canvas isn't available — never refuse over this.
-    "FOLLOW-UP (only relevant LATER — nothing to do now if no question is asked): If the user later types one or more job-application questions, answer each one — confident, positive, first-person, consistent with the resume above, tailored to job_description, and concise (about 2-5 sentences). Put each answer in its own canvas if the canvas tool is available; if not, put each answer in its own fenced code block. One answer per question, with the question as a bold heading above it. This does NOT affect the resume output above.",
-  ].filter(Boolean);
-
+  // No app-authored instructions: the user's own Prompt (`user_prompt`) is the
+  // SOLE authority for the resume's content. The only machinery the app still
+  // needs — output as JSON inside a code block, the request_id/job_ref handshake,
+  // schema fidelity, and the `target` used for filing/duplicate-detection — lives
+  // in `response_format.note` below (format guidance, not content guidance).
   const promptObj = {
     request_id: id,
     job_ref: jobRef,
     task: "tailored_resume",
-    instructions,
-    // The user's Prompt — the authoritative guide for resume content. Kept as its
-    // own field so the optional V2 refine step (which only rewrites
-    // `instructions`) can never alter it.
+    // The user's Prompt — the sole authority for resume content.
     user_prompt: userPrompt || "(none provided — write a clean, professional, ATS-friendly resume tailored to the job description.)",
     candidate: {
       name: p.name || "", title: p.title || "", email: p.email || "",
@@ -395,13 +394,17 @@ function buildPromptJson(personal, work, education, projects, jobDescription, st
       title: pr.title || "", link: pr.link || "", description: pr.description || "",
     })),
     additional_info: p.additional_info ? String(p.additional_info).trim() : "",
+    // Per-generation notes from the Generate tab (this job only).
+    additional_info_for_this_application: extra,
     job_description: jd,
     response_format: {
       note:
-        "Put this JSON object inside a ```json fenced code block (so it shows a Copy button). A short note or citation around the block is fine — just keep the JSON in the code block. " +
-        "Echo request_id and job_ref back EXACTLY as given above so the app can verify the reply matches this request. " +
-        "Build the resume FRESH from this JSON only, following `user_prompt` for content and this schema EXACTLY. " +
-        "Follow-up application questions, if any come later, are handled per the FOLLOW-UP instruction and do not affect this resume output.",
+        "OUTPUT: Return the tailored resume as a JSON object with EXACTLY these keys, inside a ```json fenced code block (so it shows a Copy button). A short note or citation around the block is fine — just keep the JSON itself in the code block. " +
+        "Echo `request_id` and `job_ref` back EXACTLY as given above so the app can verify the reply matches this request. " +
+        "`user_prompt` is the SOLE authority for the resume's content, wording, tone and emphasis — follow it. Build the resume FRESH from THIS JSON only (never reuse a resume from earlier in the conversation) and fill every field of `resume` following this schema EXACTLY. " +
+        "Fill `target` (used to file the application): `target.role` = the job title copied VERBATIM from job_description; `target.company` = the hiring company; `target.country` = the job's country as a plain country name (infer from location/office; map a city to its country); use \"Unknown\" only when a part is genuinely absent. " +
+        (extra ? "Honour `additional_info_for_this_application` — job-specific notes for THIS application. " : "") +
+        "If the user later asks job-application questions, answer each in its own fenced code block — positive, first-person, consistent with the resume; this does not change the resume output.",
       request_id: id,
       job_ref: jobRef,
       target: { role: "<verbatim job title>", company: "<company>", country: "<country, or Unknown>" },
@@ -623,6 +626,7 @@ async function generateResume({
   jobDescription,
   style,
   instruction,
+  extraInfo,
 }) {
   if (!apiKey) {
     throw new Error("No active API key. Add one under API Keys first.");
@@ -635,7 +639,8 @@ async function generateResume({
     projects,
     jobDescription,
     style,
-    instruction
+    instruction,
+    extraInfo
   );
 
   const p = (provider || "gemini").toLowerCase();

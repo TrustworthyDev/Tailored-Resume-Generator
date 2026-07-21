@@ -296,7 +296,8 @@ function registerIpc() {
   ipcMain.handle("accounts:save", (_e, d) => {
     db.run(
       `UPDATE accounts SET name = ?, title = ?, email = ?, phone = ?, address = ?,
-         country = ?, linkedin = ?, portfolio = ?, main_stack = ?, additional_info = ? WHERE id = ?`,
+         country = ?, linkedin = ?, portfolio = ?, main_stack = ?, additional_info = ?,
+         birth_date = ? WHERE id = ?`,
       [
         d.name || "",
         d.title || "",
@@ -308,6 +309,7 @@ function registerIpc() {
         d.portfolio || "",
         d.main_stack || "",
         d.additional_info || "",
+        d.birth_date || "",
         d.id,
       ]
     );
@@ -1063,6 +1065,7 @@ function registerIpc() {
       jobDescription: payload && payload.jobDescription,
       style: payload && payload.style,
       instruction: instrRow && instrRow.body,
+      extraInfo: payload && payload.extraInfo,
     });
     return out; // { text, jobRole, jobCompany }
   });
@@ -1184,7 +1187,8 @@ function registerIpc() {
     const id = (Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36)).slice(-10);
     const { prompt: basePrompt, jobRef } = buildPromptJson(
       personal, work, education, projects,
-      payload && payload.jobDescription, payload && payload.style, instrRow && instrRow.body, id
+      payload && payload.jobDescription, payload && payload.style, instrRow && instrRow.body, id,
+      payload && payload.extraInfo
     );
 
     // Optional refinement via the active V2 Gemini key (Settings → API (V2)).
