@@ -1,6 +1,6 @@
 {
   "name": "careerva",
-  "version": "1.0.0",
+  "version": "3.0.0",
   "description": "Careerva - generate tailored resumes and track job applications",
   "private": true,
   "main": "electron/main.js",
