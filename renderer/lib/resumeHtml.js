@@ -233,6 +233,29 @@ main li{margin:2px 0;}
 .ctr-org{font-weight:700;color:#1a1a1a;font-size:11pt;}
 .ctr-role{margin-top:1px;color:${accent};font-style:italic;font-size:10pt;}
 a{color:${accent};}`;
+    case "ats":
+      // Maximally ATS-safe: single column, left-aligned (never justified),
+      // standard sans-serif fonts, high-contrast near-black text, bold name /
+      // job titles / company names, simple disc bullets, no colour fills, no
+      // columns/tables/icons, generous standard margins. Contact sits in the
+      // document body (not a page header/footer).
+      return `body{font-family:"Open Sans","Roboto","Lato",Arial,Helvetica,sans-serif;color:#1a1a1a;text-align:left;}
+header{margin-bottom:14px;padding-bottom:9px;border-bottom:1.5px solid #333;}
+header h1{margin:0;font-size:22pt;font-weight:700;color:#000;letter-spacing:.2px;}
+.title{margin-top:3px;font-size:11.5pt;font-weight:700;color:#1a1a1a;}
+.contacts{margin-top:6px;color:#1a1a1a;font-size:9.5pt;}
+main h2{font-size:11.5pt;font-weight:700;color:#000;text-transform:uppercase;letter-spacing:.3px;border-bottom:1px solid #444;padding-bottom:2px;margin:16px 0 7px;}
+main h3{font-size:11pt;font-weight:700;color:#000;margin:9px 0 0;}
+.role-dates{float:right;font-weight:700;color:#1a1a1a;font-size:10pt;}
+.role-org{font-weight:700;color:#1a1a1a;font-size:10pt;margin:1px 0 5px;}
+main p,main li{text-align:left;}
+main ul{list-style:disc;padding-left:20px;}
+main li{margin:2px 0;}
+main strong{color:#000;font-weight:700;}
+main em{color:#1a1a1a;font-style:normal;font-weight:700;}
+.edu-line .edu-degree{color:#000;}
+a{color:#1a1a1a;text-decoration:underline;}
+@page{size:A4;margin:18mm;}`;
     case "highlight":
       // Bold uppercase name on the left with the contacts stacked on the right,
       // a rule under the header, and section headings sitting in a shaded band.

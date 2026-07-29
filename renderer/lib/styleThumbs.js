@@ -190,6 +190,27 @@ export function styleThumb(style) {
       }
       break;
     }
+    case "ats": {
+      // Single column, left-aligned, black name, underlined section headings,
+      // bold role + company lines, plain disc bullets — a clean ATS-safe look.
+      inner += rc(20, 18, 120, 15, nameC || "#000000", 1);         // bold black name
+      inner += rc(20, 38, 80, 5, titleC || "#1a1a1a");             // bold title
+      inner += rc(20, 50, 150, 4, "#555555");                      // contacts
+      inner += rc(20, 60, 200, 1.5, "#333333");                    // header rule
+      let y = 72;
+      for (let k = 0; k < 3; k++) {
+        inner += rc(20, y, 70, 7, "#000000");                      // uppercase heading
+        inner += rc(20, y + 11, 200, 1, "#444444");                // heading underline
+        inner += rc(20, y + 18, 96, 6, "#000000");                 // bold role title
+        inner += rc(20, y + 28, 76, 5, "#1a1a1a");                 // bold company · dates
+        for (let i = 0; i < 3; i++) {
+          inner += `<circle cx='25' cy='${y + 40 + i * 8}' r='1.6' fill='#1a1a1a'/>`;
+          inner += rc(31, y + 38 + i * 8, 189, 3.5, G);
+        }
+        y += 66;
+      }
+      break;
+    }
     case "highlight": {
       inner += rc(20, 18, 118, 16, nameC || "#1a1a1a", 2);        // bold uppercase name
       inner += rc(20, 40, 74, 5, titleC || a);                    // accent subtitle

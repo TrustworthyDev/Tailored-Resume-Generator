@@ -412,6 +412,10 @@ select.input {
   border: 1px solid var(--border); border-radius: 10px;
 }
 .role-grid { flex: 1; min-width: 0; }
+/* Work Duration split into Start / End inputs sharing one grid cell. */
+.date-range { display: flex; align-items: center; gap: 8px; }
+.date-range .input { flex: 1; min-width: 0; }
+.date-range-sep { color: var(--muted); flex: 0 0 auto; }
 .save-bar { display: flex; align-items: center; justify-content: flex-end; gap: 12px; margin-top: 6px; }
 .main-stack-input { flex: 1; margin: 0 16px; max-width: 560px; }
 
