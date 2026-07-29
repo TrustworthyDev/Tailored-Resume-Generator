@@ -50,6 +50,27 @@ export default function AccountForm({ accountId, onSaved }) {
     setSaved(false);
   };
 
+  // Work duration is stored as one "Start - End" string, but edited as two
+  // separate fields. Split on the first dash / en-dash / "to".
+  const splitDuration = (s) => {
+    const parts = String(s || "").split(/\s*(?:–|—|-|\bto\b)\s*/i);
+    return { start: (parts[0] || "").trim(), end: (parts.slice(1).join(" - ") || "").trim() };
+  };
+  const joinDuration = (start, end) =>
+    [String(start || "").trim(), String(end || "").trim()].filter(Boolean).join(" - ");
+  const setRoleDate = (i, which) => (e) => {
+    const val = e.target.value;
+    setRoles((rs) =>
+      rs.map((r, idx) => {
+        if (idx !== i) return r;
+        const { start, end } = splitDuration(r.work_duration);
+        const work_duration = which === "start" ? joinDuration(val, end) : joinDuration(start, val);
+        return { ...r, work_duration };
+      })
+    );
+    setSaved(false);
+  };
+
   const addRole = () => {
     setRoles((rs) => [...rs, { ...EMPTY_ROLE }]);
     setSaved(false);
@@ -245,8 +266,15 @@ export default function AccountForm({ accountId, onSaved }) {
                     </label>
                     <label className="field">
                       <span className="field-label">Work Duration</span>
-                      <input className="input" placeholder="e.g. 2021–2024"
-                        value={r.work_duration || ""} onChange={setRole(i, "work_duration")} />
+                      <div className="date-range">
+                        <input className="input" placeholder="Start (e.g. May 2022)"
+                          value={splitDuration(r.work_duration).start}
+                          onChange={setRoleDate(i, "start")} />
+                        <span className="date-range-sep">–</span>
+                        <input className="input" placeholder="End (e.g. Jul 2026 / Present)"
+                          value={splitDuration(r.work_duration).end}
+                          onChange={setRoleDate(i, "end")} />
+                      </div>
                     </label>
                   </div>
                   <button className="x-btn" onClick={() => removeRole(i)} title="Remove role">

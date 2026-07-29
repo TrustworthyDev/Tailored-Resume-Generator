@@ -23,6 +23,7 @@ export default function Applications() {
   const [allApps, setAllApps] = useState([]); // every application
   const [counts, setCounts] = useState({ total: 0, counts: {} });
   const [confirmReset, setConfirmReset] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null); // one application to remove
 
   // Independent filters per tab so switching tabs doesn't carry a stale filter.
   const [allQuery, setAllQuery] = useState("");
@@ -73,6 +74,24 @@ export default function Applications() {
       setApps(r || []);
     }
     await loadAll();
+  };
+
+  // Remove a single application from the history, then refresh every view.
+  const doDeleteOne = async () => {
+    const a = confirmDelete;
+    setConfirmDelete(null);
+    if (!a) return;
+    await api().deleteApplication(a.id);
+    await loadAll();
+    if (selectedId != null) {
+      const r = await api().applicationsByAccount(selectedId);
+      setApps(r || []);
+    }
+    const q = query.trim();
+    if (q) {
+      const r = await api().searchApplications(q);
+      setResults(r || []);
+    }
   };
 
   const doExport = async () => {
@@ -154,32 +173,37 @@ export default function Applications() {
             ))}
           </div>
         )}
-        {(a.pdf_path || a.has_gpt) && (
-          <div className="app-actions">
-            {a.has_gpt ? (
-              <button
-                className="btn small"
-                onClick={() => openGpt(a)}
-                title="Reopen the ChatGPT conversation where this resume was generated"
-              >
-                Open GPT
+        <div className="app-actions">
+          {a.has_gpt ? (
+            <button
+              className="btn small"
+              onClick={() => openGpt(a)}
+              title="Reopen the ChatGPT conversation where this resume was generated"
+            >
+              Open GPT
+            </button>
+          ) : null}
+          {a.pdf_path && (
+            <>
+              <button className="btn small" onClick={() => copyLocation(a)}>
+                {copiedId === a.id ? "Copied ✓" : "Copy Location"}
               </button>
-            ) : null}
-            {a.pdf_path && (
-              <>
-                <button className="btn small" onClick={() => copyLocation(a)}>
-                  {copiedId === a.id ? "Copied ✓" : "Copy Location"}
-                </button>
-                <button className="btn small" onClick={() => openAppFolder(a.pdf_path)}>
-                  Open Folder
-                </button>
-                <button className="btn small" onClick={() => openAppFile(a.pdf_path)}>
-                  Open File
-                </button>
-              </>
-            )}
-          </div>
-        )}
+              <button className="btn small" onClick={() => openAppFolder(a.pdf_path)}>
+                Open Folder
+              </button>
+              <button className="btn small" onClick={() => openAppFile(a.pdf_path)}>
+                Open File
+              </button>
+            </>
+          )}
+          <button
+            className="btn small danger"
+            onClick={() => setConfirmDelete(a)}
+            title="Remove this application from the history"
+          >
+            Delete
+          </button>
+        </div>
       </div>
     );
   };
@@ -368,6 +392,21 @@ export default function Applications() {
           </div>
         </div>
       )}
+
+      <ConfirmModal
+        open={!!confirmDelete}
+        title="Delete this application?"
+        message={
+          confirmDelete
+            ? `Remove the application for "${confirmDelete.role || "(untitled role)"}"${
+                confirmDelete.company ? ` at ${confirmDelete.company}` : ""
+              } from the history? This cannot be undone.`
+            : ""
+        }
+        confirmLabel="Delete"
+        onConfirm={doDeleteOne}
+        onCancel={() => setConfirmDelete(null)}
+      />
 
       <ConfirmModal
         open={confirmReset}

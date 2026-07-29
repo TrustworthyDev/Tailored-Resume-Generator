@@ -9,6 +9,7 @@ import FlagSelect from "./FlagSelect";
 import ConfirmModal from "./ConfirmModal";
 
 const STYLES = [
+  { id: "ats", label: "ATS-Safe", accent: "#333333" },
   { id: "modern", label: "Modern", accent: "#0d9488" },
   { id: "minimal", label: "Minimal", accent: "#6b7280" },
   { id: "creative", label: "Creative", accent: "#7c3aed" },
@@ -45,6 +46,10 @@ const PRESET_COLORS = [
 // Font family choices ("" keeps each template's own default).
 const FONT_OPTIONS = [
   { value: "", label: "Template default" },
+  // ATS-recommended sans-serif (fall back to a system sans if not installed)
+  { value: "'Open Sans', Arial, Helvetica, sans-serif", label: "Open Sans" },
+  { value: "Roboto, Arial, Helvetica, sans-serif", label: "Roboto" },
+  { value: "Lato, 'Segoe UI', Arial, sans-serif", label: "Lato" },
   // Sans-serif
   { value: "Calibri, 'Segoe UI', Arial, sans-serif", label: "Calibri" },
   { value: "'Segoe UI', Arial, sans-serif", label: "Segoe UI" },
@@ -67,7 +72,7 @@ const FONT_OPTIONS = [
   { value: "'Book Antiqua', Palatino, Georgia, serif", label: "Book Antiqua" },
   { value: "Garamond, 'EB Garamond', Georgia, serif", label: "Garamond" },
 ];
-const SIZE_OPTIONS = ["", "9", "9.5", "10", "10.5", "11", "11.5", "12"];
+const SIZE_OPTIONS = ["", "8", "8.5", "9", "9.5", "10", "10.5", "11", "11.5", "12"];
 
 // Shown when the user tweaks a style/colour/font but hasn't generated a resume.
 const NO_CONTENT_MSG = "There is no resume content yet. Please generate a resume first.";
