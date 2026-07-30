@@ -81,9 +81,14 @@ const NO_CONTENT_MSG = "There is no resume content yet. Please generate a resume
 // whole session (its ChatGPT WebView pre-warms in the background), so it uses
 // this to refresh lists that would otherwise go stale — see the effect below.
 export default function ResumeGenerator({ variant = "v1", active = true }) {
-  const isV2 = variant === "v2";
+  // V3 is "V2 + job-post-link extraction": it reuses the entire ChatGPT
+  // generation path, but starts from a link instead of a pasted description.
+  const isV3 = variant === "v3";
+  const isV2 = variant === "v2" || isV3;
   const [accounts, setAccounts] = useState([]);
   const [accountId, setAccountId] = useState("");
+  const accountIdRef = useRef("");
+  accountIdRef.current = accountId;
   const [keys, setKeys] = useState([]);
   const [keyId, setKeyId] = useState("");
   const [prompts, setPrompts] = useState([]);
@@ -97,6 +102,16 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const [fontSize, setFontSize] = useState("");
   const [jd, setJd] = useState("");
   const [extraInfo, setExtraInfo] = useState(""); // per-generation notes fed into the prompt
+  // Generate V3: extract the job posting from a link.
+  const [jobLink, setJobLink] = useState("");
+  const [fetchingJd, setFetchingJd] = useState(false);
+  const [jobMeta, setJobMeta] = useState(null); // { role, company, country, location, salaryRange, industry, employmentType }
+  const [v3AutoGen, setV3AutoGen] = useState(false); // V3: auto-run generation right after Extract
+  // Refs that always hold the LATEST value, so the async Extract handler reads
+  // the current toggle/account even if its closure was created before prefs
+  // finished loading on a fresh app open (fixes "auto-gen doesn't fire the first time").
+  const v3AutoGenRef = useRef(v3AutoGen);
+  v3AutoGenRef.current = v3AutoGen;
   const [result, setResult] = useState("");
   const [jobRole, setJobRole] = useState("");
   const [jobCompany, setJobCompany] = useState("");
@@ -154,7 +169,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
 
   useEffect(() => {
     (async () => {
-      const [accs, ks, instrs, accPref, stylePref, px, autoPref, accentPref, nameColorPref, openModalPref, autoGenPref, jdPref, savedPathPref, savedAtPref, coverPref, styleOrderPref, fontPref, fontSizePref, extraPref] = await Promise.all([
+      const [accs, ks, instrs, accPref, stylePref, px, autoPref, accentPref, nameColorPref, openModalPref, autoGenPref, jdPref, savedPathPref, savedAtPref, coverPref, styleOrderPref, fontPref, fontSizePref, extraPref, jobLinkPref, v3AutoPref] = await Promise.all([
         api().listAccounts(),
         api().listApiKeys(isV2 ? "v2" : "v1"),
         api().listInstructions(),
@@ -174,6 +189,8 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         api().getPref("resume_font"),
         api().getPref("resume_font_size"),
         api().getPref("gen_extra_info"),
+        api().getPref("gen_job_link"),
+        api().getPref("v3_auto_generate"),
       ]);
       setAccounts(accs || []);
       setKeys(ks || []);
@@ -205,6 +222,8 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
 
       if (jdPref && jdPref.value) setJd(jdPref.value);
       if (extraPref && extraPref.value) setExtraInfo(extraPref.value);
+      if (jobLinkPref && jobLinkPref.value) setJobLink(jobLinkPref.value);
+      if (v3AutoPref && v3AutoPref.value != null) setV3AutoGen(v3AutoPref.value === "1");
       if (savedPathPref && savedPathPref.value) setSavedPath(savedPathPref.value);
       if (savedAtPref && savedAtPref.value) setSavedAt(savedAtPref.value);
 
@@ -485,6 +504,9 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         // back to role/company when no target was extracted (e.g. V1).
         matchRole: opts.matchRole || role,
         matchCompany: opts.matchCompany || company,
+        // The original job-post URL (V2/V3), stored so the history's "Open Link"
+        // can reopen it. Empty for V1.
+        jobLink: isV2 ? (jobLink || "").trim() : "",
         // V2 handshake id, recorded on the application history entry (empty for V1).
         requestId: opts.requestId || "",
         // Stored on the application: JD + resume for reference, and the ChatGPT
@@ -563,6 +585,60 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   // Generate V2: build the same prompt, hand it to the user's signed-in ChatGPT
   // in the embedded browser, and wait for the reply to arrive on the clipboard
   // (recognised by the unique handshake id). Then render exactly like V1.
+  // Generate V3: load the job-post link, extract the full posting, and fill the
+  // Job Description + target fields so the normal V2 pipeline can take over.
+  const fetchJobFromLink = async () => {
+    const link = (jobLink || "").trim();
+    if (!/^https?:\/\//i.test(link)) {
+      toast("Paste a job-post link that starts with http:// or https://", "warning");
+      return;
+    }
+    setFetchingJd(true);
+    setError("");
+    setJobMeta(null);
+    try {
+      const res = await api().fetchJobPost(link);
+      if (!res || !res.ok) {
+        setError((res && res.error) || "Could not read that job post.");
+        return;
+      }
+      const jdText = res.jobDescription || "";
+      setJd(jdText);
+      api().setPref("gen_jd", jdText);
+      clearCache();
+      setJobMeta({
+        role: res.role || "", company: res.company || "", country: res.country || "",
+        location: res.location || "", salaryRange: res.salaryRange || "",
+        industry: res.industry || "", employmentType: res.employmentType || "",
+        source: res.source || "", usedRaw: !!res.usedRaw,
+      });
+      // Read the LATEST toggle/account via refs (not the stale closure) so this
+      // works on the very first Extract after a fresh app open.
+      const autoGen = v3AutoGenRef.current;
+      const acctId = accountIdRef.current;
+      if (res.usedRaw) {
+        toast("Couldn't fully parse the page — showing the raw text. Review and trim the Job Description below.", "warning");
+      } else if (autoGen && acctId && jdText.trim()) {
+        // Auto-generate: run the full workflow immediately (no Generate click).
+        toast("Job extracted — generating the resume automatically…", "info");
+        setFetchingJd(false);
+        runGenerate(jdText);
+        return;
+      } else {
+        toast(
+          autoGen && !acctId
+            ? "Job extracted. Select an account, then it will auto-generate next time."
+            : "Job description extracted from the link. Review it below, then Generate.",
+          autoGen && !acctId ? "warning" : "success"
+        );
+      }
+    } catch (e) {
+      setError(friendlyError(e));
+    } finally {
+      setFetchingJd(false);
+    }
+  };
+
   const previewV2 = async (jdValue) => {
     const useJd = typeof jdValue === "string" ? jdValue : jd;
     if (!useJd || !useJd.trim()) {
@@ -1255,6 +1331,68 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
 
         {view === "generate" && (
         <>
+        {isV3 && (
+          <div className="jobpost-box">
+            <label className="field" style={{ margin: 0 }}>
+              <span className="field-label field-label-row">
+                Job Post Link
+                <span className="muted small">paste the URL — we read the page and extract the job</span>
+              </span>
+              <div className="jobpost-row">
+                <input
+                  className="input"
+                  type="url"
+                  placeholder="https://…  (the job posting page)"
+                  value={jobLink}
+                  onChange={(e) => setJobLink(e.target.value)}
+                  onKeyDown={(e) => { if (e.key === "Enter" && !fetchingJd) fetchJobFromLink(); }}
+                />
+                <button
+                  className="btn primary"
+                  onClick={fetchJobFromLink}
+                  disabled={fetchingJd || !jobLink.trim()}
+                >
+                  {fetchingJd ? "Reading…" : "Extract"}
+                </button>
+              </div>
+            </label>
+            {jobMeta && (
+              <div className="jobpost-meta">
+                {[
+                  ["Role", jobMeta.role],
+                  ["Company", jobMeta.company],
+                  ["Country", jobMeta.country],
+                  ["Location", jobMeta.location],
+                  ["Salary", jobMeta.salaryRange],
+                  ["Industry", jobMeta.industry],
+                  ["Type", jobMeta.employmentType],
+                ].filter(([, v]) => v).map(([k, v]) => (
+                  <span key={k} className="jobpost-chip"><b>{k}:</b> {v}</span>
+                ))}
+                {jobMeta.source && !jobMeta.usedRaw && (
+                  <span className="jobpost-chip" title="How the posting was read">
+                    <b>Source:</b> {jobMeta.source === "structured" ? "structured data" : jobMeta.source === "ai" ? "AI-read" : jobMeta.source}
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+        {isV2 && !isV3 && (
+          <label className="field">
+            <span className="field-label field-label-row">
+              Job Link
+              <span className="muted small">optional · saved with the application to reopen later</span>
+            </span>
+            <input
+              className="input"
+              type="url"
+              placeholder="https://…  (the job posting URL)"
+              value={jobLink}
+              onChange={(e) => { setJobLink(e.target.value); api().setPref("gen_job_link", e.target.value); }}
+            />
+          </label>
+        )}
         <div className="grid2">
           <div className="field">
             <span className="field-label">Account</span>
@@ -1395,7 +1533,18 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
 
         <div className="action-row">
           <div className="action-group">
-            {prefsReady && (<>
+            {prefsReady && isV3 && (
+            <label className="toggle" title="When ON, the resume is generated automatically as soon as the job post is extracted — no need to click Generate Resume.">
+              <input
+                type="checkbox"
+                checked={v3AutoGen}
+                onChange={(e) => { setV3AutoGen(e.target.checked); api().setPref("v3_auto_generate", e.target.checked ? "1" : "0"); }}
+              />
+              <span className="toggle-track"><span className="toggle-thumb" /></span>
+              <span className="toggle-label">Auto-generate after Extract</span>
+            </label>
+            )}
+            {prefsReady && !isV3 && (<>
             <label className="toggle" title="Run Preview automatically when you paste a job description">
               <input
                 type="checkbox"

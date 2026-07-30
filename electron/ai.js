@@ -266,6 +266,59 @@ async function extractJdTarget({ apiKey, model, jobDescription }) {
   return { role: s(obj.role), company: s(obj.company), country: s(obj.country) };
 }
 
+// Generate V3: extract a full, structured job posting from the raw content of a
+// job-post web page (page text + any schema.org JobPosting JSON-LD). Returns the
+// role, company, country, location, salary range, industry, employment type and
+// the cleaned full job description. Falls back to empties on any failure.
+async function extractJobPost({ apiKey, model, pageText, jsonLd, title, h1, metaText, url }) {
+  const empty = {
+    role: "", company: "", country: "", location: "", salaryRange: "",
+    industry: "", employmentType: "", jobDescription: "",
+  };
+  if (!apiKey) return empty;
+  const text = String(pageText || "").trim();
+  const ld = String(jsonLd || "").trim();
+  if (!text && !ld) return empty;
+  const prompt =
+    "You are given the FULL raw content of a JOB-POSTING web page (page title, first heading, " +
+    "meta tags, schema.org JSON-LD, and the entire visible page text). Read ALL of it and extract " +
+    "the posting into JSON. The job title, company, and location are often in the page heading, " +
+    "title, or a sidebar — NOT only in the main body, so scan everything.\n" +
+    'Return ONLY this JSON object (no prose, no code fence): ' +
+    '{"role":"","company":"","country":"","location":"","salaryRange":"","industry":"","employmentType":"","jobDescription":""}\n' +
+    "Field rules:\n" +
+    "- role: the exact job title, verbatim (often the H1 or in the page title before '|' / '-' / 'at').\n" +
+    "- company: the hiring company's name (often after 'at' in the title, or in og:site_name).\n" +
+    "- country: the job's country as a plain country name (infer from the location if needed).\n" +
+    "- location: the city/region/remote status as written.\n" +
+    "- salaryRange: the pay range if stated (keep currency/period), else \"\".\n" +
+    "- industry: the company's or role's industry.\n" +
+    "- employmentType: Full-time / Part-time / Contract / Internship, if stated.\n" +
+    "- jobDescription: the COMPLETE job description — about the role, responsibilities, requirements, " +
+    "benefits — cleaned of site navigation, cookie banners, related-jobs and footer boilerplate. " +
+    "Preserve the real content in readable paragraphs/bullets. Do NOT summarize or shorten it.\n" +
+    "Fill EVERY field you can find; use \"\" only when genuinely absent. Prefer schema.org JobPosting JSON-LD when present.\n\n" +
+    "PAGE TITLE:\n" + String(title || "") + "\n\n" +
+    "FIRST HEADING (H1):\n" + String(h1 || "") + "\n\n" +
+    "META TAGS:\n" + String(metaText || "") + "\n\n" +
+    "URL:\n" + String(url || "") + "\n\n" +
+    "JSON-LD (may be empty):\n" + ld.slice(0, 12000) + "\n\n" +
+    "FULL PAGE TEXT:\n" + text.slice(0, 32000);
+  let raw;
+  try { raw = await callGemini(apiKey, prompt, model, { temperature: 0, maxOutputTokens: 6144, timeoutMs: 60000 }); }
+  catch (_) { return empty; }
+  if (!raw) return empty;
+  let obj;
+  try { obj = extractJson(raw); } catch (_) { return empty; }
+  const s = (v) => (v == null ? "" : String(v)).trim();
+  return {
+    role: s(obj.role), company: s(obj.company), country: s(obj.country),
+    location: s(obj.location), salaryRange: s(obj.salaryRange),
+    industry: s(obj.industry), employmentType: s(obj.employmentType),
+    jobDescription: s(obj.jobDescription),
+  };
+}
+
 // Convert a structured resume object (the V2 reply schema) into the exact
 // Markdown the renderer expects, so the PDF/preview pipeline (buildResumeHtml)
 // stays unchanged. The renderer overrides the header (name/title/contacts) and
@@ -982,5 +1035,5 @@ async function parseResumeFile({ provider, apiKey, model, base64 }) {
 module.exports = {
   generateResume, generateCoverLetter, parseResumeFile, setProxy, checkProxy,
   buildPrompt, parseResumeMarkdown, buildPromptJson, parseResumeJson, jobRefFor,
-  refineV2Prompt, extractJdTarget,
+  refineV2Prompt, extractJdTarget, extractJobPost,
 };

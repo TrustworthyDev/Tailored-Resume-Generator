@@ -342,6 +342,21 @@ select.input {
 }
 .x-btn:hover { color: var(--danger); }
 
+/* Generate V3 — job-post link extraction box */
+.jobpost-box {
+  margin-bottom: 14px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2);
+}
+.jobpost-row { display: flex; gap: 10px; align-items: center; }
+.jobpost-row .input { flex: 1 1 auto; min-width: 0; }
+.jobpost-row .btn { flex: 0 0 auto; }
+.jobpost-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.jobpost-chip {
+  font-size: 12px; padding: 4px 10px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+}
+.jobpost-chip b { color: var(--muted); font-weight: 600; }
+
 /* Appearance (theme) picker */
 .theme-choices { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 14px; }
 .theme-card {
@@ -523,7 +538,8 @@ select.input {
   border: 1px solid rgba(59, 130, 246, 0.38);
 }
 .app-sub .flag { margin-right: 4px; }
-.app-actions { display: flex; gap: 8px; margin-top: 11px; }
+.app-actions { display: flex; gap: 8px; margin-top: 11px; align-items: center; justify-content: space-between; }
+.app-actions-main { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .apps-tabs { position: sticky; top: 0; z-index: 6; background: var(--bg); }
 .date-input { width: auto; padding: 6px 10px; font-size: 13px; color-scheme: dark; }
 

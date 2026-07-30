@@ -4,7 +4,7 @@ const fs = require("fs");
 const db = require("./db");
 const {
   generateResume, generateCoverLetter, parseResumeFile, setProxy, checkProxy,
-  buildPromptJson, parseResumeJson, refineV2Prompt, extractJdTarget,
+  buildPromptJson, parseResumeJson, refineV2Prompt, extractJdTarget, extractJobPost,
 } = require("./ai");
 const license = require("./license");
 
@@ -67,6 +67,82 @@ function todayStr() {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+// ---- Generate V3: job-post extraction helpers -----------------------------
+
+// Turn an HTML description (as found in schema.org JobPosting) into clean text.
+function stripHtml(html) {
+  return String(html || "")
+    .replace(/<\s*br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|h[1-6]|tr)>/gi, "\n")
+    .replace(/<li[^>]*>/gi, "• ")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#0?39;|&rsquo;|&lsquo;|&apos;/gi, "'")
+    .replace(/&quot;|&ldquo;|&rdquo;/gi, '"')
+    .replace(/&mdash;/gi, "—")
+    .replace(/[ \t]{2,}/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+// Read a scalar out of a JSON-LD value that may be a string, {name}, or {"@value"}.
+function ldText(v) {
+  if (v == null) return "";
+  if (typeof v === "string") return v.trim();
+  if (Array.isArray(v)) return v.map(ldText).filter(Boolean).join(", ");
+  if (typeof v === "object") return String(v.name || v["@value"] || "").trim();
+  return String(v).trim();
+}
+
+// Find the first schema.org JobPosting object across the page's JSON-LD blocks.
+function parseJobPostingLd(ldArr) {
+  const candidates = [];
+  (ldArr || []).forEach((raw) => {
+    let obj;
+    try { obj = JSON.parse(raw); } catch (_) { return; }
+    const push = (o) => { if (o && typeof o === "object") candidates.push(o); };
+    if (Array.isArray(obj)) obj.forEach(push);
+    else { push(obj); if (Array.isArray(obj["@graph"])) obj["@graph"].forEach(push); }
+  });
+  return candidates.find((c) => {
+    const t = c["@type"];
+    return t === "JobPosting" || (Array.isArray(t) && t.includes("JobPosting"));
+  }) || null;
+}
+
+// Build our structured shape from a schema.org JobPosting (no AI needed).
+function buildFromLd(c) {
+  const role = ldText(c.title);
+  const company = ldText(c.hiringOrganization);
+  let location = "", country = "";
+  const loc = Array.isArray(c.jobLocation) ? c.jobLocation[0] : c.jobLocation;
+  const addr = loc && (loc.address || loc);
+  if (addr && typeof addr === "object") {
+    location = [addr.addressLocality, addr.addressRegion].map(ldText).filter(Boolean).join(", ");
+    country = ldText(addr.addressCountry);
+  }
+  let salaryRange = "";
+  const bs = c.baseSalary;
+  if (bs && typeof bs === "object") {
+    const val = bs.value && typeof bs.value === "object" ? bs.value : bs;
+    const cur = ldText(bs.currency) || ldText(val.currency);
+    const min = val.minValue != null ? val.minValue : val.value;
+    const max = val.maxValue;
+    const unit = ldText(val.unitText);
+    const nums = [min, max].filter((x) => x != null && x !== "");
+    if (nums.length) {
+      salaryRange = (cur ? cur + " " : "") + nums.join("–") + (unit ? " / " + String(unit).toLowerCase() : "");
+    }
+  }
+  const employmentType = ldText(c.employmentType).replace(/_/g, " ");
+  const industry = ldText(c.industry);
+  const jobDescription = stripHtml(c.description);
+  return { role, company, country, location, salaryRange, industry, employmentType, jobDescription };
 }
 
 // Local date + time, in two forms: a filesystem-safe one for folder names and
@@ -370,6 +446,7 @@ function registerIpc() {
     db.all(
       `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
               ap.gpt_url, (CASE WHEN IFNULL(ap.gpt_url,'') <> '' THEN 1 ELSE 0 END) AS has_gpt,
+              ap.job_link, (CASE WHEN IFNULL(ap.job_link,'') <> '' THEN 1 ELSE 0 END) AS has_link,
               ac.main_stack AS account_stack
        FROM applications ap
        LEFT JOIN accounts ac ON ac.id = ap.account_id
@@ -384,6 +461,7 @@ function registerIpc() {
     db.all(
       `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
               ap.gpt_url, (CASE WHEN IFNULL(ap.gpt_url,'') <> '' THEN 1 ELSE 0 END) AS has_gpt,
+              ap.job_link, (CASE WHEN IFNULL(ap.job_link,'') <> '' THEN 1 ELSE 0 END) AS has_link,
               ac.name AS account_name, ac.main_stack AS account_stack
        FROM applications ap
        LEFT JOIN accounts ac ON ac.id = ap.account_id
@@ -397,6 +475,7 @@ function registerIpc() {
     return db.all(
       `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
               ap.gpt_url, (CASE WHEN IFNULL(ap.gpt_url,'') <> '' THEN 1 ELSE 0 END) AS has_gpt,
+              ap.job_link, (CASE WHEN IFNULL(ap.job_link,'') <> '' THEN 1 ELSE 0 END) AS has_link,
               ac.name AS account_name, ac.main_stack AS account_stack
        FROM applications ap
        LEFT JOIN accounts ac ON ac.id = ap.account_id
@@ -960,6 +1039,7 @@ function registerIpc() {
       const recJd = (d.jobDescription || "").trim();
       const recResume = (d.resumeContent || "").trim();
       const recGptUrl = (d.gptUrl || "").trim();
+      const recJobLink = (d.jobLink || "").trim();
       if (isDuplicate) {
         // Silently update the existing entry (the renderer handles the user-facing
         // duplicate confirmation before it gets here). Keep existing values when
@@ -970,18 +1050,19 @@ function registerIpc() {
              job_description = COALESCE(NULLIF(?, ''), job_description),
              resume_content = COALESCE(NULLIF(?, ''), resume_content),
              gpt_url = COALESCE(NULLIF(?, ''), gpt_url),
+             job_link = COALESCE(NULLIF(?, ''), job_link),
              match_role = COALESCE(NULLIF(?, ''), match_role),
              match_company = COALESCE(NULLIF(?, ''), match_company),
              match_account = COALESCE(NULLIF(?, ''), match_account)
            WHERE id = ?`,
-          [savedFile, recCountry, nowIso(), recRequestId, recJd, recResume, recGptUrl,
+          [savedFile, recCountry, nowIso(), recRequestId, recJd, recResume, recGptUrl, recJobLink,
            matchRole, matchCompany, matchAccount, dup.id]
         );
       } else {
         db.insert(
-          `INSERT INTO applications (account_id, role, company, country, position, request_id, job_description, resume_content, gpt_url, match_role, match_company, match_account, applied_at, pdf_path)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [d.accountId, recRole, recCompany, recCountry, recRole, recRequestId, recJd, recResume, recGptUrl,
+          `INSERT INTO applications (account_id, role, company, country, position, request_id, job_description, resume_content, gpt_url, job_link, match_role, match_company, match_account, applied_at, pdf_path)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [d.accountId, recRole, recCompany, recCountry, recRole, recRequestId, recJd, recResume, recGptUrl, recJobLink,
            matchRole, matchCompany, matchAccount, nowIso(), savedFile]
         );
       }
@@ -1159,6 +1240,141 @@ function registerIpc() {
     }
   }
 
+  // Generate V3: load a job-post URL in a hidden browser window (so JS-rendered
+  // pages work), scrape its text + any schema.org JobPosting JSON-LD, then have
+  // Gemini extract the structured posting. Uses the same session/proxy/UA as the
+  // embedded ChatGPT browser.
+  ipcMain.handle("jd:fromLink", async (_e, url) => {
+    const link = String(url || "").trim();
+    if (!/^https?:\/\//i.test(link)) {
+      return { ok: false, error: "Enter a valid job-post link starting with http(s)://" };
+    }
+    const gemKey =
+      db.get("SELECT api_key, model FROM api_keys WHERE kind = 'v2' AND is_active = 1 LIMIT 1") ||
+      db.get("SELECT api_key, model FROM api_keys WHERE kind = 'v1' AND provider = 'gemini' AND is_active = 1 LIMIT 1") ||
+      db.get("SELECT api_key, model FROM api_keys WHERE kind = 'v1' AND provider = 'gemini' ORDER BY id DESC LIMIT 1");
+    try { await applyChatProxy(); } catch (_) {}
+    let win = null;
+    try {
+      win = new BrowserWindow({
+        show: false,
+        webPreferences: {
+          partition: CHAT_PARTITION,
+          backgroundThrottling: false,
+          nodeIntegration: false,
+          contextIsolation: true,
+        },
+      });
+      try { win.webContents.setUserAgent(CHAT_UA); } catch (_) {}
+      await win.loadURL(link);
+      // Adaptive wait: JS-rendered job pages fill the header/body AFTER the
+      // initial load, so poll until real content appears (an H1 with text, a
+      // JobPosting JSON-LD, or a substantial body) instead of a fixed delay.
+      const readyCheck =
+        "(() => { try {" +
+        "  const h = document.querySelector('h1'); const h1=((h&&(h.innerText||h.textContent))||'').trim();" +
+        "  const ld = !!document.querySelector('script[type=\"application/ld+json\"]');" +
+        "  const tlen = ((document.body&&document.body.innerText)||'').replace(/\\s+/g,' ').trim().length;" +
+        "  return { h1len: h1.length, ld: ld, tlen: tlen };" +
+        "} catch(e){ return { h1len:0, ld:false, tlen:0 }; } })()";
+      let ready = false;
+      for (let i = 0; i < 24; i++) { // up to ~14s
+        await new Promise((r) => setTimeout(r, 600));
+        let st = null;
+        try { st = await win.webContents.executeJavaScript(readyCheck, true); } catch (_) {}
+        if (st && ((st.h1len > 0 && st.tlen > 400) || st.ld || st.tlen > 1500)) { ready = true; break; }
+      }
+      // Brief settle so late-rendered chips (location, employment type) land.
+      await new Promise((r) => setTimeout(r, ready ? 500 : 0));
+      const scrape =
+        "(() => {" +
+        "  const out = { title: document.title || '', h1: '', metas: {}, ld: [], text: '' };" +
+        "  try { const h = document.querySelector('h1'); out.h1 = h ? ((h.innerText||h.textContent||'').trim()) : ''; } catch(e){}" +
+        "  try {" +
+        "    const want = ['description','og:title','og:description','og:site_name','twitter:title','twitter:description'];" +
+        "    document.querySelectorAll('meta').forEach(m => { const k=((m.getAttribute('property')||m.getAttribute('name')||'')).toLowerCase(); if(want.indexOf(k)!==-1 && !out.metas[k]){ out.metas[k]=(m.getAttribute('content')||'').trim(); } });" +
+        "  } catch(e){}" +
+        "  try { document.querySelectorAll('script[type=\"application/ld+json\"]').forEach(s => { const t=(s.textContent||'').trim(); if(t) out.ld.push(t); }); } catch(e){}" +
+        // Whole visible page (NOT just <main>) — the role title/location often sit
+        // in the page header or a sidebar outside <main>.
+        "  try { out.text = (document.body.innerText || '').replace(/\\n{3,}/g,'\\n\\n'); } catch(e){}" +
+        "  return out;" +
+        "})()";
+      const data = await win.webContents.executeJavaScript(scrape, true);
+      const rawText = (data && data.text ? String(data.text) : "").trim();
+      const metas = (data && data.metas) || {};
+      const metaText = Object.keys(metas).map((k) => `${k}: ${metas[k]}`).join("\n");
+
+      const empty = {
+        role: "", company: "", country: "", location: "", salaryRange: "",
+        industry: "", employmentType: "", jobDescription: "",
+      };
+      let out = empty;
+      let source = "none";
+
+      // Layer 1: structured schema.org JobPosting — highest fidelity, no AI.
+      const ld = parseJobPostingLd(data && data.ld);
+      if (ld) { out = { ...empty, ...buildFromLd(ld) }; source = "structured"; }
+
+      // Layer 2: Gemini fills EVERY still-missing field (role, location, salary…),
+      // not just the description — the structured block often omits some of these.
+      const coreMissing =
+        !out.role || !out.company || !out.country || !out.location ||
+        !out.salaryRange || !out.industry || !out.employmentType || !out.jobDescription;
+      if (coreMissing && gemKey && gemKey.api_key) {
+        try {
+          const g = await extractJobPost({
+            apiKey: gemKey.api_key, model: gemKey.model,
+            pageText: rawText, jsonLd: (data && data.ld ? data.ld.join("\n") : ""),
+            title: data && data.title, h1: data && data.h1, metaText, url: link,
+          });
+          out = {
+            role: out.role || g.role, company: out.company || g.company,
+            country: out.country || g.country, location: out.location || g.location,
+            salaryRange: out.salaryRange || g.salaryRange, industry: out.industry || g.industry,
+            employmentType: out.employmentType || g.employmentType,
+            jobDescription: out.jobDescription || g.jobDescription,
+          };
+          if (g.role || g.jobDescription) source = ld ? "structured+ai" : "ai";
+        } catch (_) {}
+      }
+
+      // No-AI heuristics: fill still-empty role/company from the page heading and
+      // meta tags (title often reads "Role at Company | Board").
+      if (!out.role) out.role = (data && data.h1) || "";
+      if (!out.role && metas["og:title"]) out.role = metas["og:title"];
+      if (!out.company && metas["og:site_name"]) out.company = metas["og:site_name"];
+
+      // Layer 3: last resort — show the raw page text so you always see something.
+      let usedRaw = false;
+      if (!out.jobDescription && rawText) {
+        out.jobDescription = rawText.slice(0, 20000);
+        source = "raw";
+        usedRaw = true;
+      }
+
+      if (!out.jobDescription) {
+        return { ok: false, error: "Couldn't read this page (it may require sign-in or block automated access). Try opening it in the ChatGPT browser tab, sign in, or paste the description manually." };
+      }
+
+      // Cache it (their SQLite idea) — url + raw + structured fields.
+      try {
+        db.insert(
+          `INSERT INTO job_posts (url, role, company, country, location, salary_range, industry, employment_type, job_description, raw_text, source, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [link, out.role, out.company, out.country, out.location, out.salaryRange,
+           out.industry, out.employmentType, out.jobDescription, rawText.slice(0, 40000), source, nowIso()]
+        );
+      } catch (_) {}
+
+      return { ok: true, url: link, source, usedRaw, ...out };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || "Could not load that job post." };
+    } finally {
+      try { if (win && !win.isDestroyed()) win.close(); } catch (_) {}
+    }
+  });
+
   // Supply proxy credentials when the embedded browser's proxy requires auth.
   app.on("login", (event, _webContents, _request, authInfo, callback) => {
     if (authInfo && authInfo.isProxy && chatProxyAuth) {
@@ -1294,6 +1510,7 @@ function registerIpc() {
 
   async function openChatWindow(opts) {
     const fresh = !!(opts && opts.fresh);
+    const noSaveHome = !!(opts && opts.noSaveHome);
     // A specific URL (e.g. an application's saved conversation) overrides the
     // Project Home for this open.
     const targetUrl = opts && /^https?:\/\//i.test(opts.url || "") ? opts.url : chatHomeUrl();
@@ -1344,13 +1561,16 @@ function registerIpc() {
     chatWin = win;
     win.webContents.setUserAgent(CHAT_UA);
     // Inject a floating "Save as Project Home" button into the ChatGPT page so
-    // the location can be saved from inside the browser window itself.
-    win.webContents.on("did-finish-load", () => {
-      let url = "";
-      try { url = win.webContents.getURL() || ""; } catch (_) {}
-      if (!/^https?:\/\//i.test(url)) return; // skip the local error page
-      win.webContents.executeJavaScript(CHAT_SAVE_BUTTON_JS).catch(() => {});
-    });
+    // the location can be saved from inside the browser window itself. Skipped
+    // when reopening an application's conversation from the history (noSaveHome).
+    if (!noSaveHome) {
+      win.webContents.on("did-finish-load", () => {
+        let url = "";
+        try { url = win.webContents.getURL() || ""; } catch (_) {}
+        if (!/^https?:\/\//i.test(url)) return; // skip the local error page
+        win.webContents.executeJavaScript(CHAT_SAVE_BUTTON_JS).catch(() => {});
+      });
+    }
     // Keep OAuth pop-ups (Google sign-in) inside the same persistent session.
     win.webContents.setWindowOpenHandler(() => ({
       action: "allow",
@@ -1405,7 +1625,7 @@ function registerIpc() {
     if (!/^https?:\/\//i.test(url)) {
       return { ok: false, error: "No ChatGPT conversation was saved for this application (generated before this feature, or the reply was pasted from elsewhere). Re-generate it to enable Open GPT." };
     }
-    await openChatWindow({ fresh: true, url });
+    await openChatWindow({ fresh: true, url, noSaveHome: true });
     return { ok: true };
   });
 
@@ -1658,6 +1878,15 @@ function registerIpc() {
   ipcMain.handle("app:delete", (_e, id) => {
     db.run("DELETE FROM applications WHERE id = ?", [id]);
     return { ok: true };
+  });
+
+  // Open an arbitrary http(s) link in the user's default browser (used by the
+  // "Open Link" button on an application to reopen the original job post).
+  ipcMain.handle("link:openExternal", async (_e, url) => {
+    const u = String(url || "").trim();
+    if (!/^https?:\/\//i.test(u)) return { ok: false, error: "No valid link saved for this application." };
+    try { await shell.openExternal(u); return { ok: true }; }
+    catch (e) { return { ok: false, error: (e && e.message) || "Could not open the link." }; }
   });
 
   // Wipe ALL application history across every account.
