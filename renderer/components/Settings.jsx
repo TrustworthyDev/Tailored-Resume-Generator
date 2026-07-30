@@ -4,6 +4,7 @@ import ProxySettings from "./ProxySettings";
 import LocationSettings from "./LocationSettings";
 import DatabaseSettings from "./DatabaseSettings";
 import Security from "./Security";
+import Appearance from "./Appearance";
 
 const TABS = [
   { id: "api", label: "API (V1)" },
@@ -11,6 +12,7 @@ const TABS = [
   { id: "proxy", label: "Proxy" },
   { id: "folder", label: "Folder" },
   { id: "database", label: "Database" },
+  { id: "appearance", label: "Appearance" },
   { id: "security", label: "Security" },
 ];
 
@@ -36,6 +38,7 @@ export default function Settings() {
         {tab === "proxy" && <ProxySettings />}
         {tab === "folder" && <LocationSettings />}
         {tab === "database" && <DatabaseSettings />}
+        {tab === "appearance" && <Appearance />}
         {tab === "security" && <Security />}
       </div>
     </div>

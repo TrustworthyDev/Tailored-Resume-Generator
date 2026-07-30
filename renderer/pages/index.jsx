@@ -7,6 +7,7 @@ import ResumeGenerator from "../components/ResumeGenerator";
 import Applications from "../components/Applications";
 import Tracker from "../components/Tracker";
 import Activation from "../components/Activation";
+import { applyTheme } from "../components/Appearance";
 
 const TABS = [
   { id: "applications", label: "Applications" },
@@ -35,6 +36,9 @@ export default function Home() {
 
   useEffect(() => {
     api().licenseStatus().then((s) => setLicensed(!!(s && s.activated)));
+    // Apply the saved theme as early as possible so the UI never flashes the
+    // wrong palette before Settings is opened.
+    api().getPref("theme").then((r) => applyTheme(r && r.value));
   }, []);
 
   // Auto-collapse the sidebar on small windows so the main content fits.
