@@ -7,6 +7,7 @@ import ResumeGenerator from "../components/ResumeGenerator";
 import Applications from "../components/Applications";
 import Tracker from "../components/Tracker";
 import Activation from "../components/Activation";
+import { applyTheme } from "../components/Appearance";
 
 const TABS = [
   { id: "applications", label: "Applications" },
@@ -15,6 +16,7 @@ const TABS = [
   { id: "account", label: "Accounts" },
   { id: "generate", label: "Generate V1" },
   { id: "generate2", label: "Generate V2" },
+  { id: "generate3", label: "Generate V3" },
   { id: "tracker", label: "Tracker" },
 ];
 
@@ -35,6 +37,9 @@ export default function Home() {
 
   useEffect(() => {
     api().licenseStatus().then((s) => setLicensed(!!(s && s.activated)));
+    // Apply the saved theme as early as possible so the UI never flashes the
+    // wrong palette before Settings is opened.
+    api().getPref("theme").then((r) => applyTheme(r && r.value));
   }, []);
 
   // Auto-collapse the sidebar on small windows so the main content fits.
@@ -119,6 +124,7 @@ export default function Home() {
         {tab === "account" && <AccountManagement />}
         {tab === "applications" && <Applications />}
         {tab === "generate" && <ResumeGenerator variant="v1" />}
+        {tab === "generate3" && <ResumeGenerator variant="v3" />}
         {tab === "tracker" && <Tracker />}
       </main>
 

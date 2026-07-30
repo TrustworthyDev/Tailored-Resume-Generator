@@ -91,11 +91,28 @@ const SCHEMA = `
       job_description TEXT,
       resume_content  TEXT,
       gpt_url    TEXT,
+      job_link   TEXT,
       match_role    TEXT,
       match_company TEXT,
       match_account TEXT,
       applied_at TEXT,
       pdf_path   TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS job_posts (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      url          TEXT,
+      role         TEXT,
+      company      TEXT,
+      country      TEXT,
+      location     TEXT,
+      salary_range TEXT,
+      industry     TEXT,
+      employment_type TEXT,
+      job_description TEXT,
+      raw_text     TEXT,
+      source       TEXT,
+      created_at   TEXT
     );
 
     CREATE TABLE IF NOT EXISTS sessions (
@@ -248,6 +265,7 @@ function migrate() {
     ["job_description", "TEXT"], // stored with the application for reference
     ["resume_content", "TEXT"],  // the generated resume markdown
     ["gpt_url", "TEXT"],         // the ChatGPT conversation URL — "Open GPT" reopens it
+    ["job_link", "TEXT"],        // the original job-post URL, opened from the history
     // Dedicated duplicate-detection index fields: the canonical job title +
     // company extracted from the JD by Gemini, plus the account name. Matching
     // uses THESE, so display role/company can differ (e.g. from the reply)

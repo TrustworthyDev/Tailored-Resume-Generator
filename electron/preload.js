@@ -80,6 +80,9 @@ contextBridge.exposeInMainWorld("api", {
   generateResume: (data) => invoke("resume:generate", data),
   generateCoverLetter: (data) => invoke("coverletter:generate", data),
 
+  // Generate V3 — extract a full job posting from a job-post link.
+  fetchJobPost: (url) => invoke("jd:fromLink", url),
+
   // Generate V2 — ChatGPT-in-a-browser via a clipboard handshake.
   chatgptBuildPrompt: (data) => invoke("chatgpt:buildPrompt", data),
   openChatgpt: (opts) => invoke("chatgpt:open", opts),
@@ -110,6 +113,7 @@ contextBridge.exposeInMainWorld("api", {
   exportApplications: () => invoke("applications:export"),
   findDuplicateApplication: (accountId, role, company) => invoke("applications:findDuplicate", accountId, role, company),
   openGptForApplication: (id) => invoke("application:openGpt", id),
+  openExternalLink: (url) => invoke("link:openExternal", url),
   deleteApplication: (id) => invoke("app:delete", id),
   resetApplications: () => invoke("app:resetAll"),
   startSession: () => invoke("session:start"),

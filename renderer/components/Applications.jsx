@@ -117,6 +117,12 @@ export default function Applications() {
     const r = await api().openGptForApplication(a.id);
     if (!(r && r.ok)) setFileMsg((r && r.error) || "Could not open ChatGPT for this application.");
   };
+  // Open the original job-post URL saved with this application in the browser.
+  const openLink = async (a) => {
+    setFileMsg("");
+    const r = await api().openExternalLink(a.job_link);
+    if (!(r && r.ok)) setFileMsg((r && r.error) || "Could not open the job link.");
+  };
   const openAppFile = async (p) => {
     const r = await api().openPdf(p);
     setFileMsg(r && !r.ok ? r.error || "Could not open the file." : "");
@@ -174,28 +180,39 @@ export default function Applications() {
           </div>
         )}
         <div className="app-actions">
-          {a.has_gpt ? (
-            <button
-              className="btn small"
-              onClick={() => openGpt(a)}
-              title="Reopen the ChatGPT conversation where this resume was generated"
-            >
-              Open GPT
-            </button>
-          ) : null}
-          {a.pdf_path && (
-            <>
-              <button className="btn small" onClick={() => copyLocation(a)}>
-                {copiedId === a.id ? "Copied ✓" : "Copy Location"}
+          <div className="app-actions-main">
+            {a.has_link ? (
+              <button
+                className="btn small"
+                onClick={() => openLink(a)}
+                title={a.job_link || "Open the original job post"}
+              >
+                Open Job Link
               </button>
-              <button className="btn small" onClick={() => openAppFolder(a.pdf_path)}>
-                Open Folder
+            ) : null}
+            {a.has_gpt ? (
+              <button
+                className="btn small"
+                onClick={() => openGpt(a)}
+                title="Reopen the ChatGPT conversation where this resume was generated"
+              >
+                Open GPT
               </button>
-              <button className="btn small" onClick={() => openAppFile(a.pdf_path)}>
-                Open File
-              </button>
-            </>
-          )}
+            ) : null}
+            {a.pdf_path && (
+              <>
+                <button className="btn small" onClick={() => openAppFolder(a.pdf_path)}>
+                  Open Folder
+                </button>
+                <button className="btn small" onClick={() => openAppFile(a.pdf_path)}>
+                  Open Resume
+                </button>
+                <button className="btn small" onClick={() => copyLocation(a)}>
+                  {copiedId === a.id ? "Copied ✓" : "Copy Resume Path"}
+                </button>
+              </>
+            )}
+          </div>
           <button
             className="btn small danger"
             onClick={() => setConfirmDelete(a)}

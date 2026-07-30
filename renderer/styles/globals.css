@@ -11,6 +11,21 @@
   --ok: #4ccb8b;
 }
 
+/* Light theme — applied when the app root carries data-theme="light"
+   (chosen in Settings → Appearance and persisted). */
+:root[data-theme="light"] {
+  --bg: #f4f6f9;
+  --panel: #ffffff;
+  --panel-2: #eef1f5;
+  --border: #d5dbe3;
+  --text: #1a1f28;
+  --muted: #5c6675;
+  --primary: #3b78ec;
+  --primary-2: #2f66d4;
+  --danger: #d64545;
+  --ok: #1f9d61;
+}
+
 * { box-sizing: border-box; }
 html, body, #__next { height: 100%; }
 body {
@@ -327,6 +342,42 @@ select.input {
 }
 .x-btn:hover { color: var(--danger); }
 
+/* Generate V3 — job-post link extraction box */
+.jobpost-box {
+  margin-bottom: 14px; padding: 14px 16px;
+  border: 1px solid var(--border); border-radius: 12px; background: var(--panel-2);
+}
+.jobpost-row { display: flex; gap: 10px; align-items: center; }
+.jobpost-row .input { flex: 1 1 auto; min-width: 0; }
+.jobpost-row .btn { flex: 0 0 auto; }
+.jobpost-meta { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 12px; }
+.jobpost-chip {
+  font-size: 12px; padding: 4px 10px; border-radius: 999px;
+  background: var(--panel); border: 1px solid var(--border); color: var(--text);
+}
+.jobpost-chip b { color: var(--muted); font-weight: 600; }
+
+/* Appearance (theme) picker */
+.theme-choices { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 14px; }
+.theme-card {
+  display: flex; align-items: center; gap: 12px; position: relative;
+  padding: 14px 16px; min-width: 240px; text-align: left; cursor: pointer;
+  background: var(--panel-2); color: var(--text);
+  border: 2px solid var(--border); border-radius: 12px;
+}
+.theme-card:hover { border-color: var(--muted); }
+.theme-card.active { border-color: var(--primary); }
+.theme-card-text { display: flex; flex-direction: column; gap: 2px; }
+.theme-swatch {
+  width: 42px; height: 42px; border-radius: 9px; flex: 0 0 auto;
+  border: 1px solid var(--border);
+}
+.theme-swatch-dark { background: linear-gradient(135deg, #0c0e13 0 50%, #1d212b 50% 100%); }
+.theme-swatch-light { background: linear-gradient(135deg, #f4f6f9 0 50%, #ffffff 50% 100%); }
+.theme-check {
+  position: absolute; top: 8px; right: 10px; color: var(--primary); font-weight: 700;
+}
+
 /* Settings sub-nav */
 .settings-layout { display: grid; grid-template-columns: 170px 1fr; gap: 22px; align-items: start; }
 .settings-nav {
@@ -487,7 +538,8 @@ select.input {
   border: 1px solid rgba(59, 130, 246, 0.38);
 }
 .app-sub .flag { margin-right: 4px; }
-.app-actions { display: flex; gap: 8px; margin-top: 11px; }
+.app-actions { display: flex; gap: 8px; margin-top: 11px; align-items: center; justify-content: space-between; }
+.app-actions-main { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .apps-tabs { position: sticky; top: 0; z-index: 6; background: var(--bg); }
 .date-input { width: auto; padding: 6px 10px; font-size: 13px; color-scheme: dark; }
 
