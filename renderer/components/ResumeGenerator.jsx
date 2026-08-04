@@ -130,7 +130,6 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const [savedPath, setSavedPath] = useState("");
   const [savedAt, setSavedAt] = useState("");
   const [showPreview, setShowPreview] = useState(false);
-  const [proxyActive, setProxyActive] = useState(false);
   const [autoOnPaste, setAutoOnPaste] = useState(true);
   const [openModalAfterPreview, setOpenModalAfterPreview] = useState(true);
   const [autoGenerate, setAutoGenerate] = useState(false);
@@ -144,7 +143,8 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const [pdfUrl, setPdfUrl] = useState(""); // blob URL of the saved PDF for inline viewing
   const [v2Waiting, setV2Waiting] = useState(false); // V2: waiting for the ChatGPT reply on the clipboard
   const [chatHome, setChatHome] = useState(""); // V2: saved ChatGPT Project Home URL (used for auto-navigation)
-  const [connMode, setConnMode] = useState("direct"); // V2 browser: "direct" (local IP) | "proxy"
+  const [connMode, setConnMode] = useState("direct"); // app-wide: "direct" (local IP) | "proxy"
+  const [connStatus, setConnStatus] = useState(null); // { mode, ok, proxy } from the main process
   const [proxyList, setProxyList] = useState([]); // V2: proxies to choose from
   const [chatProxyId, setChatProxyId] = useState(""); // V2: chosen proxy id
   const [showPromptModal, setShowPromptModal] = useState(false); // view active prompt content
@@ -210,7 +210,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         api().listInstructions(),
         api().getPref("selected_account_id"),
         api().getPref("resume_style"),
-        api().getActiveProxy(),
+        api().getConnectionStatus(),
         api().getPref("auto_preview"),
         api().getPref("resume_accent"),
         api().getPref("resume_name_color"),
@@ -230,7 +230,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       setAccounts(accs || []);
       setKeys(ks || []);
       setPrompts(instrs || []);
-      setProxyActive(!!(px && px.enabled));
+      if (px) setConnStatus(px);
       if (autoPref && autoPref.value != null) setAutoOnPaste(autoPref.value === "1");
 
       const activePrompt = (instrs || []).find((p) => p.is_active);
@@ -338,10 +338,9 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     api().chatgptSessionInfo().then((r) => setChatUa((r && r.ua) || ""));
   }, [isV2]);
 
-  // V2: load the saved ChatGPT Project Home URL + the browser connection choice.
+  // The connection choice applies to every generator, so load it on all of them
+  // (not just V2 — V1's requests follow it too).
   useEffect(() => {
-    if (!isV2) return;
-    api().getChatgptHome().then((r) => { setChatHome((r && r.url) || ""); });
     (async () => {
       const [modePref, pidPref, list] = await Promise.all([
         api().getPref("chat_conn_mode"),
@@ -352,6 +351,12 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       if (modePref && modePref.value) setConnMode(modePref.value);
       if (pidPref && pidPref.value) setChatProxyId(String(pidPref.value));
     })();
+  }, []);
+
+  // V2: the saved ChatGPT Project Home URL.
+  useEffect(() => {
+    if (!isV2) return;
+    api().getChatgptHome().then((r) => { setChatHome((r && r.url) || ""); });
     // Update the displayed home when saved from inside the embedded browser.
     const off = api().onChatgptHomeChanged
       ? api().onChatgptHomeChanged((url) => { setChatHome(url || ""); })
@@ -604,9 +609,14 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       return;
     }
     if (!accountId) { setError("Select an account first."); return; }
-    const px = await api().getActiveProxy();
-    if (!px || !px.enabled) {
-      setError("Activate a proxy in Proxy Settings first (Set Active). Resume generation runs through the proxy.");
+    // Generation runs on whichever connection is selected. Local IP is a valid
+    // choice — only a Proxy run with no usable proxy is a problem.
+    const conn = await api().getConnectionStatus();
+    setConnStatus(conn);
+    if (conn && conn.mode === "proxy" && !conn.ok) {
+      setError(
+        "Connection is set to Proxy, but no proxy is available. Pick one in Settings → Proxy, or switch Connection to Local IP."
+      );
       return;
     }
     setLoading(true);
@@ -712,6 +722,16 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       return;
     }
     if (!accountId) { setError("Select an account first."); return; }
+    // Same connection pre-flight as V1 — Local IP is fine, a Proxy run without
+    // a usable proxy is not.
+    const conn = await api().getConnectionStatus();
+    setConnStatus(conn);
+    if (conn && conn.mode === "proxy" && !conn.ok) {
+      setError(
+        "Connection is set to Proxy, but no proxy is available. Pick one in Settings → Proxy, or switch Connection to Local IP."
+      );
+      return;
+    }
     setLoading(true);
     setError("");
     setSavedPath("");
@@ -1139,22 +1159,29 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isV2, chatUa]);
 
-  // V2 browser connection: local IP (direct) or a chosen proxy. Takes effect the
-  // next time the ChatGPT window opens (Generate opens a fresh one).
-  const chooseConnMode = (mode) => {
+  // The app-wide connection: this computer's IP (direct) or a chosen proxy.
+  // Whichever is picked is what the AI requests, the ChatGPT browser and the
+  // job-post reader all use. API requests switch immediately; an already-open
+  // browser window keeps its connection until it is reopened.
+  const refreshConn = async () => {
+    try { setConnStatus(await api().getConnectionStatus()); } catch (_) {}
+  };
+  const chooseConnMode = async (mode) => {
     setConnMode(mode);
-    api().setPref("chat_conn_mode", mode);
+    await api().setPref("chat_conn_mode", mode);
     // Default the proxy selection to the active one the first time Proxy is picked.
     if (mode === "proxy" && !chatProxyId && proxyList.length) {
       const active = proxyList.find((p) => p.is_active) || proxyList[0];
       const id = String(active.id);
       setChatProxyId(id);
-      api().setPref("chat_proxy_id", id);
+      await api().setPref("chat_proxy_id", id);
     }
+    refreshConn();
   };
-  const chooseChatProxy = (id) => {
+  const chooseChatProxy = async (id) => {
     setChatProxyId(id);
-    api().setPref("chat_proxy_id", id);
+    await api().setPref("chat_proxy_id", id);
+    refreshConn();
   };
   const proxyLabel = (p) => [p.url, p.port].filter(Boolean).join(":") || `Proxy ${p.id}`;
 
@@ -1385,12 +1412,27 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
             </button>
           )}
           <span className="resume-tabs-spacer" />
-          <span className="field-label" style={{ margin: 0 }}>
-            Proxy{" "}
-            {proxyActive ? (
-              <span className="badge live badge-gap">active</span>
+          {/* What every request on this tab actually goes out on. */}
+          <span
+            className="field-label"
+            style={{ margin: 0 }}
+            title={
+              connMode === "proxy"
+                ? connStatus && connStatus.proxy
+                  ? `Routing through ${[connStatus.proxy.url, connStatus.proxy.port].filter(Boolean).join(":")}`
+                  : "Proxy selected, but none is available"
+                : "Using this computer's IP"
+            }
+          >
+            Connection{" "}
+            {connMode === "proxy" ? (
+              connStatus && connStatus.ok === false ? (
+                <span className="badge off badge-gap">proxy missing</span>
+              ) : (
+                <span className="badge live badge-gap">proxy</span>
+              )
             ) : (
-              <span className="badge off badge-gap">off</span>
+              <span className="badge live badge-gap">local IP</span>
             )}
           </span>
         </div>
@@ -1517,12 +1559,14 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
             />
           </div>
 
-          {isV2 && (
-            <div className="field">
+          {/* One connection for everything: the AI requests, the ChatGPT
+              browser and the job-post reader all follow this choice. */}
+          <div className="field">
               <span className="field-label field-label-row">
-                Browser Connection
+                Connection
                 <span className="muted small">
-                  {connMode === "proxy" ? "Routing through a proxy" : "Using this computer's IP"} · applies on the next open
+                  {connMode === "proxy" ? "Routing through a proxy" : "Using this computer's IP"}
+                  {isV2 ? " · AI requests switch now, the browser on its next open" : " · used for every request"}
                 </span>
               </span>
               <div className="conn-box">
@@ -1550,8 +1594,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
                   <span className="toggle-label">{connMode === "proxy" ? "Proxy" : "Local IP"}</span>
                 </label>
               </div>
-            </div>
-          )}
+          </div>
         </div>
 
         <label className="field jd-field">

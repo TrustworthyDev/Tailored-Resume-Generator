@@ -37,6 +37,59 @@ function logCrash(where, err) {
   } catch (_) {}
 }
 process.on("uncaughtException", (e) => logCrash("uncaughtException", e));
+
+// ---- Connection (one choice for the whole app) ------------------------------
+// The user picks Local IP or Proxy once, in the generator. That choice governs
+// EVERY network path: the AI API requests, the embedded ChatGPT browser, and the
+// V3 job-post reader. Previously the API calls always followed the "active"
+// proxy while only the browser followed this selector, so picking Local IP still
+// sent the API traffic through the proxy.
+//   chat_conn_mode = "direct" → this computer's IP
+//   chat_conn_mode = "proxy"  → chat_proxy_id, falling back to the active proxy
+// Returns the proxy row to use, or null for a direct connection.
+function resolveConnection() {
+  const modeRow = db.get("SELECT value FROM prefs WHERE key = 'chat_conn_mode'");
+  const mode = modeRow && modeRow.value ? String(modeRow.value) : "direct";
+  if (mode !== "proxy") return null;
+  const idRow = db.get("SELECT value FROM prefs WHERE key = 'chat_proxy_id'");
+  const pid = idRow && idRow.value ? Number(idRow.value) : null;
+  let row = pid
+    ? db.get("SELECT url, port, username, password FROM proxies WHERE id = ?", [pid])
+    : null;
+  if (!row) {
+    row = db.get(
+      "SELECT url, port, username, password FROM proxies WHERE is_active = 1 LIMIT 1"
+    );
+  }
+  return row && String(row.url || "").trim() ? row : null;
+}
+
+// Point the AI API requests (undici) at the resolved connection. Cheap to call
+// repeatedly — the ProxyAgent is only rebuilt when the target actually changes.
+let apiConnKey = null;
+function applyApiConnection() {
+  const conn = resolveConnection();
+  const key = conn
+    ? `${conn.url}|${conn.port || ""}|${conn.username || ""}|${conn.password || ""}`
+    : "direct";
+  if (key === apiConnKey) return;
+  apiConnKey = key;
+  setProxy(conn ? { ...conn, enabled: true } : null);
+}
+
+// First run after upgrading: the connection mode didn't exist, and the API calls
+// followed whichever proxy was active. Seed the mode from that so an existing
+// setup keeps behaving the same instead of silently switching to direct.
+function seedConnectionMode() {
+  const row = db.get("SELECT value FROM prefs WHERE key = 'chat_conn_mode'");
+  if (row && row.value) return;
+  const active = db.get("SELECT id FROM proxies WHERE is_active = 1 LIMIT 1");
+  db.run(
+    `INSERT INTO prefs (key, value) VALUES ('chat_conn_mode', ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [active ? "proxy" : "direct"]
+  );
+}
 process.on("unhandledRejection", (e) => logCrash("unhandledRejection", e));
 let mainWindow = null;
 
@@ -828,12 +881,10 @@ function registerIpc() {
     }
   });
 
-  // Proxies (multiple; one active is applied to AI API requests).
+  // Proxies (multiple; one active). Which one actually gets used — if any — is
+  // decided by the connection mode, so every change re-resolves it.
   function applyActiveProxy() {
-    const active = db.get(
-      "SELECT url, port, username, password FROM proxies WHERE is_active = 1 LIMIT 1"
-    );
-    setProxy(active ? { ...active, enabled: true } : null);
+    applyApiConnection();
   }
 
   ipcMain.handle("proxy:list", () =>
@@ -879,14 +930,14 @@ function registerIpc() {
 
   ipcMain.handle("proxy:disable", () => {
     db.run("UPDATE proxies SET is_active = 0");
-    setProxy(null);
+    applyApiConnection();
     return { ok: true };
   });
 
   ipcMain.handle("proxy:delete", (_e, id) => {
     const wasActive = db.get("SELECT is_active FROM proxies WHERE id = ?", [id]);
     db.run("DELETE FROM proxies WHERE id = ?", [id]);
-    if (wasActive && wasActive.is_active) setProxy(null); // dropped active → direct
+    if (wasActive && wasActive.is_active) applyApiConnection(); // dropped active
     return { ok: true };
   });
 
@@ -905,7 +956,26 @@ function registerIpc() {
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
       [d.key, d.value == null ? null : String(d.value)]
     );
+    // Switching Local IP ⇄ Proxy takes effect immediately for the API requests
+    // (the browser session re-applies it the next time a window opens).
+    if (d && (d.key === "chat_conn_mode" || d.key === "chat_proxy_id")) {
+      applyApiConnection();
+    }
     return { ok: true };
+  });
+
+  // What the whole app is currently using to reach the network. Drives the
+  // generator's badge and its pre-flight check.
+  ipcMain.handle("connection:status", () => {
+    const modeRow = db.get("SELECT value FROM prefs WHERE key = 'chat_conn_mode'");
+    const mode = modeRow && modeRow.value ? String(modeRow.value) : "direct";
+    const conn = resolveConnection();
+    return {
+      mode,
+      // A proxy run with no usable proxy is the one broken combination.
+      ok: mode !== "proxy" || !!conn,
+      proxy: conn ? { url: conn.url, port: conn.port } : null,
+    };
   });
 
   // Render a styled HTML resume into a hidden/visible BrowserWindow.
@@ -1247,20 +1317,10 @@ function registerIpc() {
   // pop-ups all use the same connection.
   async function applyChatProxy() {
     const ses = session.fromPartition(CHAT_PARTITION);
-    const modeRow = db.get("SELECT value FROM prefs WHERE key = 'chat_conn_mode'");
-    const mode = modeRow && modeRow.value ? modeRow.value : "direct";
-
-    let active = null;
-    if (mode === "proxy") {
-      const idRow = db.get("SELECT value FROM prefs WHERE key = 'chat_proxy_id'");
-      const pid = idRow && idRow.value ? Number(idRow.value) : null;
-      if (pid) {
-        active = db.get("SELECT url, port, username, password FROM proxies WHERE id = ?", [pid]);
-      }
-      if (!active) {
-        active = db.get("SELECT url, port, username, password FROM proxies WHERE is_active = 1 LIMIT 1");
-      }
-    }
+    // Same resolver the AI requests use, so the browser and the API can never
+    // end up on different connections.
+    const active = resolveConnection();
+    applyApiConnection();
 
     if (!active || !String(active.url || "").trim()) {
       chatProxyAuth = null;
@@ -1972,11 +2032,9 @@ app.whenReady().then(async () => {
     // The unpacked build is a separate sandbox — don't pull in legacy data.
     if (!isUnpackedBuild) migrateLegacyData();
     await db.initDb(app.getPath("userData"));
-    // Re-apply the active proxy before any API calls.
-    const activeProxy = db.get(
-      "SELECT url, port, username, password FROM proxies WHERE is_active = 1 LIMIT 1"
-    );
-    if (activeProxy) setProxy({ ...activeProxy, enabled: true });
+    // Settle the connection choice, then apply it before any API calls.
+    seedConnectionMode();
+    applyApiConnection();
     registerIpc();
     createWindow();
   } catch (e) {
