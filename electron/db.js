@@ -92,6 +92,10 @@ const SCHEMA = `
       resume_content  TEXT,
       gpt_url    TEXT,
       job_link   TEXT,
+      location        TEXT,
+      industry        TEXT,
+      salary_range    TEXT,
+      employment_type TEXT,
       match_role    TEXT,
       match_company TEXT,
       match_account TEXT,
@@ -266,6 +270,12 @@ function migrate() {
     ["resume_content", "TEXT"],  // the generated resume markdown
     ["gpt_url", "TEXT"],         // the ChatGPT conversation URL — "Open GPT" reopens it
     ["job_link", "TEXT"],        // the original job-post URL, opened from the history
+    // Extracted job-post details (Generate V3), stored so the history's
+    // "View Job Content" can show the whole posting without re-fetching it.
+    ["location", "TEXT"],
+    ["industry", "TEXT"],
+    ["salary_range", "TEXT"],
+    ["employment_type", "TEXT"],
     // Dedicated duplicate-detection index fields: the canonical job title +
     // company extracted from the JD by Gemini, plus the account name. Matching
     // uses THESE, so display role/company can differ (e.g. from the reply)

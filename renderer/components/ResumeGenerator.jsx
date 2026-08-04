@@ -21,6 +21,10 @@ const STYLES = [
   { id: "classic", label: "Classic", accent: "#1f2937" },
   { id: "centered", label: "Centered", accent: "#14b8a6" },
   { id: "highlight", label: "Highlight", accent: "#c2410c" },
+  { id: "banded", label: "Banded", accent: "#4b5563" },
+  { id: "darkheader", label: "Dark Header", accent: "#1f1f1f" },
+  { id: "ribbon", label: "Ribbon", accent: "#8b2635" },
+  { id: "formal", label: "Formal", accent: "#111111" },
 ];
 
 // Sample colors. The Content picker applies one to EVERY template's borders,
@@ -102,10 +106,15 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const [fontSize, setFontSize] = useState("");
   const [jd, setJd] = useState("");
   const [extraInfo, setExtraInfo] = useState(""); // per-generation notes fed into the prompt
+  // V3 keeps its own persisted Job Description so clearing the box after an
+  // Extract never wipes what's typed on the V1/V2 tabs (they share one pref).
+  const JD_PREF = isV3 ? "gen_v3_jd" : "gen_jd";
   // Generate V3: extract the job posting from a link.
   const [jobLink, setJobLink] = useState("");
   const [fetchingJd, setFetchingJd] = useState(false);
   const [jobMeta, setJobMeta] = useState(null); // { role, company, country, location, salaryRange, industry, employmentType }
+  const jobMetaRef = useRef(null);
+  jobMetaRef.current = jobMeta;
   const [v3AutoGen, setV3AutoGen] = useState(false); // V3: auto-run generation right after Extract
   // Refs that always hold the LATEST value, so the async Extract handler reads
   // the current toggle/account even if its closure was created before prefs
@@ -121,7 +130,6 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const [savedPath, setSavedPath] = useState("");
   const [savedAt, setSavedAt] = useState("");
   const [showPreview, setShowPreview] = useState(false);
-  const [proxyActive, setProxyActive] = useState(false);
   const [autoOnPaste, setAutoOnPaste] = useState(true);
   const [openModalAfterPreview, setOpenModalAfterPreview] = useState(true);
   const [autoGenerate, setAutoGenerate] = useState(false);
@@ -135,7 +143,8 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const [pdfUrl, setPdfUrl] = useState(""); // blob URL of the saved PDF for inline viewing
   const [v2Waiting, setV2Waiting] = useState(false); // V2: waiting for the ChatGPT reply on the clipboard
   const [chatHome, setChatHome] = useState(""); // V2: saved ChatGPT Project Home URL (used for auto-navigation)
-  const [connMode, setConnMode] = useState("direct"); // V2 browser: "direct" (local IP) | "proxy"
+  const [connMode, setConnMode] = useState("direct"); // app-wide: "direct" (local IP) | "proxy"
+  const [connStatus, setConnStatus] = useState(null); // { mode, ok, proxy } from the main process
   const [proxyList, setProxyList] = useState([]); // V2: proxies to choose from
   const [chatProxyId, setChatProxyId] = useState(""); // V2: chosen proxy id
   const [showPromptModal, setShowPromptModal] = useState(false); // view active prompt content
@@ -156,6 +165,32 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const toast = (message, type = "alert") =>
     window.dispatchEvent(new CustomEvent("app-notify", { detail: { message, type } }));
 
+  // The description a generation runs on: an explicitly passed value (the very
+  // text that was just extracted/pasted, avoiding a stale state read) or
+  // whatever is currently in the Job Description box.
+  const resolveJd = (jdValue) => (typeof jdValue === "string" ? jdValue : jd);
+
+  // Generate V3: everything read from the job post — the details shown as chips
+  // under the link, then the description — as one block for the Job Description
+  // field. This is what gets sent to the AI and stored on the application.
+  const composeJobDescription = (m, description) => {
+    const lines = [
+      ["Role", m.role],
+      ["Company", m.company],
+      ["Country", m.country],
+      ["Location", m.location],
+      ["Salary", m.salaryRange],
+      ["Industry", m.industry],
+      ["Employment Type", m.employmentType],
+      ["Job Link", m.url],
+    ]
+      .filter(([, v]) => v && String(v).trim())
+      .map(([k, v]) => `${k}: ${String(v).trim()}`);
+    const body = (description || "").trim();
+    if (!lines.length) return body;
+    return `${lines.join("\n")}\n\nJob Description:\n${body}`;
+  };
+
   const clearCache = () => {
     setResult("");
     setJobRole("");
@@ -175,13 +210,13 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         api().listInstructions(),
         api().getPref("selected_account_id"),
         api().getPref("resume_style"),
-        api().getActiveProxy(),
+        api().getConnectionStatus(),
         api().getPref("auto_preview"),
         api().getPref("resume_accent"),
         api().getPref("resume_name_color"),
         api().getPref("open_preview_after"),
         api().getPref("auto_generate"),
-        api().getPref("gen_jd"),
+        api().getPref(JD_PREF),
         api().getPref("gen_saved_path"),
         api().getPref("gen_saved_at"),
         api().getPref("cover_letter"),
@@ -195,7 +230,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       setAccounts(accs || []);
       setKeys(ks || []);
       setPrompts(instrs || []);
-      setProxyActive(!!(px && px.enabled));
+      if (px) setConnStatus(px);
       if (autoPref && autoPref.value != null) setAutoOnPaste(autoPref.value === "1");
 
       const activePrompt = (instrs || []).find((p) => p.is_active);
@@ -224,6 +259,14 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       if (extraPref && extraPref.value) setExtraInfo(extraPref.value);
       if (jobLinkPref && jobLinkPref.value) setJobLink(jobLinkPref.value);
       if (v3AutoPref && v3AutoPref.value != null) setV3AutoGen(v3AutoPref.value === "1");
+      // V3: restore the last extraction's details so the chips under the link
+      // (and the values stored on the next application) survive a restart.
+      if (isV3) {
+        const metaPref = await api().getPref("gen_v3_meta");
+        if (metaPref && metaPref.value) {
+          try { setJobMeta(JSON.parse(metaPref.value)); } catch (_) {}
+        }
+      }
       if (savedPathPref && savedPathPref.value) setSavedPath(savedPathPref.value);
       if (savedAtPref && savedAtPref.value) setSavedAt(savedAtPref.value);
 
@@ -295,10 +338,9 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     api().chatgptSessionInfo().then((r) => setChatUa((r && r.ua) || ""));
   }, [isV2]);
 
-  // V2: load the saved ChatGPT Project Home URL + the browser connection choice.
+  // The connection choice applies to every generator, so load it on all of them
+  // (not just V2 — V1's requests follow it too).
   useEffect(() => {
-    if (!isV2) return;
-    api().getChatgptHome().then((r) => { setChatHome((r && r.url) || ""); });
     (async () => {
       const [modePref, pidPref, list] = await Promise.all([
         api().getPref("chat_conn_mode"),
@@ -309,6 +351,12 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       if (modePref && modePref.value) setConnMode(modePref.value);
       if (pidPref && pidPref.value) setChatProxyId(String(pidPref.value));
     })();
+  }, []);
+
+  // V2: the saved ChatGPT Project Home URL.
+  useEffect(() => {
+    if (!isV2) return;
+    api().getChatgptHome().then((r) => { setChatHome((r && r.url) || ""); });
     // Update the displayed home when saved from inside the embedded browser.
     const off = api().onChatgptHomeChanged
       ? api().onChatgptHomeChanged((url) => { setChatHome(url || ""); })
@@ -346,7 +394,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   useEffect(() => {
     if (!result) return;
     const t = setTimeout(() => {
-      if (!busyRef.current) exportPdf(result, jobRole, jobCompany, jobCountry, jd, { skipCover: true });
+      if (!busyRef.current) exportPdf(result, jobRole, jobCompany, jobCountry, resolveJd(), { skipCover: true });
     }, 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -445,7 +493,8 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   // it never makes a fresh AI cover-letter call on every colour pick).
   // Returns true when saved, false when cancelled/blocked.
   const exportPdf = async (content, role, company, country, jdValue, opts = {}) => {
-    const useJd = typeof jdValue === "string" ? jdValue : jd;
+    const useJd = resolveJd(jdValue);
+    const v3Meta = (isV3 && jobMetaRef.current) || {};
     if (!accountId) { if (!opts.skipCover) setError("Select an account first."); return false; }
     if (!content) {
       if (!opts.skipCover) setError("Click Preview first to generate the content, then Generate to download the PDF.");
@@ -498,7 +547,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         accountId: Number(accountId),
         role,
         company,
-        country,
+        country: country || v3Meta.country || "",
         // Dedicated duplicate-detection index: the Gemini JD extraction (V2) so
         // matching is stable regardless of what the reply/display shows. Falls
         // back to role/company when no target was extracted (e.g. V1).
@@ -507,6 +556,12 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         // The original job-post URL (V2/V3), stored so the history's "Open Link"
         // can reopen it. Empty for V1.
         jobLink: isV2 ? (jobLink || "").trim() : "",
+        // V3: the rest of the extracted posting, stored on the application so
+        // the history's "View Job Content" shows the full job.
+        jobLocation: v3Meta.location || "",
+        jobIndustry: v3Meta.industry || "",
+        salaryRange: v3Meta.salaryRange || "",
+        employmentType: v3Meta.employmentType || "",
         // V2 handshake id, recorded on the application history entry (empty for V1).
         requestId: opts.requestId || "",
         // Stored on the application: JD + resume for reference, and the ChatGPT
@@ -541,12 +596,12 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     }
   };
 
-  const generate = () => exportPdf(result, jobRole, jobCompany, jobCountry, jd);
+  const generate = () => exportPdf(result, jobRole, jobCompany, jobCountry, resolveJd());
 
   // Preview: call the AI once, cache the content, optionally pop the modal,
   // and optionally chain straight into Generate.
   const preview = async (jdValue) => {
-    const useJd = typeof jdValue === "string" ? jdValue : jd;
+    const useJd = resolveJd(jdValue);
     // The job description is mandatory — this app only produces resumes tailored
     // to a specific job posting.
     if (!useJd || !useJd.trim()) {
@@ -554,9 +609,14 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       return;
     }
     if (!accountId) { setError("Select an account first."); return; }
-    const px = await api().getActiveProxy();
-    if (!px || !px.enabled) {
-      setError("Activate a proxy in Proxy Settings first (Set Active). Resume generation runs through the proxy.");
+    // Generation runs on whichever connection is selected. Local IP is a valid
+    // choice — only a Proxy run with no usable proxy is a problem.
+    const conn = await api().getConnectionStatus();
+    setConnStatus(conn);
+    if (conn && conn.mode === "proxy" && !conn.ok) {
+      setError(
+        "Connection is set to Proxy, but no proxy is available. Pick one in Settings → Proxy, or switch Connection to Local IP."
+      );
       return;
     }
     setLoading(true);
@@ -585,8 +645,10 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   // Generate V2: build the same prompt, hand it to the user's signed-in ChatGPT
   // in the embedded browser, and wait for the reply to arrive on the clipboard
   // (recognised by the unique handshake id). Then render exactly like V1.
-  // Generate V3: load the job-post link, extract the full posting, and fill the
-  // Job Description + target fields so the normal V2 pipeline can take over.
+  // Generate V3: load the job-post link and extract the full posting. The Job
+  // Description box is emptied the moment Extract is clicked (so the previous
+  // job is never left on screen while the new one loads), then filled with the
+  // extracted details + description once the read finishes.
   const fetchJobFromLink = async () => {
     const link = (jobLink || "").trim();
     if (!/^https?:\/\//i.test(link)) {
@@ -596,22 +658,31 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     setFetchingJd(true);
     setError("");
     setJobMeta(null);
+    // Clear the previous job right away — the field refills when the read lands.
+    setJd("");
+    api().setPref(JD_PREF, "");
     try {
       const res = await api().fetchJobPost(link);
       if (!res || !res.ok) {
         setError((res && res.error) || "Could not read that job post.");
         return;
       }
-      const jdText = res.jobDescription || "";
-      setJd(jdText);
-      api().setPref("gen_jd", jdText);
-      clearCache();
-      setJobMeta({
+      const meta = {
         role: res.role || "", company: res.company || "", country: res.country || "",
         location: res.location || "", salaryRange: res.salaryRange || "",
         industry: res.industry || "", employmentType: res.employmentType || "",
+        url: res.url || link,
         source: res.source || "", usedRaw: !!res.usedRaw,
-      });
+      };
+      setJobMeta(meta);
+      jobMetaRef.current = meta;
+      api().setPref("gen_v3_meta", JSON.stringify(meta));
+      // Fill the Job Description with the details AND the description, so what
+      // the AI sees — and what's stored on the application — is the whole job.
+      const jdText = composeJobDescription(meta, res.jobDescription || "");
+      setJd(jdText);
+      api().setPref(JD_PREF, jdText);
+      clearCache();
       // Read the LATEST toggle/account via refs (not the stale closure) so this
       // works on the very first Extract after a fresh app open.
       const autoGen = v3AutoGenRef.current;
@@ -640,12 +711,27 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   };
 
   const previewV2 = async (jdValue) => {
-    const useJd = typeof jdValue === "string" ? jdValue : jd;
+    const useJd = resolveJd(jdValue);
     if (!useJd || !useJd.trim()) {
-      toast("Job description is required. Paste the target job description to generate a tailored resume.", "danger");
+      toast(
+        isV3
+          ? "No job posting yet. Paste a job-post link and click Extract (or type a description below)."
+          : "Job description is required. Paste the target job description to generate a tailored resume.",
+        "danger"
+      );
       return;
     }
     if (!accountId) { setError("Select an account first."); return; }
+    // Same connection pre-flight as V1 — Local IP is fine, a Proxy run without
+    // a usable proxy is not.
+    const conn = await api().getConnectionStatus();
+    setConnStatus(conn);
+    if (conn && conn.mode === "proxy" && !conn.ok) {
+      setError(
+        "Connection is set to Proxy, but no proxy is available. Pick one in Settings → Proxy, or switch Connection to Local IP."
+      );
+      return;
+    }
     setLoading(true);
     setError("");
     setSavedPath("");
@@ -1073,22 +1159,29 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isV2, chatUa]);
 
-  // V2 browser connection: local IP (direct) or a chosen proxy. Takes effect the
-  // next time the ChatGPT window opens (Generate opens a fresh one).
-  const chooseConnMode = (mode) => {
+  // The app-wide connection: this computer's IP (direct) or a chosen proxy.
+  // Whichever is picked is what the AI requests, the ChatGPT browser and the
+  // job-post reader all use. API requests switch immediately; an already-open
+  // browser window keeps its connection until it is reopened.
+  const refreshConn = async () => {
+    try { setConnStatus(await api().getConnectionStatus()); } catch (_) {}
+  };
+  const chooseConnMode = async (mode) => {
     setConnMode(mode);
-    api().setPref("chat_conn_mode", mode);
+    await api().setPref("chat_conn_mode", mode);
     // Default the proxy selection to the active one the first time Proxy is picked.
     if (mode === "proxy" && !chatProxyId && proxyList.length) {
       const active = proxyList.find((p) => p.is_active) || proxyList[0];
       const id = String(active.id);
       setChatProxyId(id);
-      api().setPref("chat_proxy_id", id);
+      await api().setPref("chat_proxy_id", id);
     }
+    refreshConn();
   };
-  const chooseChatProxy = (id) => {
+  const chooseChatProxy = async (id) => {
     setChatProxyId(id);
-    api().setPref("chat_proxy_id", id);
+    await api().setPref("chat_proxy_id", id);
+    refreshConn();
   };
   const proxyLabel = (p) => [p.url, p.port].filter(Boolean).join(":") || `Proxy ${p.id}`;
 
@@ -1319,12 +1412,27 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
             </button>
           )}
           <span className="resume-tabs-spacer" />
-          <span className="field-label" style={{ margin: 0 }}>
-            Proxy{" "}
-            {proxyActive ? (
-              <span className="badge live badge-gap">active</span>
+          {/* What every request on this tab actually goes out on. */}
+          <span
+            className="field-label"
+            style={{ margin: 0 }}
+            title={
+              connMode === "proxy"
+                ? connStatus && connStatus.proxy
+                  ? `Routing through ${[connStatus.proxy.url, connStatus.proxy.port].filter(Boolean).join(":")}`
+                  : "Proxy selected, but none is available"
+                : "Using this computer's IP"
+            }
+          >
+            Connection{" "}
+            {connMode === "proxy" ? (
+              connStatus && connStatus.ok === false ? (
+                <span className="badge off badge-gap">proxy missing</span>
+              ) : (
+                <span className="badge live badge-gap">proxy</span>
+              )
             ) : (
-              <span className="badge off badge-gap">off</span>
+              <span className="badge live badge-gap">local IP</span>
             )}
           </span>
         </div>
@@ -1344,7 +1452,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
                   type="url"
                   placeholder="https://…  (the job posting page)"
                   value={jobLink}
-                  onChange={(e) => setJobLink(e.target.value)}
+                  onChange={(e) => { setJobLink(e.target.value); api().setPref("gen_job_link", e.target.value); }}
                   onKeyDown={(e) => { if (e.key === "Enter" && !fetchingJd) fetchJobFromLink(); }}
                 />
                 <button
@@ -1451,12 +1559,14 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
             />
           </div>
 
-          {isV2 && (
-            <div className="field">
+          {/* One connection for everything: the AI requests, the ChatGPT
+              browser and the job-post reader all follow this choice. */}
+          <div className="field">
               <span className="field-label field-label-row">
-                Browser Connection
+                Connection
                 <span className="muted small">
-                  {connMode === "proxy" ? "Routing through a proxy" : "Using this computer's IP"} · applies on the next open
+                  {connMode === "proxy" ? "Routing through a proxy" : "Using this computer's IP"}
+                  {isV2 ? " · AI requests switch now, the browser on its next open" : " · used for every request"}
                 </span>
               </span>
               <div className="conn-box">
@@ -1484,8 +1594,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
                   <span className="toggle-label">{connMode === "proxy" ? "Proxy" : "Local IP"}</span>
                 </label>
               </div>
-            </div>
-          )}
+          </div>
         </div>
 
         <label className="field jd-field">
@@ -1493,12 +1602,16 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
           <textarea
             className="textarea"
             rows={14}
-            placeholder="Paste the target job description here (required)…"
+            placeholder={
+              isV3
+                ? "Click Extract above to fill this from the job-post link, or paste a description here…"
+                : "Paste the target job description here (required)…"
+            }
             value={jd}
             onChange={(e) => {
               const v = e.target.value;
               setJd(v);
-              api().setPref("gen_jd", v);
+              api().setPref(JD_PREF, v);
               clearCache();
               // "Auto-preview on paste" is the sole gate for paste-triggered
               // work. Run it with the EXACT pasted text (not state) so the very

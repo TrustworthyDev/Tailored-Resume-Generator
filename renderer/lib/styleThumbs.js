@@ -230,6 +230,99 @@ export function styleThumb(style) {
       }
       break;
     }
+    case "darkheader": {
+      // Dark full-width header (name left, contacts stacked right), a grey
+      // summary band, then plain uppercase labels over bold role entries.
+      inner += rc(0, 0, 240, 58, a, 0);                          // dark header band
+      inner += rc(16, 14, 96, 14, nameC || "#ffffff", 2);        // name (white)
+      inner += rc(16, 33, 60, 5, titleC || "#d9d9d9");           // title
+      for (let i = 0; i < 3; i++) inner += rc(150, 14 + i * 9, 74, 4, "#e0e0e0");
+      inner += rc(0, 58, 240, 30, "#ebebeb", 0);                 // grey summary band
+      inner += rc(70, 66, 100, 4, "#8b8f96");
+      inner += rc(50, 75, 140, 4, "#8b8f96");
+      let y = 100;
+      for (let k = 0; k < 3; k++) {
+        inner += rc(16, y, 66, 6, "#1a1a1a");                    // uppercase label
+        inner += rc(16, y + 14, 84, 6, "#1a1a1a");               // bold role title
+        inner += rc(16, y + 25, 60, 4, "#8b8f96");               // italic company
+        inner += rc(178, y + 25, 46, 4, "#8b8f96");              // dates (right)
+        for (let i = 0; i < 3; i++) {
+          inner += `<circle cx='22' cy='${y + 39 + i * 8}' r='1.6' fill='#555555'/>`;
+          inner += rc(28, y + 37 + i * 8, 192, 3.5, G);
+        }
+        y += 72;
+      }
+      break;
+    }
+    case "ribbon": {
+      // Name reversed out of a colour ribbon, contacts beneath, then coloured
+      // section headings over matching rules.
+      inner += rc(16, 14, 208, 26, a, 1);                        // colour ribbon
+      inner += rc(24, 21, 92, 13, nameC || "#ffffff", 2);        // name (white)
+      inner += rc(16, 46, 78, 5, titleC || "#5a6070");           // title
+      inner += rc(16, 56, 160, 4, G);                            // contacts
+      let y = 74;
+      for (let k = 0; k < 3; k++) {
+        inner += rc(16, y, 62, 7, a);                            // heading (accent)
+        inner += rc(16, y + 11, 208, 1.2, a);                    // accent rule
+        inner += rc(16, y + 19, 80, 6, "#1a1a1a");               // role title
+        inner += rc(180, y + 19, 44, 4, "#6a7280");              // dates (right)
+        inner += rc(16, y + 29, 96, 4, "#3a4250");               // company line
+        for (let i = 0; i < 3; i++) {
+          inner += `<circle cx='22' cy='${y + 43 + i * 8}' r='1.6' fill='#555555'/>`;
+          inner += rc(28, y + 41 + i * 8, 192, 3.5, G);
+        }
+        y += 76;
+      }
+      break;
+    }
+    case "formal": {
+      // Centered uppercase name bracketed by rules, a centered summary, and
+      // section labels reversed out of solid boxes.
+      inner += rc(16, 16, 208, 2, a);                            // rule above
+      inner += rc(66, 25, 108, 14, nameC || "#111111", 1);       // centered name
+      inner += rc(84, 44, 72, 5, titleC || "#555555");           // centered title
+      inner += rc(16, 56, 208, 2, a);                            // rule below
+      inner += rc(52, 64, 136, 4, G);                            // centered contacts
+      inner += rc(40, 74, 160, 4, G);                            // centered summary
+      inner += rc(56, 82, 128, 4, G);
+      let y = 98;
+      for (let k = 0; k < 3; k++) {
+        inner += rc(78, y, 84, 12, a, 1);                        // solid label box
+        inner += rc(88, y + 4, 64, 4, "#ffffff");
+        inner += rc(90, y + 19, 60, 5, "#333333");               // centered role
+        inner += rc(76, y + 28, 88, 5, "#111111");               // centered org (bold)
+        inner += rc(94, y + 37, 52, 4, "#666666");               // centered dates
+        for (let i = 0; i < 3; i++) {
+          inner += `<circle cx='24' cy='${y + 51 + i * 8}' r='1.6' fill='#555555'/>`;
+          inner += rc(30, y + 49 + i * 8, 190, 3.5, G);
+        }
+        y += 74;
+      }
+      break;
+    }
+    case "banded": {
+      // Centered name/title in a tinted rounded panel, then full-width centered
+      // section bands with "Title | Org" over "Dates | Location" entries.
+      const band = head ? head + "33" : "#e9eaf3";
+      inner += `<rect x='16' y='14' width='208' height='48' rx='6' fill='${band}'/>`;
+      inner += rc(78, 22, 84, 14, nameC || "#1b1f27", 2);        // centered name
+      inner += rc(92, 41, 56, 5, titleC || "#7a8090");           // centered title
+      inner += rc(60, 52, 120, 4, G);                            // centered contacts
+      let y = 74;
+      for (let k = 0; k < 4; k++) {
+        inner += rc(16, y, 208, 12, band, 2);                    // full-width band
+        inner += rc(96, y + 4, 48, 5, "#1b1f27");                // centered label
+        inner += rc(20, y + 20, 108, 6, "#1b1f27");              // Title | Org
+        inner += rc(20, y + 30, 72, 4, G);                       // Dates | Location
+        for (let i = 0; i < 3; i++) {
+          inner += `<circle cx='26' cy='${y + 43 + i * 8}' r='1.6' fill='#555555'/>`;
+          inner += rc(32, y + 41 + i * 8, 188, 3.5, G);
+        }
+        y += 60;
+      }
+      break;
+    }
     default: // professional
       inner += rc(20, 20, 7, 42, a, 1);
       inner += rc(36, 24, 100, 16, nameC || "#1f2937", 3);

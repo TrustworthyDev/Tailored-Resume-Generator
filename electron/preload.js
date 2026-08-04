@@ -63,6 +63,8 @@ contextBridge.exposeInMainWorld("api", {
   setActiveProxy: (id) => invoke("proxy:setActive", id),
   disableProxy: () => invoke("proxy:disable"),
   getActiveProxy: () => invoke("proxy:active"),
+  // The one connection (Local IP or Proxy) every network path uses.
+  getConnectionStatus: () => invoke("connection:status"),
   checkProxy: (data) => invoke("proxy:check", data),
 
   // Download location
@@ -113,6 +115,7 @@ contextBridge.exposeInMainWorld("api", {
   exportApplications: () => invoke("applications:export"),
   findDuplicateApplication: (accountId, role, company) => invoke("applications:findDuplicate", accountId, role, company),
   openGptForApplication: (id) => invoke("application:openGpt", id),
+  getApplicationJobContent: (id) => invoke("application:jobContent", id),
   openExternalLink: (url) => invoke("link:openExternal", url),
   deleteApplication: (id) => invoke("app:delete", id),
   resetApplications: () => invoke("app:resetAll"),

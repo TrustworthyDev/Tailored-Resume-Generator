@@ -34,6 +34,10 @@ export default function Applications() {
 
   const [fileMsg, setFileMsg] = useState("");
   const [copiedId, setCopiedId] = useState(null);
+  // "View Job Content" modal: the full job this resume was tailored to.
+  const [jobContent, setJobContent] = useState(null); // the loaded application row
+  const [jobLoading, setJobLoading] = useState(false);
+  const [copiedLink, setCopiedLink] = useState(false);
 
   const loadAll = async () => {
     const [c, all] = await Promise.all([
@@ -123,6 +127,31 @@ export default function Applications() {
     const r = await api().openExternalLink(a.job_link);
     if (!(r && r.ok)) setFileMsg((r && r.error) || "Could not open the job link.");
   };
+  // Load and show everything recorded about this application's target job. The
+  // description isn't in the list payload, so it's fetched on demand.
+  const viewJobContent = async (a) => {
+    setFileMsg("");
+    setJobLoading(true);
+    setJobContent({ id: a.id, role: a.role, company: a.company, country: a.country, account_name: a.account_name });
+    try {
+      const r = await api().getApplicationJobContent(a.id);
+      if (r && r.ok && r.application) setJobContent(r.application);
+      else {
+        setJobContent(null);
+        setFileMsg((r && r.error) || "Could not load the job content.");
+      }
+    } finally {
+      setJobLoading(false);
+    }
+  };
+
+  const copyJobLink = async (url) => {
+    if (!url) return;
+    await navigator.clipboard.writeText(url);
+    setCopiedLink(true);
+    setTimeout(() => setCopiedLink(false), 1500);
+  };
+
   const openAppFile = async (p) => {
     const r = await api().openPdf(p);
     setFileMsg(r && !r.ok ? r.error || "Could not open the file." : "");
@@ -181,6 +210,13 @@ export default function Applications() {
         )}
         <div className="app-actions">
           <div className="app-actions-main">
+            <button
+              className="btn small"
+              onClick={() => viewJobContent(a)}
+              title="See the job this resume was tailored to"
+            >
+              View Job Content
+            </button>
             {a.has_link ? (
               <button
                 className="btn small"
@@ -406,6 +442,94 @@ export default function Applications() {
 
               <div className="app-list">{rows.map((a) => renderApp(a, searching))}</div>
             </section>
+          </div>
+        </div>
+      )}
+
+      {jobContent && (
+        <div className="modal-overlay" onClick={() => setJobContent(null)}>
+          <div className="modal modal-wide jobc-modal" onClick={(e) => e.stopPropagation()}>
+            <div className="card-head">
+              <h2>Job Content</h2>
+              <div className="list-actions">
+                {jobContent.job_link && (
+                  <button className="btn small" onClick={() => openLink(jobContent)}>
+                    Open Job Link
+                  </button>
+                )}
+                <button className="btn small" onClick={() => setJobContent(null)}>Close</button>
+              </div>
+            </div>
+
+            <div className="jobc-grid">
+              {[
+                ["Role", jobContent.role],
+                ["Company", jobContent.company],
+                ["Country", jobContent.country],
+                ["Location", jobContent.location],
+                ["Domain / Industry", jobContent.industry],
+                ["Employment Type", jobContent.employment_type],
+                ["Salary", jobContent.salary_range],
+                [
+                  "Account",
+                  jobContent.account_name
+                    ? jobContent.account_name +
+                      (jobContent.account_stack ? ` (${jobContent.account_stack})` : "")
+                    : "",
+                ],
+                ["Applied", fmtDate(jobContent.applied_at)],
+                ["Generation ID", jobContent.request_id],
+              ]
+                .filter(([, v]) => v)
+                .map(([k, v]) => (
+                  <div className="jobc-row" key={k}>
+                    <span className="jobc-key">{k}</span>
+                    <span className="jobc-val">
+                      {k === "Country" ? country(v) : v}
+                    </span>
+                  </div>
+                ))}
+              {/* The URL gets the full width of the grid so it stays on one
+                  line, with a copy button pinned to the right. */}
+              {jobContent.job_link && (
+                <div className="jobc-row jobc-row-full">
+                  <span className="jobc-key">Job Link</span>
+                  <span className="jobc-val jobc-link" title={jobContent.job_link}>
+                    {jobContent.job_link}
+                  </span>
+                  <button
+                    type="button"
+                    className="jobc-copy"
+                    onClick={() => copyJobLink(jobContent.job_link)}
+                    title={copiedLink ? "Copied" : "Copy the job link"}
+                    aria-label="Copy the job link"
+                  >
+                    {copiedLink ? (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <polyline points="20 6 9 17 4 12" />
+                      </svg>
+                    ) : (
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                        <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                      </svg>
+                    )}
+                  </button>
+                </div>
+              )}
+            </div>
+
+            <span className="field-label jobc-jd-label">Job Description</span>
+            {jobLoading ? (
+              <p className="muted">Loading…</p>
+            ) : jobContent.job_description ? (
+              <pre className="resume-output">{jobContent.job_description}</pre>
+            ) : (
+              <p className="muted">
+                No job description was stored for this application (it was generated before
+                descriptions were saved).
+              </p>
+            )}
           </div>
         </div>
       )}
