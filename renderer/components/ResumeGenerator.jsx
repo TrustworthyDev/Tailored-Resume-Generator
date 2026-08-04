@@ -21,6 +21,10 @@ const STYLES = [
   { id: "classic", label: "Classic", accent: "#1f2937" },
   { id: "centered", label: "Centered", accent: "#14b8a6" },
   { id: "highlight", label: "Highlight", accent: "#c2410c" },
+  { id: "banded", label: "Banded", accent: "#4b5563" },
+  { id: "darkheader", label: "Dark Header", accent: "#1f1f1f" },
+  { id: "ribbon", label: "Ribbon", accent: "#8b2635" },
+  { id: "formal", label: "Formal", accent: "#111111" },
 ];
 
 // Sample colors. The Content picker applies one to EVERY template's borders,
@@ -102,10 +106,15 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const [fontSize, setFontSize] = useState("");
   const [jd, setJd] = useState("");
   const [extraInfo, setExtraInfo] = useState(""); // per-generation notes fed into the prompt
+  // V3 keeps its own persisted Job Description so clearing the box after an
+  // Extract never wipes what's typed on the V1/V2 tabs (they share one pref).
+  const JD_PREF = isV3 ? "gen_v3_jd" : "gen_jd";
   // Generate V3: extract the job posting from a link.
   const [jobLink, setJobLink] = useState("");
   const [fetchingJd, setFetchingJd] = useState(false);
   const [jobMeta, setJobMeta] = useState(null); // { role, company, country, location, salaryRange, industry, employmentType }
+  const jobMetaRef = useRef(null);
+  jobMetaRef.current = jobMeta;
   const [v3AutoGen, setV3AutoGen] = useState(false); // V3: auto-run generation right after Extract
   // Refs that always hold the LATEST value, so the async Extract handler reads
   // the current toggle/account even if its closure was created before prefs
@@ -156,6 +165,32 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const toast = (message, type = "alert") =>
     window.dispatchEvent(new CustomEvent("app-notify", { detail: { message, type } }));
 
+  // The description a generation runs on: an explicitly passed value (the very
+  // text that was just extracted/pasted, avoiding a stale state read) or
+  // whatever is currently in the Job Description box.
+  const resolveJd = (jdValue) => (typeof jdValue === "string" ? jdValue : jd);
+
+  // Generate V3: everything read from the job post — the details shown as chips
+  // under the link, then the description — as one block for the Job Description
+  // field. This is what gets sent to the AI and stored on the application.
+  const composeJobDescription = (m, description) => {
+    const lines = [
+      ["Role", m.role],
+      ["Company", m.company],
+      ["Country", m.country],
+      ["Location", m.location],
+      ["Salary", m.salaryRange],
+      ["Industry", m.industry],
+      ["Employment Type", m.employmentType],
+      ["Job Link", m.url],
+    ]
+      .filter(([, v]) => v && String(v).trim())
+      .map(([k, v]) => `${k}: ${String(v).trim()}`);
+    const body = (description || "").trim();
+    if (!lines.length) return body;
+    return `${lines.join("\n")}\n\nJob Description:\n${body}`;
+  };
+
   const clearCache = () => {
     setResult("");
     setJobRole("");
@@ -181,7 +216,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         api().getPref("resume_name_color"),
         api().getPref("open_preview_after"),
         api().getPref("auto_generate"),
-        api().getPref("gen_jd"),
+        api().getPref(JD_PREF),
         api().getPref("gen_saved_path"),
         api().getPref("gen_saved_at"),
         api().getPref("cover_letter"),
@@ -224,6 +259,14 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       if (extraPref && extraPref.value) setExtraInfo(extraPref.value);
       if (jobLinkPref && jobLinkPref.value) setJobLink(jobLinkPref.value);
       if (v3AutoPref && v3AutoPref.value != null) setV3AutoGen(v3AutoPref.value === "1");
+      // V3: restore the last extraction's details so the chips under the link
+      // (and the values stored on the next application) survive a restart.
+      if (isV3) {
+        const metaPref = await api().getPref("gen_v3_meta");
+        if (metaPref && metaPref.value) {
+          try { setJobMeta(JSON.parse(metaPref.value)); } catch (_) {}
+        }
+      }
       if (savedPathPref && savedPathPref.value) setSavedPath(savedPathPref.value);
       if (savedAtPref && savedAtPref.value) setSavedAt(savedAtPref.value);
 
@@ -346,7 +389,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   useEffect(() => {
     if (!result) return;
     const t = setTimeout(() => {
-      if (!busyRef.current) exportPdf(result, jobRole, jobCompany, jobCountry, jd, { skipCover: true });
+      if (!busyRef.current) exportPdf(result, jobRole, jobCompany, jobCountry, resolveJd(), { skipCover: true });
     }, 300);
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -445,7 +488,8 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   // it never makes a fresh AI cover-letter call on every colour pick).
   // Returns true when saved, false when cancelled/blocked.
   const exportPdf = async (content, role, company, country, jdValue, opts = {}) => {
-    const useJd = typeof jdValue === "string" ? jdValue : jd;
+    const useJd = resolveJd(jdValue);
+    const v3Meta = (isV3 && jobMetaRef.current) || {};
     if (!accountId) { if (!opts.skipCover) setError("Select an account first."); return false; }
     if (!content) {
       if (!opts.skipCover) setError("Click Preview first to generate the content, then Generate to download the PDF.");
@@ -498,7 +542,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         accountId: Number(accountId),
         role,
         company,
-        country,
+        country: country || v3Meta.country || "",
         // Dedicated duplicate-detection index: the Gemini JD extraction (V2) so
         // matching is stable regardless of what the reply/display shows. Falls
         // back to role/company when no target was extracted (e.g. V1).
@@ -507,6 +551,12 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         // The original job-post URL (V2/V3), stored so the history's "Open Link"
         // can reopen it. Empty for V1.
         jobLink: isV2 ? (jobLink || "").trim() : "",
+        // V3: the rest of the extracted posting, stored on the application so
+        // the history's "View Job Content" shows the full job.
+        jobLocation: v3Meta.location || "",
+        jobIndustry: v3Meta.industry || "",
+        salaryRange: v3Meta.salaryRange || "",
+        employmentType: v3Meta.employmentType || "",
         // V2 handshake id, recorded on the application history entry (empty for V1).
         requestId: opts.requestId || "",
         // Stored on the application: JD + resume for reference, and the ChatGPT
@@ -541,12 +591,12 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     }
   };
 
-  const generate = () => exportPdf(result, jobRole, jobCompany, jobCountry, jd);
+  const generate = () => exportPdf(result, jobRole, jobCompany, jobCountry, resolveJd());
 
   // Preview: call the AI once, cache the content, optionally pop the modal,
   // and optionally chain straight into Generate.
   const preview = async (jdValue) => {
-    const useJd = typeof jdValue === "string" ? jdValue : jd;
+    const useJd = resolveJd(jdValue);
     // The job description is mandatory — this app only produces resumes tailored
     // to a specific job posting.
     if (!useJd || !useJd.trim()) {
@@ -585,8 +635,10 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   // Generate V2: build the same prompt, hand it to the user's signed-in ChatGPT
   // in the embedded browser, and wait for the reply to arrive on the clipboard
   // (recognised by the unique handshake id). Then render exactly like V1.
-  // Generate V3: load the job-post link, extract the full posting, and fill the
-  // Job Description + target fields so the normal V2 pipeline can take over.
+  // Generate V3: load the job-post link and extract the full posting. The Job
+  // Description box is emptied the moment Extract is clicked (so the previous
+  // job is never left on screen while the new one loads), then filled with the
+  // extracted details + description once the read finishes.
   const fetchJobFromLink = async () => {
     const link = (jobLink || "").trim();
     if (!/^https?:\/\//i.test(link)) {
@@ -596,22 +648,31 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     setFetchingJd(true);
     setError("");
     setJobMeta(null);
+    // Clear the previous job right away — the field refills when the read lands.
+    setJd("");
+    api().setPref(JD_PREF, "");
     try {
       const res = await api().fetchJobPost(link);
       if (!res || !res.ok) {
         setError((res && res.error) || "Could not read that job post.");
         return;
       }
-      const jdText = res.jobDescription || "";
-      setJd(jdText);
-      api().setPref("gen_jd", jdText);
-      clearCache();
-      setJobMeta({
+      const meta = {
         role: res.role || "", company: res.company || "", country: res.country || "",
         location: res.location || "", salaryRange: res.salaryRange || "",
         industry: res.industry || "", employmentType: res.employmentType || "",
+        url: res.url || link,
         source: res.source || "", usedRaw: !!res.usedRaw,
-      });
+      };
+      setJobMeta(meta);
+      jobMetaRef.current = meta;
+      api().setPref("gen_v3_meta", JSON.stringify(meta));
+      // Fill the Job Description with the details AND the description, so what
+      // the AI sees — and what's stored on the application — is the whole job.
+      const jdText = composeJobDescription(meta, res.jobDescription || "");
+      setJd(jdText);
+      api().setPref(JD_PREF, jdText);
+      clearCache();
       // Read the LATEST toggle/account via refs (not the stale closure) so this
       // works on the very first Extract after a fresh app open.
       const autoGen = v3AutoGenRef.current;
@@ -640,9 +701,14 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   };
 
   const previewV2 = async (jdValue) => {
-    const useJd = typeof jdValue === "string" ? jdValue : jd;
+    const useJd = resolveJd(jdValue);
     if (!useJd || !useJd.trim()) {
-      toast("Job description is required. Paste the target job description to generate a tailored resume.", "danger");
+      toast(
+        isV3
+          ? "No job posting yet. Paste a job-post link and click Extract (or type a description below)."
+          : "Job description is required. Paste the target job description to generate a tailored resume.",
+        "danger"
+      );
       return;
     }
     if (!accountId) { setError("Select an account first."); return; }
@@ -1344,7 +1410,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
                   type="url"
                   placeholder="https://…  (the job posting page)"
                   value={jobLink}
-                  onChange={(e) => setJobLink(e.target.value)}
+                  onChange={(e) => { setJobLink(e.target.value); api().setPref("gen_job_link", e.target.value); }}
                   onKeyDown={(e) => { if (e.key === "Enter" && !fetchingJd) fetchJobFromLink(); }}
                 />
                 <button
@@ -1493,12 +1559,16 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
           <textarea
             className="textarea"
             rows={14}
-            placeholder="Paste the target job description here (required)…"
+            placeholder={
+              isV3
+                ? "Click Extract above to fill this from the job-post link, or paste a description here…"
+                : "Paste the target job description here (required)…"
+            }
             value={jd}
             onChange={(e) => {
               const v = e.target.value;
               setJd(v);
-              api().setPref("gen_jd", v);
+              api().setPref(JD_PREF, v);
               clearCache();
               // "Auto-preview on paste" is the sole gate for paste-triggered
               // work. Run it with the EXACT pasted text (not state) so the very

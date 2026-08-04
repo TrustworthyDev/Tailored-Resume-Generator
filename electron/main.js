@@ -488,6 +488,37 @@ function registerIpc() {
     );
   });
 
+  // Everything recorded about one application's target job — powers the
+  // history's "View Job Content" modal. Kept out of the list queries so the
+  // (potentially large) description is only loaded when it's actually opened.
+  ipcMain.handle("application:jobContent", (_e, id) => {
+    const row = db.get(
+      `SELECT ap.*, ac.name AS account_name, ac.main_stack AS account_stack,
+              ac.country AS account_country
+       FROM applications ap
+       LEFT JOIN accounts ac ON ac.id = ap.account_id
+       WHERE ap.id = ?`,
+      [id]
+    );
+    if (!row) return { ok: false, error: "Application not found." };
+    // Older entries (and V1/V2 generations) have no extracted details. Fill the
+    // gaps from the cached job post for the same URL when one exists.
+    const link = (row.job_link || "").trim();
+    if (link && !(row.location || row.industry || row.salary_range || row.employment_type)) {
+      const post = db.get(
+        "SELECT location, industry, salary_range, employment_type FROM job_posts WHERE url = ? ORDER BY id DESC LIMIT 1",
+        [link]
+      );
+      if (post) {
+        row.location = row.location || post.location || "";
+        row.industry = row.industry || post.industry || "";
+        row.salary_range = row.salary_range || post.salary_range || "";
+        row.employment_type = row.employment_type || post.employment_type || "";
+      }
+    }
+    return { ok: true, application: row };
+  });
+
   // Does an application already exist for this account + company + role? Used to
   // confirm before generating another resume for the same company and job title.
   ipcMain.handle("applications:findDuplicate", (_e, accountId, role, company) => {
@@ -1040,6 +1071,12 @@ function registerIpc() {
       const recResume = (d.resumeContent || "").trim();
       const recGptUrl = (d.gptUrl || "").trim();
       const recJobLink = (d.jobLink || "").trim();
+      // Generate V3: the details extracted from the job post, stored alongside
+      // the description so the history's "View Job Content" is self-contained.
+      const recLocation = (d.jobLocation || "").trim();
+      const recIndustry = (d.jobIndustry || "").trim();
+      const recSalary = (d.salaryRange || "").trim();
+      const recEmployment = (d.employmentType || "").trim();
       if (isDuplicate) {
         // Silently update the existing entry (the renderer handles the user-facing
         // duplicate confirmation before it gets here). Keep existing values when
@@ -1051,18 +1088,24 @@ function registerIpc() {
              resume_content = COALESCE(NULLIF(?, ''), resume_content),
              gpt_url = COALESCE(NULLIF(?, ''), gpt_url),
              job_link = COALESCE(NULLIF(?, ''), job_link),
+             location = COALESCE(NULLIF(?, ''), location),
+             industry = COALESCE(NULLIF(?, ''), industry),
+             salary_range = COALESCE(NULLIF(?, ''), salary_range),
+             employment_type = COALESCE(NULLIF(?, ''), employment_type),
              match_role = COALESCE(NULLIF(?, ''), match_role),
              match_company = COALESCE(NULLIF(?, ''), match_company),
              match_account = COALESCE(NULLIF(?, ''), match_account)
            WHERE id = ?`,
           [savedFile, recCountry, nowIso(), recRequestId, recJd, recResume, recGptUrl, recJobLink,
+           recLocation, recIndustry, recSalary, recEmployment,
            matchRole, matchCompany, matchAccount, dup.id]
         );
       } else {
         db.insert(
-          `INSERT INTO applications (account_id, role, company, country, position, request_id, job_description, resume_content, gpt_url, job_link, match_role, match_company, match_account, applied_at, pdf_path)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          `INSERT INTO applications (account_id, role, company, country, position, request_id, job_description, resume_content, gpt_url, job_link, location, industry, salary_range, employment_type, match_role, match_company, match_account, applied_at, pdf_path)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [d.accountId, recRole, recCompany, recCountry, recRole, recRequestId, recJd, recResume, recGptUrl, recJobLink,
+           recLocation, recIndustry, recSalary, recEmployment,
            matchRole, matchCompany, matchAccount, nowIso(), savedFile]
         );
       }

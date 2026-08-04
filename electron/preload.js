@@ -113,6 +113,7 @@ contextBridge.exposeInMainWorld("api", {
   exportApplications: () => invoke("applications:export"),
   findDuplicateApplication: (accountId, role, company) => invoke("applications:findDuplicate", accountId, role, company),
   openGptForApplication: (id) => invoke("application:openGpt", id),
+  getApplicationJobContent: (id) => invoke("application:jobContent", id),
   openExternalLink: (url) => invoke("link:openExternal", url),
   deleteApplication: (id) => invoke("app:delete", id),
   resetApplications: () => invoke("app:resetAll"),

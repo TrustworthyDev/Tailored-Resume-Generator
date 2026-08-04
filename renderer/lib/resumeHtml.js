@@ -232,6 +232,11 @@ main li{margin:2px 0;}
 .ctr-head{text-align:center;margin:10px 0 4px;break-inside:avoid;break-after:avoid;}
 .ctr-org{font-weight:700;color:#1a1a1a;font-size:11pt;}
 .ctr-role{margin-top:1px;color:${accent};font-style:italic;font-size:10pt;}
+/* Education in the same centered block: degree, period, then the school. */
+.edu-ctr{margin:9px 0 4px;break-after:auto;}
+.edu-ctr-degree{font-size:11pt;color:#1a1a1a;}
+.edu-ctr-degree .edu-degree{font-weight:700;color:#1a1a1a;}
+.edu-ctr-org{margin-top:1px;color:#3a4250;font-size:10pt;}
 a{color:${accent};}`;
     case "ats":
       // Maximally ATS-safe: single column, left-aligned (never justified),
@@ -274,6 +279,84 @@ main li{position:relative;padding-left:14px;}
 main li::before{content:"\\25CB";color:${accent};position:absolute;left:0;top:2px;font-size:7pt;}
 .edu-line .edu-degree{color:${accent};}
 main p.skills strong{color:#1a1a1a;}
+a{color:${accent};}`;
+    case "darkheader":
+      // Full-width dark header band (name left, contacts stacked right), the
+      // summary in a grey band beneath it, plain uppercase section labels, and
+      // entries whose dates sit on the italic company line.
+      return `body{font-family:"Segoe UI",Arial,Helvetica,sans-serif;color:#2b2b2b;}
+header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;column-gap:20px;background:${accent};color:#ffffff;padding:16px 20px;margin-bottom:0;}
+header h1{grid-column:1;grid-row:1;margin:0;font-size:22pt;font-weight:700;color:#ffffff;letter-spacing:.3px;line-height:1.12;}
+.title{grid-column:1;grid-row:2;margin-top:4px;color:#e4e4e4;font-size:9.5pt;font-weight:600;white-space:normal;}
+.contacts{grid-column:2;grid-row:1/3;align-self:start;justify-self:end;text-align:right;color:#f2f2f2;font-size:8.5pt;line-height:1.7;white-space:normal;max-width:230px;word-break:break-word;}
+.contacts a{color:#f2f2f2;}
+.summary-box{background:#ebebeb;padding:9px 18px 11px;margin:0 0 13px;}
+.summary-box h2{color:#4a4a4a;font-size:8pt;font-weight:700;text-transform:uppercase;letter-spacing:1.4px;text-align:center;border:none;margin:0 0 4px;padding:0;}
+.summary-box p{font-style:italic;font-size:9.5pt;text-align:center;color:#333;margin:0;}
+main h2{font-size:9.5pt;font-weight:700;color:#1a1a1a;text-transform:uppercase;letter-spacing:.6px;border:none;margin:14px 0 5px;}
+main h3{font-size:10.5pt;font-weight:700;color:#1a1a1a;margin:9px 0 0;}
+.role-org{font-style:italic;color:#5a6070;font-size:9.5pt;margin:0 0 4px;}
+.role-dates{float:right;font-style:italic;color:#5a6070;font-weight:400;font-size:9.5pt;}
+main ul{list-style:disc;padding-left:22px;}
+main li{margin:2px 0;}
+a{color:${accent};}`;
+    case "ribbon":
+      // Name reversed out of a full-width colour ribbon, contacts on the line
+      // below, and section headings in the same colour over a matching rule.
+      return `body{font-family:"Segoe UI",Arial,Helvetica,sans-serif;color:#2b2b2b;}
+header{margin-bottom:12px;}
+header h1{margin:0;background:${accent};color:#ffffff;font-size:19pt;font-weight:700;padding:9px 14px;letter-spacing:.3px;}
+.title{margin-top:7px;color:#3a4250;font-size:10pt;font-weight:600;white-space:normal;}
+.contacts{margin-top:6px;color:#2b2b2b;font-size:8.5pt;white-space:normal;}
+main h2{font-size:11pt;font-weight:600;color:${accent};text-transform:none;letter-spacing:0;border:none;border-bottom:1.2px solid ${accent};padding-bottom:2px;margin:14px 0 7px;}
+main h3{font-size:10.5pt;font-weight:600;color:#1a1a1a;margin:9px 0 0;}
+.role-org{color:#3a4250;font-size:10pt;margin:1px 0 4px;}
+.role-dates{float:right;color:#3a4250;font-weight:400;font-size:10pt;}
+main ul{list-style:disc;padding-left:22px;}
+main li{margin:2px 0;}
+.edu-line .edu-degree{color:#1a1a1a;}
+a{color:${accent};}`;
+    case "formal":
+      // Traditional serif: centered rules-bracketed name, a centered summary,
+      // section labels reversed out of solid boxes, and three centered lines
+      // per entry (role, organization, dates) above left-aligned bullets.
+      return `body{font-family:Georgia,"Times New Roman",serif;color:#222;}
+header{text-align:center;border-top:2px solid ${accent};border-bottom:2px solid ${accent};padding:10px 0 9px;margin-bottom:11px;}
+header h1{margin:0;font-size:21pt;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#111;}
+.title{margin-top:5px;color:#444;font-size:10pt;white-space:normal;}
+.contacts{margin-top:7px;color:#222;font-size:8.5pt;white-space:normal;}
+main h2{display:table;margin:14px auto 7px;background:${accent};color:#ffffff;font-size:9.5pt;font-weight:700;text-transform:uppercase;letter-spacing:.8px;border:none;padding:3px 14px;}
+.summary-box{margin:0 0 4px;}
+.summary-box p{text-align:center;margin:0;}
+main ul{list-style:disc;padding-left:26px;}
+main li{margin:2px 0;}
+/* Centered three-line entry head: role, organization, then dates. */
+.fm-head{text-align:center;margin:10px 0 3px;break-inside:avoid;break-after:avoid;}
+.fm-role{font-size:10.5pt;color:#222;}
+.fm-org{font-weight:700;font-size:10.5pt;color:#111;}
+.fm-dates{font-style:italic;color:#444;font-size:9.5pt;}
+a{color:${accent};}`;
+    case "banded":
+      // Centered name + title inside a soft tinted panel, full-width centered
+      // section bands, a tinted summary panel, and entries written as
+      // "Title | Organization" over "Dates | Location".
+      return `body{font-family:"Segoe UI",Arial,Helvetica,sans-serif;color:#2f333b;}
+header{background:${head ? head + "1f" : "#e9eaf3"};border-radius:9px;padding:16px 22px 14px;text-align:center;margin-bottom:14px;}
+header h1{margin:0;font-size:23pt;font-weight:700;color:#1b1f27;letter-spacing:.2px;}
+.title{margin-top:6px;color:#5a6070;font-size:8.5pt;text-transform:uppercase;letter-spacing:2px;white-space:normal;}
+.contacts{margin-top:9px;color:#4a5060;font-size:8.5pt;white-space:normal;}
+main h2{display:block;background:${head ? head + "1f" : "#e9eaf3"};color:#1b1f27;text-align:center;font-size:10pt;font-weight:700;text-transform:none;letter-spacing:.3px;border:none;border-radius:4px;padding:4px 10px;margin:14px 0 8px;}
+.summary-box{background:${head ? head + "12" : "#f0f1f7"};border-radius:6px;padding:1px 14px 9px;margin-bottom:4px;}
+.summary-box h2{margin:10px 0 7px;}
+main h3{color:#1b1f27;font-weight:700;font-size:10.5pt;margin:9px 0 0;}
+/* The thin separator between a title and its organization / dates. */
+.bd-sep{color:#9aa1ae;font-weight:400;padding:0 3px;}
+.bd-meta{color:#6a7280;font-size:9.5pt;margin:1px 0 5px;}
+.bd-edu{margin:9px 0 0;}
+.bd-edu .edu-degree{font-weight:700;color:#1b1f27;}
+main ul{list-style:disc;padding-left:24px;}
+main li::marker{color:${accent};}
+main p.skills strong{color:#1b1f27;}
 a{color:${accent};}`;
     default: // professional
       return `body{font-family:Calibri,"Segoe UI",Arial,sans-serif;}
@@ -404,7 +487,10 @@ function linkifyContact(part) {
 // Shared header markup (used by both the resume and the cover letter). For the
 // "cards" and "highlight" styles the contact items stack vertically on the
 // right. Each contact item is linkified so it's clickable in the PDF.
-const STACKED_CONTACTS = new Set(["cards", "highlight"]);
+// Banded style separator: "Title | Company", "Dates | Location".
+const BD_SEP = ' <span class="bd-sep">|</span> ';
+
+const STACKED_CONTACTS = new Set(["cards", "highlight", "darkheader"]);
 function headerHtml(id, name, title, contacts) {
   if (!name) return "";
   const items = String(contacts || "")
@@ -575,6 +661,42 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
           .filter(Boolean)
           .map(escapeHtml)
           .join(" - ");
+        // Centered style: education matches its centered role blocks — degree,
+        // then the period, then the school, all stacked and centered (no
+        // right-floated dates, which only work in a left-aligned layout).
+        if (id === "centered") {
+          return (
+            `<div class="ctr-head edu-ctr">` +
+            `<div class="edu-ctr-degree">${primary}</div>` +
+            (period ? `<div class="ctr-role">${escapeHtml(period)}</div>` : "") +
+            (second ? `<div class="edu-ctr-org">${second}</div>` : "") +
+            `</div>`
+          );
+        }
+        // Formal style: the same centered three-line block as its experience
+        // entries — school, period, then the degree.
+        if (id === "formal") {
+          const school = [uni, loc].filter(Boolean).map(escapeHtml).join(", ");
+          return (
+            `<div class="fm-head">` +
+            (school ? `<div class="fm-org">${school}</div>` : "") +
+            (period ? `<div class="fm-dates">${escapeHtml(period)}</div>` : "") +
+            (degree ? `<div class="fm-role">${primary}</div>` : "") +
+            `</div>`
+          );
+        }
+        // Banded style: same two-line shape as its experience entries —
+        // "Degree | University" over "Period | Location".
+        if (id === "banded") {
+          const l1 = [primary, degree && uni ? escapeHtml(uni) : ""]
+            .filter(Boolean)
+            .join(BD_SEP);
+          const l2 = [period, loc].filter(Boolean).map(escapeHtml).join(BD_SEP);
+          return (
+            `<div class="edu-line bd-edu">${l1}</div>` +
+            (l2 ? `<div class="role-org bd-meta">${l2}</div>` : "")
+          );
+        }
         const sub = second ? `<div class="role-org edu-org">${second}</div>` : "";
         return `<div class="edu-line">${primary}${dates}</div>${sub}`;
       })
@@ -589,8 +711,9 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
     }
   }
 
-  // Cards style additionally boxes the summary section.
-  if (id === "cards") {
+  // Styles that wrap the summary section in its own block — an outlined card,
+  // a tinted panel, a grey band, or just a centred paragraph.
+  if (id === "cards" || id === "banded" || id === "darkheader" || id === "formal") {
     body = body.replace(
       /(<h2[^>]*>\s*(?:Professional\s+)?(?:Summary|Profile)\s*<\/h2>)([\s\S]*?)(?=<h2|$)/i,
       (mm, heading, restHtml) => `<div class="summary-box">${heading}${restHtml}</div>`
@@ -673,8 +796,8 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
     );
   }
 
-  // Classic style: render the company·location line as "Company, Location".
-  if (id === "classic") {
+  // Classic and Ribbon render the company·location line as "Company, Location".
+  if (id === "classic" || id === "ribbon") {
     body = body.replace(
       /(<div class="role-org">)([\s\S]*?)(<\/div>)/g,
       (m, a, inner, c) => a + inner.replace(/\s*·\s*/g, ", ") + c
@@ -706,11 +829,84 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
     );
   }
 
+  // Dark Header style: move the dates off the title line and onto the italic
+  // company line, so the title stands alone in bold.
+  if (id === "darkheader") {
+    body = body.replace(
+      /<h3\b([^>]*)>([\s\S]*?)<\/h3>\s*(?:<div class="role-org">([\s\S]*?)<\/div>)?/g,
+      (m, attr, h3inner, org) => {
+        const dm = h3inner.match(/<span class="role-dates">[\s\S]*?<\/span>/);
+        const datesSpan = dm ? dm[0] : "";
+        const roleTitle = h3inner
+          .replace(/<span class="role-dates">[\s\S]*?<\/span>/, "")
+          .trim();
+        const orgText = (org || "").trim().replace(/\s*·\s*/g, " – ");
+        if (!datesSpan && !orgText) return m;
+        return (
+          `<h3${attr}>${roleTitle}</h3>` +
+          `<div class="role-org">${datesSpan}${orgText}</div>`
+        );
+      }
+    );
+  }
+
+  // Formal style: replace each role heading with three centered lines —
+  // role, organization, then dates — above the bullets.
+  if (id === "formal") {
+    body = body.replace(
+      /<h3\b[^>]*>([\s\S]*?)<\/h3>\s*(?:<div class="role-org">([\s\S]*?)<\/div>)?/g,
+      (m, h3inner, org) => {
+        const dm = h3inner.match(/<span class="role-dates">([\s\S]*?)<\/span>/);
+        const dates = dm ? dm[1].trim() : "";
+        const roleTitle = h3inner
+          .replace(/<span class="role-dates">[\s\S]*?<\/span>/, "")
+          .trim();
+        const orgText = (org || "").trim().replace(/\s*·\s*/g, ", ");
+        return (
+          `<div class="fm-head">` +
+          (roleTitle ? `<div class="fm-role">${roleTitle}</div>` : "") +
+          (orgText ? `<div class="fm-org">${orgText}</div>` : "") +
+          (dates ? `<div class="fm-dates">${dates}</div>` : "") +
+          `</div>`
+        );
+      }
+    );
+  }
+
+  // Banded style: rewrite each role heading as "Title | Company" with
+  // "Dates | Location" beneath, instead of the default right-floated dates.
+  // Keeps the <h3> + .role-org shape so the keep-with-first-bullet pass below
+  // still binds the heading to its bullets.
+  if (id === "banded") {
+    body = body.replace(
+      /<h3\b([^>]*)>([\s\S]*?)<\/h3>\s*(?:<div class="role-org">([\s\S]*?)<\/div>)?/g,
+      (m, attr, h3inner, org) => {
+        const dm = h3inner.match(/<span class="role-dates">([\s\S]*?)<\/span>/);
+        const dates = dm ? dm[1].trim() : "";
+        const roleTitle = h3inner
+          .replace(/<span class="role-dates">[\s\S]*?<\/span>/, "")
+          .trim();
+        const parts = (org || "")
+          .split(/\s*[·•]\s*/)
+          .map((s) => s.trim())
+          .filter(Boolean);
+        const company = parts[0] || "";
+        const location = parts.slice(1).join(" · ");
+        const title = [roleTitle, company].filter(Boolean).join(BD_SEP);
+        const meta = [dates, location].filter(Boolean).join(BD_SEP);
+        return (
+          `<h3${attr}>${title}</h3>` +
+          (meta ? `<div class="role-org bd-meta">${meta}</div>` : "")
+        );
+      }
+    );
+  }
+
   // Keep each role heading (and its org line) with at least its first bullet.
   // (Timeline entries were already restructured above, so this no longer matches
   // them — they flow naturally.)
   body = body.replace(
-    /<h3\b([^>]*)>([\s\S]*?)<\/h3>\s*(<div class="role-org">[\s\S]*?<\/div>)?\s*<ul>\s*(<li\b[\s\S]*?<\/li>)([\s\S]*?)<\/ul>/g,
+    /<h3\b([^>]*)>([\s\S]*?)<\/h3>\s*(<div class="role-org[^"]*">[\s\S]*?<\/div>)?\s*<ul>\s*(<li\b[\s\S]*?<\/li>)([\s\S]*?)<\/ul>/g,
     (m, attr, head, org, firstLi, restLis) => {
       const rest3 = restLis && restLis.trim()
         ? `<ul class="kh-rest">${restLis}</ul>`

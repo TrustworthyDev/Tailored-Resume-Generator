@@ -356,6 +356,37 @@ select.input {
   background: var(--panel); border: 1px solid var(--border); color: var(--text);
 }
 .jobpost-chip b { color: var(--muted); font-weight: 600; }
+/* Application history — "View Job Content" modal */
+.jobc-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 8px 22px; margin-bottom: 16px;
+}
+.jobc-row { display: flex; gap: 10px; align-items: baseline; min-width: 0; }
+.jobc-key {
+  flex: 0 0 130px; color: var(--muted); font-size: 12px;
+  text-transform: uppercase; letter-spacing: .04em;
+}
+.jobc-val {
+  flex: 1 1 auto; min-width: 0; color: var(--text);
+  overflow-wrap: anywhere; display: inline-flex; align-items: center; gap: 4px;
+}
+/* The job URL spans the whole grid so it never wraps; it truncates instead and
+   carries a copy button on the right. */
+.jobc-row-full { grid-column: 1 / -1; align-items: center; }
+.jobc-link {
+  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.jobc-copy {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px; padding: 0; cursor: pointer;
+  background: var(--panel-2); color: var(--muted);
+  border: 1px solid var(--border); border-radius: 7px;
+}
+.jobc-copy:hover { color: var(--text); border-color: var(--muted); }
+.jobc-jd-label { display: block; margin-bottom: 6px; }
+/* Details + description together can outgrow the screen — scroll the modal. */
+.jobc-modal { max-height: calc(100vh - 60px); overflow: auto; }
+.jobc-modal .resume-output { max-height: none; margin-top: 0; }
 
 /* Appearance (theme) picker */
 .theme-choices { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 14px; }
