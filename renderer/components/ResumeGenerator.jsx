@@ -645,6 +645,22 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   // Generate V2: build the same prompt, hand it to the user's signed-in ChatGPT
   // in the embedded browser, and wait for the reply to arrive on the clipboard
   // (recognised by the unique handshake id). Then render exactly like V1.
+  // Generate V3: forget an extraction once the link no longer matches the one it
+  // came from, so the details and description on screen always belong to the URL
+  // currently in the box. Only touches an actual extraction — a description
+  // typed by hand (no extraction behind it) is left alone.
+  const dropStaleExtraction = (nextLink) => {
+    const from = jobMetaRef.current;
+    if (!from) return;
+    if ((nextLink || "").trim() === (from.url || "").trim()) return;
+    setJobMeta(null);
+    jobMetaRef.current = null;
+    api().setPref("gen_v3_meta", "");
+    setJd("");
+    api().setPref(JD_PREF, "");
+    clearCache(); // the generated resume belonged to the old job too
+  };
+
   // Generate V3: load the job-post link and extract the full posting. The Job
   // Description box is emptied the moment Extract is clicked (so the previous
   // job is never left on screen while the new one loads), then filled with the
@@ -1452,7 +1468,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
                   type="url"
                   placeholder="https://…  (the job posting page)"
                   value={jobLink}
-                  onChange={(e) => { setJobLink(e.target.value); api().setPref("gen_job_link", e.target.value); }}
+                  onChange={(e) => { setJobLink(e.target.value); api().setPref("gen_job_link", e.target.value); dropStaleExtraction(e.target.value); }}
                   onKeyDown={(e) => { if (e.key === "Enter" && !fetchingJd) fetchJobFromLink(); }}
                 />
                 <button
