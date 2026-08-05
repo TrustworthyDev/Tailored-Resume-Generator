@@ -34,6 +34,9 @@ export default function Home() {
   const [licensed, setLicensed] = useState(null); // null = checking
   const [toast, setToast] = useState(null); // { message, type }
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  // Startup overlay: the embedded ChatGPT tab pre-warms in the background as
+  // soon as the app opens, and until it's up the generators can't actually run.
+  const [booting, setBooting] = useState(true);
 
   useEffect(() => {
     api().licenseStatus().then((s) => setLicensed(!!(s && s.activated)));
@@ -74,6 +77,23 @@ export default function Home() {
     const t = setTimeout(() => setToast(null), 4000);
     return () => clearTimeout(t);
   }, [toast]);
+
+  // Close the startup overlay when Generate V2 reports its ChatGPT tab is up.
+  // Escape and the Skip button dismiss it too, and a timeout guarantees the app
+  // is never held hostage by a tab that won't load.
+  useEffect(() => {
+    if (!booting) return;
+    const done = () => setBooting(false);
+    const onKey = (e) => { if (e.key === "Escape") done(); };
+    window.addEventListener("chat-ready", done);
+    document.addEventListener("keydown", onKey);
+    const t = setTimeout(done, 25000);
+    return () => {
+      window.removeEventListener("chat-ready", done);
+      document.removeEventListener("keydown", onKey);
+      clearTimeout(t);
+    };
+  }, [booting]);
 
   if (licensed === null) return <div className="app" />; // brief check
   if (!licensed) return <Activation onActivated={() => setLicensed(true)} />;
@@ -127,6 +147,21 @@ export default function Home() {
         {tab === "generate3" && <ResumeGenerator variant="v3" />}
         {tab === "tracker" && <Tracker />}
       </main>
+
+      {booting && (
+        <div className="modal-overlay boot-overlay" role="status" aria-live="polite">
+          <div className="modal modal-progress">
+            <div className="spinner" />
+            <h3 className="modal-title">Starting Careerva</h3>
+            <p className="muted modal-msg">
+              Opening the ChatGPT tab in the background. This only happens once per launch.
+            </p>
+            <div className="modal-actions boot-actions">
+              <button className="btn" onClick={() => setBooting(false)}>Skip</button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {toast && (
         <div

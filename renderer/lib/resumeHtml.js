@@ -352,8 +352,12 @@ main h3{color:#1b1f27;font-weight:700;font-size:10.5pt;margin:9px 0 0;}
 /* The thin separator between a title and its organization / dates. */
 .bd-sep{color:#9aa1ae;font-weight:400;padding:0 3px;}
 .bd-meta{color:#6a7280;font-size:9.5pt;margin:1px 0 5px;}
-.bd-edu{margin:9px 0 0;}
-.bd-edu .edu-degree{font-weight:700;color:#1b1f27;}
+/* Education sits centered under its band: degree, school, then the period. */
+.bd-edu{text-align:center;margin:9px 0 7px;break-inside:avoid;}
+.bd-edu-degree{font-size:11pt;color:#1b1f27;}
+.bd-edu-degree .edu-degree{font-weight:700;color:#1b1f27;}
+.bd-edu-org{margin-top:1px;color:#2f333b;font-size:10pt;}
+.bd-edu-period{margin-top:1px;color:#6a7280;font-size:9.5pt;}
 main ul{list-style:disc;padding-left:24px;}
 main li::marker{color:${accent};}
 main p.skills strong{color:#1b1f27;}
@@ -685,16 +689,19 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
             `</div>`
           );
         }
-        // Banded style: same two-line shape as its experience entries —
-        // "Degree | University" over "Period | Location".
+        // Banded style: education is centered under its section band — the
+        // degree, then the school, then the period, each on its own line.
         if (id === "banded") {
-          const l1 = [primary, degree && uni ? escapeHtml(uni) : ""]
+          const school = [degree && uni ? uni : "", loc]
             .filter(Boolean)
-            .join(BD_SEP);
-          const l2 = [period, loc].filter(Boolean).map(escapeHtml).join(BD_SEP);
+            .map(escapeHtml)
+            .join(", ");
           return (
-            `<div class="edu-line bd-edu">${l1}</div>` +
-            (l2 ? `<div class="role-org bd-meta">${l2}</div>` : "")
+            `<div class="bd-edu">` +
+            `<div class="bd-edu-degree">${primary}</div>` +
+            (school ? `<div class="bd-edu-org">${school}</div>` : "") +
+            (period ? `<div class="bd-edu-period">${escapeHtml(period)}</div>` : "") +
+            `</div>`
           );
         }
         const sub = second ? `<div class="role-org edu-org">${second}</div>` : "";

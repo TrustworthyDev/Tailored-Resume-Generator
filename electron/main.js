@@ -54,11 +54,11 @@ function resolveConnection() {
   const idRow = db.get("SELECT value FROM prefs WHERE key = 'chat_proxy_id'");
   const pid = idRow && idRow.value ? Number(idRow.value) : null;
   let row = pid
-    ? db.get("SELECT url, port, username, password FROM proxies WHERE id = ?", [pid])
+    ? db.get("SELECT name, url, port, username, password FROM proxies WHERE id = ?", [pid])
     : null;
   if (!row) {
     row = db.get(
-      "SELECT url, port, username, password FROM proxies WHERE is_active = 1 LIMIT 1"
+      "SELECT name, url, port, username, password FROM proxies WHERE is_active = 1 LIMIT 1"
     );
   }
   return row && String(row.url || "").trim() ? row : null;
@@ -889,14 +889,14 @@ function registerIpc() {
 
   ipcMain.handle("proxy:list", () =>
     db.all(
-      "SELECT id, url, port, username, password, is_active FROM proxies ORDER BY id DESC"
+      "SELECT id, name, url, port, username, password, is_active FROM proxies ORDER BY id DESC"
     )
   );
 
   // Currently active proxy (for the resume-build gating/badge).
   ipcMain.handle("proxy:active", () => {
     const row = db.get(
-      "SELECT id, url, port FROM proxies WHERE is_active = 1 LIMIT 1"
+      "SELECT id, name, url, port FROM proxies WHERE is_active = 1 LIMIT 1"
     );
     return { enabled: !!row, proxy: row || null };
   });
@@ -906,9 +906,10 @@ function registerIpc() {
     const existing = db.get("SELECT COUNT(*) AS c FROM proxies WHERE is_active = 1");
     const active = existing && existing.c > 0 ? 0 : 1; // first proxy becomes active
     const id = db.insert(
-      `INSERT INTO proxies (url, port, username, password, is_active, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO proxies (name, url, port, username, password, is_active, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
+        (d.name || "").trim(),
         (d.url || "").trim(),
         (d.port || "").trim(),
         (d.username || "").trim(),
@@ -974,7 +975,7 @@ function registerIpc() {
       mode,
       // A proxy run with no usable proxy is the one broken combination.
       ok: mode !== "proxy" || !!conn,
-      proxy: conn ? { url: conn.url, port: conn.port } : null,
+      proxy: conn ? { name: conn.name || "", url: conn.url, port: conn.port } : null,
     };
   });
 
@@ -1369,7 +1370,46 @@ function registerIpc() {
         },
       });
       try { win.webContents.setUserAgent(CHAT_UA); } catch (_) {}
-      await win.loadURL(link);
+
+      // Job boards sit behind the same bot protection as ChatGPT, so a proxy IP
+      // that gets refused fails EVERY link identically. Load through the chosen
+      // connection, and if that fails while proxied, retry once on the local IP
+      // rather than reporting a bare "couldn't read this page".
+      const loadOnce = async () => {
+        try {
+          await win.loadURL(link);
+          return null;
+        } catch (e) {
+          const desc = (e && (e.message || String(e))) || "network error";
+          // Electron prefixes these with the error code, e.g.
+          // "ERR_TUNNEL_CONNECTION_FAILED (-111) loading 'https://…'".
+          return desc.replace(/\s+loading\s+'[^']*'\s*$/i, "").trim();
+        }
+      };
+      let loadErr = await loadOnce();
+      let retriedDirect = false;
+      if (loadErr && chatProxyKey && chatProxyKey !== "direct") {
+        retriedDirect = true;
+        try {
+          await session.fromPartition(CHAT_PARTITION).setProxy({ mode: "direct" });
+          chatProxyKey = "direct";
+          chatProxyAuth = null;
+        } catch (_) {}
+        loadErr = await loadOnce();
+      }
+      if (loadErr) {
+        return {
+          ok: false,
+          error:
+            `Couldn't load the job post (${loadErr}).` +
+            (retriedDirect
+              ? " This was retried on your local IP and still failed, so check your internet connection."
+              : " Check your internet connection."),
+        };
+      }
+      if (retriedDirect) {
+        notify("Proxy couldn't reach the job post", "Read it on your local IP instead.");
+      }
       // Adaptive wait: JS-rendered job pages fill the header/body AFTER the
       // initial load, so poll until real content appears (an H1 with text, a
       // JobPosting JSON-LD, or a substantial body) instead of a fixed delay.
@@ -1424,6 +1464,13 @@ function registerIpc() {
       const coreMissing =
         !out.role || !out.company || !out.country || !out.location ||
         !out.salaryRange || !out.industry || !out.employmentType || !out.jobDescription;
+      // Why the detail fields came back empty, when they did. This layer used to
+      // swallow its errors, so a dead key or an unreachable API looked exactly
+      // like a page that simply had no details to find.
+      let aiNote = "";
+      if (coreMissing && !(gemKey && gemKey.api_key)) {
+        aiNote = "No Gemini key is set, so only the page's own structured data could be read. Add one in Settings → API (V2) to fill in the missing details.";
+      }
       if (coreMissing && gemKey && gemKey.api_key) {
         try {
           const g = await extractJobPost({
@@ -1439,7 +1486,9 @@ function registerIpc() {
             jobDescription: out.jobDescription || g.jobDescription,
           };
           if (g.role || g.jobDescription) source = ld ? "structured+ai" : "ai";
-        } catch (_) {}
+        } catch (e) {
+          aiNote = `The AI read of this page failed (${(e && e.message) || e}). Details may be incomplete.`;
+        }
       }
 
       // No-AI heuristics: fill still-empty role/company from the page heading and
@@ -1470,7 +1519,7 @@ function registerIpc() {
         );
       } catch (_) {}
 
-      return { ok: true, url: link, source, usedRaw, ...out };
+      return { ok: true, url: link, source, usedRaw, aiNote, ...out };
     } catch (e) {
       return { ok: false, error: (e && e.message) || "Could not load that job post." };
     } finally {
@@ -1704,11 +1753,16 @@ function registerIpc() {
         try { if (!win.isDestroyed()) win.loadURL(targetUrl); } catch (_) {}
         return;
       }
+      const viaProxy = !!(chatProxyKey && chatProxyKey !== "direct");
       const html =
         "<html><body style=\"font-family:Segoe UI,Arial,sans-serif;background:#111;color:#eee;padding:40px;line-height:1.5\">" +
         "<h2>Couldn't load ChatGPT</h2>" +
         `<p>The page failed to load (${errorDesc || "network error"}).</p>` +
-        "<p>Check your internet connection (and the active proxy in <b>Settings → Proxy</b> if you're using one), then reopen this window.</p>" +
+        (triedDirect
+          ? "<p>This was retried on your local IP and still failed, so the proxy is probably not the cause — check your internet connection.</p>"
+          : viaProxy
+          ? "<p>The request went through your proxy. ChatGPT sits behind Cloudflare, which often refuses datacenter proxy IPs — test the proxy in <b>Settings → Proxy</b>, or set <b>Connection</b> to <b>Local IP</b>.</p>"
+          : "<p>Check your internet connection, then reopen this window.</p>") +
         "</body></html>";
       try { if (!win.isDestroyed()) win.loadURL("data:text/html;charset=utf-8," + encodeURIComponent(html)); } catch (_) {}
     });

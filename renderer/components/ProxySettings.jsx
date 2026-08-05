@@ -2,7 +2,11 @@ import { useEffect, useState } from "react";
 import { api } from "../lib/api";
 import ConfirmModal from "./ConfirmModal";
 
-const EMPTY = { url: "", port: "", username: "", password: "" };
+const EMPTY = { name: "", url: "", port: "", username: "", password: "" };
+
+// What to call a proxy in the list: its name if given, else host:port.
+const proxyTitle = (p) =>
+  (p && p.name && p.name.trim()) || [p && p.url, p && p.port].filter(Boolean).join(":") || "(proxy)";
 
 export default function ProxySettings() {
   const [proxies, setProxies] = useState([]);
@@ -88,6 +92,14 @@ export default function ProxySettings() {
 
       {showForm && (
         <div className="subcard">
+          <label className="field">
+            <span className="field-label field-label-row">
+              Name
+              <span className="muted small">optional · how this proxy is listed and picked</span>
+            </span>
+            <input className="input" placeholder="e.g. Seller — London residential"
+              value={form.name} onChange={set("name")} />
+          </label>
           <div className="grid2">
             <label className="field">
               <span className="field-label">Host / URL</span>
@@ -125,8 +137,12 @@ export default function ProxySettings() {
         {proxies.map((p) => (
           <div className={p.is_active ? "list-item active-row" : "list-item"} key={p.id}>
             <div className="instr-info">
-              <strong>{p.url}{p.port ? `:${p.port}` : ""}</strong>
+              <strong>{proxyTitle(p)}</strong>
               {p.is_active ? <span className="badge live badge-gap">active</span> : null}
+              {/* When a name is shown above, the endpoint still needs to be visible. */}
+              {p.name && p.name.trim() ? (
+                <div className="muted small">{p.url}{p.port ? `:${p.port}` : ""}</div>
+              ) : null}
               {p.username ? <div className="muted small">user: {p.username}</div> : null}
               {checkMsg[p.id] && (
                 <div className="small" style={{ marginTop: 4, color: checkMsg[p.id].type === "ok" ? "var(--ok)" : "#ff9a9a" }}>
@@ -148,7 +164,7 @@ export default function ProxySettings() {
       <ConfirmModal
         open={confirmId != null}
         title="Delete proxy?"
-        message={`"${confirmTarget ? confirmTarget.url : "This proxy"}" will be removed. This cannot be undone.`}
+        message={`"${confirmTarget ? proxyTitle(confirmTarget) : "This proxy"}" will be removed. This cannot be undone.`}
         confirmLabel="Delete"
         onConfirm={doDelete}
         onCancel={() => setConfirmId(null)}

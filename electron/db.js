@@ -141,6 +141,7 @@ const SCHEMA = `
 
     CREATE TABLE IF NOT EXISTS proxies (
       id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      name      TEXT,
       url       TEXT,
       port      TEXT,
       username  TEXT,
@@ -288,6 +289,13 @@ function migrate() {
       db.run(`ALTER TABLE applications ADD COLUMN ${col} ${type}`);
     }
   });
+
+  // Ensure proxies has a name column (a label, so several proxies on the same
+  // host:port are told apart by something other than their username).
+  const proxyCols = all("PRAGMA table_info(proxies)");
+  if (!proxyCols.some((c) => c.name === "name")) {
+    db.run("ALTER TABLE proxies ADD COLUMN name TEXT");
+  }
 
   // Migrate the old single instruction pref into the instructions table.
   const instrCount = get("SELECT COUNT(*) AS c FROM instructions");
@@ -466,7 +474,8 @@ function scanFile(filePath) {
       groups.push({
         id: "proxies", label: "Proxies",
         items: srcAll(src, "SELECT * FROM proxies ORDER BY id").map((r) => ({
-          id: r.id, label: [r.url, r.port].filter(Boolean).join(":") || "(proxy)",
+          id: r.id,
+          label: r.name || [r.url, r.port].filter(Boolean).join(":") || "(proxy)",
         })),
       });
     }
@@ -565,9 +574,9 @@ function importSelected(filePath, selection = {}) {
         const r = srcGet(src, "SELECT * FROM proxies WHERE id = ?", [id]);
         if (!r) return;
         insert(
-          `INSERT INTO proxies (url, port, username, password, is_active, created_at)
-           VALUES (?, ?, ?, ?, 0, ?)`,
-          [r.url ?? null, r.port ?? null, r.username ?? null, r.password ?? null, r.created_at ?? nowIso]
+          `INSERT INTO proxies (name, url, port, username, password, is_active, created_at)
+           VALUES (?, ?, ?, ?, ?, 0, ?)`,
+          [r.name ?? null, r.url ?? null, r.port ?? null, r.username ?? null, r.password ?? null, r.created_at ?? nowIso]
         );
         counts.proxies++;
       });
