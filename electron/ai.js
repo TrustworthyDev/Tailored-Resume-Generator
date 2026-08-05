@@ -324,10 +324,99 @@ async function extractJobPost({ apiKey, model, pageText, jsonLd, title, h1, meta
 // stays unchanged. The renderer overrides the header (name/title/contacts) and
 // the Education section from the account's own data; the Summary, Skills,
 // Experience and Projects sections come from this Markdown.
+// Keys the fixed schema below renders itself. Anything else the model sends is
+// still content the user asked for, so it gets rendered too (see extras below).
+const KNOWN_RESUME_KEYS = new Set([
+  "name", "title", "contact", "summary", "skills", "experience",
+  "education", "projects", "additional_sections", "additionalSections",
+]);
+
+// Turn a value of unknown shape into Markdown lines: a paragraph, a bullet
+// list, or labelled bullets for objects. Returns [] when there's nothing real.
+function sectionLines(value) {
+  const s = (v) => (v == null ? "" : String(v).trim());
+  if (value == null) return [];
+  if (typeof value === "string" || typeof value === "number") {
+    const t = s(value);
+    return t ? [t] : [];
+  }
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => {
+        if (item == null) return "";
+        if (typeof item === "string" || typeof item === "number") return s(item);
+        if (typeof item === "object") {
+          // { label/title/heading, value/text/description } → "**Label:** text"
+          const label = s(item.label || item.title || item.heading || item.name || item.category);
+          const body = s(item.value || item.text || item.description || item.detail);
+          const items = Array.isArray(item.items) ? item.items.map(s).filter(Boolean).join(", ") : "";
+          const rest = body || items;
+          if (label && rest) return `**${label}:** ${rest}`;
+          return label || rest;
+        }
+        return "";
+      })
+      .filter(Boolean)
+      .map((t) => `- ${t}`);
+  }
+  if (typeof value === "object") {
+    return Object.keys(value)
+      .map((k) => {
+        const body = sectionLines(value[k]).join(" ").replace(/^- /, "");
+        return body ? `**${humanizeKey(k)}:** ${body}` : "";
+      })
+      .filter(Boolean);
+  }
+  return [];
+}
+
+// "keyAchievements" / "key_achievements" → "Key Achievements"
+function humanizeKey(key) {
+  return String(key || "")
+    .replace(/[_-]+/g, " ")
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/\b\w/g, (ch) => ch.toUpperCase());
+}
+
+// Collect every section the fixed schema doesn't cover: the explicit
+// `additional_sections` array first, then any stray top-level key the model
+// invented (keyAchievements, certifications, awards…). Each entry becomes
+// { heading, position, lines }.
+function extraSections(r) {
+  const s = (v) => (v == null ? "" : String(v).trim());
+  const out = [];
+  const declared = r.additional_sections || r.additionalSections;
+  (Array.isArray(declared) ? declared : []).forEach((sec) => {
+    if (!sec || typeof sec !== "object") return;
+    const heading = s(sec.heading || sec.title || sec.name);
+    const body = sectionLines(
+      sec.bullets != null ? sec.bullets : sec.items != null ? sec.items : sec.content != null ? sec.content : sec.text
+    );
+    if (heading && body.length) out.push({ heading, position: s(sec.position), lines: body });
+  });
+  Object.keys(r || {}).forEach((k) => {
+    if (KNOWN_RESUME_KEYS.has(k)) return;
+    const body = sectionLines(r[k]);
+    if (body.length) out.push({ heading: humanizeKey(k), position: "", lines: body });
+  });
+  return out;
+}
+
 function resumeStructToMarkdown(resume) {
   const r = resume || {};
   const s = (v) => (v == null ? "" : String(v).trim());
   const lines = [];
+
+  // Extra sections are placed where the model asked, defaulting to the end so
+  // nothing it produced is ever silently dropped.
+  const extras = extraSections(r);
+  const flush = (slot) => {
+    extras
+      .filter((x) => x.position === slot)
+      .forEach((x) => lines.push("", `## ${x.heading}`, ...x.lines));
+  };
 
   lines.push(`# ${s(r.name)}`);
   if (s(r.title)) lines.push(s(r.title));
@@ -339,6 +428,7 @@ function resumeStructToMarkdown(resume) {
   if (s(r.summary)) {
     lines.push("", "## Professional Summary", s(r.summary));
   }
+  flush("after_summary");
 
   const skills = Array.isArray(r.skills) ? r.skills : [];
   const skillLines = skills
@@ -354,6 +444,7 @@ function resumeStructToMarkdown(resume) {
   if (skillLines.length) {
     lines.push("", "## Core Technical Skills", ...skillLines);
   }
+  flush("after_skills");
 
   const experience = Array.isArray(r.experience) ? r.experience : [];
   if (experience.length) {
@@ -371,6 +462,7 @@ function resumeStructToMarkdown(resume) {
       lines.push("");
     });
   }
+  flush("after_experience");
 
   // Included for a complete, self-consistent document; the renderer replaces the
   // body under this heading with the account's structured education data.
@@ -384,6 +476,7 @@ function resumeStructToMarkdown(resume) {
       lines.push(`- ${head}${tail ? ` (${tail})` : ""}`);
     });
   }
+  flush("after_education");
 
   const projects = Array.isArray(r.projects) ? r.projects : [];
   if (projects.length) {
@@ -402,6 +495,13 @@ function resumeStructToMarkdown(resume) {
       lines.push(""); // blank line between projects
     });
   }
+
+  // Everything not claimed by a named slot lands here, so no section the model
+  // produced is lost — including ones it invented without being asked.
+  const placed = new Set(["after_summary", "after_skills", "after_experience", "after_education"]);
+  extras
+    .filter((x) => !placed.has(x.position))
+    .forEach((x) => lines.push("", `## ${x.heading}`, ...x.lines));
 
   return lines.join("\n").trim();
 }
@@ -455,6 +555,7 @@ function buildPromptJson(personal, work, education, projects, jobDescription, st
         "OUTPUT: Return the tailored resume as a JSON object with EXACTLY these keys, inside a ```json fenced code block (so it shows a Copy button). A short note or citation around the block is fine — just keep the JSON itself in the code block. " +
         "Echo `request_id` and `job_ref` back EXACTLY as given above so the app can verify the reply matches this request. " +
         "`user_prompt` is the SOLE authority for the resume's content, wording, tone and emphasis — follow it. Build the resume FRESH from THIS JSON only (never reuse a resume from earlier in the conversation) and fill every field of `resume` following this schema EXACTLY. " +
+        "NOTHING you write is dropped: if `user_prompt` calls for a section the fixed fields don't cover (Key Achievements, Certifications, Languages, Awards, Publications…), put it in `additional_sections` with its heading, its lines in `bullets`, and `position` saying where it belongs. Use `additional_sections` rather than inventing new top-level keys. " +
         "Fill `target` (used to file the application): `target.role` = the job title copied VERBATIM from job_description; `target.company` = the hiring company; `target.country` = the job's country as a plain country name (infer from location/office; map a city to its country); use \"Unknown\" only when a part is genuinely absent. " +
         (extra ? "Honour `additional_info_for_this_application` — job-specific notes for THIS application. " : "") +
         "If the user later asks job-application questions, answer each in its own fenced code block — positive, first-person, consistent with the resume; this does not change the resume output.",
@@ -470,6 +571,7 @@ function buildPromptJson(personal, work, education, projects, jobDescription, st
         experience: [{ title: "<role title>", company: "<company>", location: "<location or empty>", dates: "<date range>", bullets: ["<achievement>", "<achievement>"] }],
         education: [{ degree: "<degree>", university: "<university>", location: "<location>", period: "<period>" }],
         projects: [{ title: "<project title>", link: "<full URL or empty>", description: "<one-line description>" }],
+        additional_sections: [{ heading: "<any other section, e.g. Key Achievements>", position: "after_summary | after_skills | after_experience | after_education | end", bullets: ["<line>", "<line>"] }],
       },
     },
   };

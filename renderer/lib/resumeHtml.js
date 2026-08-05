@@ -42,10 +42,13 @@ body { color: #23272e; font-size: 10.5pt; line-height: 1.34; }
 }
 /* Role titles (job titles) are a fixed medium-black bold across all styles. */
 main h3 { font-size: 11pt; margin: 8px 0 1px; color: #333333; font-weight: 700; }
-main p { margin: 3px 0; text-align: justify; }
+/* Left-aligned, never justified. Justification stretches the spaces between
+   words, and PDF text extractors read those wide gaps as extra separators —
+   which splits phrases an ATS is trying to match. It reads better too. */
+main p { margin: 3px 0; text-align: left; }
 main p.skills { line-height: 1.6; text-align: left; }
 main ul { margin: 3px 0 6px; padding-left: 18px; }
-main li { margin: 1px 0; text-align: justify; }
+main li { margin: 1px 0; text-align: left; }
 /* Tighten the skills section so the first experience entry fits on page 1. */
 main h2 + ul { margin-top: 2px; }
 /* Body emphasis is NOT bold — only headings and skill categories are. */
@@ -62,11 +65,15 @@ main h3 { margin-bottom: 0; }
 /* Clickable project link sits on the title line, normal weight. */
 .proj-link { font-weight: 400; }
 .proj-link a { font-weight: 400; }
-.proj-desc { margin-top: 1px; text-align: justify; }
+.proj-desc { margin-top: 1px; text-align: left; }
 .project { margin: 0 0 8px; break-inside: avoid; }
-/* Contacts must stay on a single row. */
-.contacts { font-size: 8.5pt; white-space: nowrap; overflow: hidden; }
-.title { margin-top: 4px; font-size: 11pt; color: #5a6573; white-space: nowrap; overflow: hidden; }
+/* Contacts and the professional title WRAP rather than clip. They used to be
+   nowrap + overflow:hidden, which silently cut off whatever didn't fit — an
+   email, a phone number, or the tail of a title like
+   "Senior Backend Engineer | Go, MongoDB, Docker, Kubernetes". Text a reader
+   can't see is text an ATS scores against a job it can't match. */
+.contacts { font-size: 8.5pt; white-space: normal; overflow-wrap: anywhere; }
+.title { margin-top: 4px; font-size: 11pt; color: #5a6573; white-space: normal; overflow-wrap: anywhere; }
 /* A role heading is kept with its first bullet (the .kh block never splits);
    the remaining bullets flow to the next page, so headings are never stranded
    and there is no large blank gap. */
@@ -107,7 +114,7 @@ a{color:${accent};}`;
 header{margin-bottom:20px;}
 header h1{margin:0;font-size:22pt;font-weight:600;letter-spacing:.5px;color:#111;}
 .contacts{margin-top:6px;color:#6b7280;}
-main h2{font-size:10pt;color:${head || "#6b7280"};text-transform:uppercase;letter-spacing:2px;border-bottom:1px solid ${head || "#e5e7eb"};padding-bottom:4px;margin:22px 0 8px;font-weight:600;}
+main h2{font-size:10pt;color:${head || "#6b7280"};text-transform:uppercase;letter-spacing:.8px;border-bottom:1px solid ${head || "#e5e7eb"};padding-bottom:4px;margin:22px 0 8px;font-weight:600;}
 main ul{list-style:none;padding-left:2px;}
 main li{position:relative;padding-left:14px;}
 main li::before{content:"\\2013";color:#9ca3af;position:absolute;left:0;}
@@ -163,7 +170,7 @@ a{color:${accent};}`;
       return `body{font-family:"Segoe UI",Arial,sans-serif;color:#23272e;}
 header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;column-gap:20px;border-bottom:3px solid ${accent};padding-bottom:12px;margin-bottom:16px;}
 header h1{grid-column:1;grid-row:1;margin:0;font-size:24pt;font-weight:700;color:#1b3a5e;letter-spacing:.3px;line-height:1.06;}
-.title{grid-column:1;grid-row:2;margin-top:5px;color:${accent};text-transform:uppercase;letter-spacing:2px;font-weight:700;font-size:10pt;white-space:normal;}
+.title{grid-column:1;grid-row:2;margin-top:5px;color:${accent};text-transform:uppercase;letter-spacing:.8px;font-weight:700;font-size:10pt;white-space:normal;}
 .contacts{grid-column:2;grid-row:1/3;align-self:start;justify-self:end;text-align:right;color:#5a6573;font-size:8.5pt;line-height:1.7;white-space:normal;max-width:235px;word-break:break-word;}
 main h2{font-size:11pt;color:${head || "#1b3a5e"};text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid ${accent};padding-bottom:3px;margin:16px 0 8px;}
 main ul{list-style:none;padding-left:2px;}
@@ -222,9 +229,9 @@ a{color:${accent};}`;
       return `body{font-family:Georgia,"Times New Roman",serif;color:#2b2b2b;}
 header{text-align:center;margin-bottom:14px;}
 header h1{margin:0;font-family:Georgia,"Times New Roman",serif;font-size:29pt;font-weight:700;color:#111;letter-spacing:.5px;}
-.title{display:inline-block;margin-top:10px;padding:4px 16px;border:1px solid ${accent};color:#333;font-family:Arial,Helvetica,sans-serif;font-size:9pt;letter-spacing:1.2px;text-transform:uppercase;white-space:normal;}
+.title{display:inline-block;margin-top:10px;padding:4px 16px;border:1px solid ${accent};color:#333;font-family:Arial,Helvetica,sans-serif;font-size:9pt;letter-spacing:.8px;text-transform:uppercase;white-space:normal;}
 .contacts{margin-top:12px;padding:7px 10px;background:#efefef;color:#333;font-family:Arial,Helvetica,sans-serif;font-size:8.5pt;text-align:center;white-space:normal;}
-main h2{display:flex;align-items:center;justify-content:center;gap:12px;border:none;font-size:11pt;font-weight:700;color:${accent};text-transform:uppercase;letter-spacing:1.4px;margin:16px 0 6px;}
+main h2{display:flex;align-items:center;justify-content:center;gap:12px;border:none;font-size:11pt;font-weight:700;color:${accent};text-transform:uppercase;letter-spacing:.8px;margin:16px 0 6px;}
 main h2::before,main h2::after{content:"";flex:0 0 auto;width:42px;height:2px;background:${accent};}
 main ul{list-style:disc;padding-left:26px;}
 main li{margin:2px 0;}
@@ -291,7 +298,7 @@ header h1{grid-column:1;grid-row:1;margin:0;font-size:22pt;font-weight:700;color
 .contacts{grid-column:2;grid-row:1/3;align-self:start;justify-self:end;text-align:right;color:#f2f2f2;font-size:8.5pt;line-height:1.7;white-space:normal;max-width:230px;word-break:break-word;}
 .contacts a{color:#f2f2f2;}
 .summary-box{background:#ebebeb;padding:9px 18px 11px;margin:0 0 13px;}
-.summary-box h2{color:#4a4a4a;font-size:8pt;font-weight:700;text-transform:uppercase;letter-spacing:1.4px;text-align:center;border:none;margin:0 0 4px;padding:0;}
+.summary-box h2{color:#4a4a4a;font-size:8pt;font-weight:700;text-transform:uppercase;letter-spacing:.8px;text-align:center;border:none;margin:0 0 4px;padding:0;}
 .summary-box p{font-style:italic;font-size:9.5pt;text-align:center;color:#333;margin:0;}
 main h2{font-size:9.5pt;font-weight:700;color:#1a1a1a;text-transform:uppercase;letter-spacing:.6px;border:none;margin:14px 0 5px;}
 main h3{font-size:10.5pt;font-weight:700;color:#1a1a1a;margin:9px 0 0;}
@@ -322,7 +329,7 @@ a{color:${accent};}`;
       // per entry (role, organization, dates) above left-aligned bullets.
       return `body{font-family:Georgia,"Times New Roman",serif;color:#222;}
 header{text-align:center;border-top:2px solid ${accent};border-bottom:2px solid ${accent};padding:10px 0 9px;margin-bottom:11px;}
-header h1{margin:0;font-size:21pt;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;color:#111;}
+header h1{margin:0;font-size:21pt;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#111;}
 .title{margin-top:5px;color:#444;font-size:10pt;white-space:normal;}
 .contacts{margin-top:7px;color:#222;font-size:8.5pt;white-space:normal;}
 main h2{display:table;margin:14px auto 7px;background:${accent};color:#ffffff;font-size:9.5pt;font-weight:700;text-transform:uppercase;letter-spacing:.8px;border:none;padding:3px 14px;}
@@ -343,7 +350,7 @@ a{color:${accent};}`;
       return `body{font-family:"Segoe UI",Arial,Helvetica,sans-serif;color:#2f333b;}
 header{background:${head ? head + "1f" : "#e9eaf3"};border-radius:9px;padding:16px 22px 14px;text-align:center;margin-bottom:14px;}
 header h1{margin:0;font-size:23pt;font-weight:700;color:#1b1f27;letter-spacing:.2px;}
-.title{margin-top:6px;color:#5a6070;font-size:8.5pt;text-transform:uppercase;letter-spacing:2px;white-space:normal;}
+.title{margin-top:6px;color:#5a6070;font-size:8.5pt;text-transform:uppercase;letter-spacing:.8px;white-space:normal;}
 .contacts{margin-top:9px;color:#4a5060;font-size:8.5pt;white-space:normal;}
 main h2{display:block;background:${head ? head + "1f" : "#e9eaf3"};color:#1b1f27;text-align:center;font-size:10pt;font-weight:700;text-transform:none;letter-spacing:.3px;border:none;border-radius:4px;padding:4px 10px;margin:14px 0 8px;}
 .summary-box{background:${head ? head + "12" : "#f0f1f7"};border-radius:6px;padding:1px 14px 9px;margin-bottom:4px;}
