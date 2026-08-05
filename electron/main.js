@@ -1277,7 +1277,10 @@ function registerIpc() {
   const CHAT_UA =
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
   let chatWin = null;
-  let clipWatch = null; // { timer, resolve }
+  // Every in-flight "waiting for the ChatGPT reply" watcher. A Set rather than a
+  // single slot, so starting a second generation (V2 and V3 are both mounted)
+  // no longer silently cancels the first one's wait.
+  const clipWatches = new Set(); // each { resolve }
   let chatProxyAuth = null; // { username, password } for the embedded browser's proxy
   let chatProxyKey = null;  // last-applied session proxy ("direct" | "host:port") to avoid redundant setProxy calls
 
@@ -1736,7 +1739,8 @@ function registerIpc() {
     win.on("closed", () => {
       if (chatWin !== win) return;
       chatWin = null;
-      if (clipWatch) { clipWatch.resolve({ ok: false, closed: true }); clipWatch = null; }
+      [...clipWatches].forEach((w) => w.resolve({ ok: false, closed: true }));
+      clipWatches.clear();
     });
     // If the page can't load AND we were routing through a proxy, automatically
     // retry once on the LOCAL IP — ChatGPT/Cloudflare frequently blocks proxy
@@ -1856,16 +1860,17 @@ function registerIpc() {
   // V1. Only a verified reply resolves ok — so the app never builds the final
   // resume from stale or mismatched clipboard content.
   ipcMain.handle("chatgpt:awaitClipboard", (_e, id, promptText, jobRef) => {
-    if (clipWatch) { clipWatch.resolve({ ok: false, canceled: true }); clipWatch = null; }
     const promptTrim = String(promptText || "").trim();
     const startedAt = Date.now();
     const TIMEOUT_MS = 15 * 60 * 1000;
 
     return new Promise((resolve) => {
       let last = "";
+      let sawOther = false; // a valid reply, but for a different request
+      const self = {};
       const finish = (result) => {
         clearInterval(timer);
-        clipWatch = null;
+        clipWatches.delete(self);
         resolve(result);
       };
       const timer = setInterval(() => {
@@ -1887,24 +1892,38 @@ function registerIpc() {
               } catch (_) {}
               finish(res); return;
             }
-            // A real resume reply, but for a different id/job description: stop
-            // and report it rather than rendering the wrong resume.
+            // A real resume reply, but carrying someone else's request_id. The
+            // clipboard is a single system-wide slot: another copy of the app —
+            // or another tab in this one — puts its reply there too. Skip it and
+            // KEEP WAITING for ours. Aborting here is what made a second app
+            // fail with "That reply doesn't match this request" the moment the
+            // first one finished.
             if (res.reason === "mismatch") {
-              finish({ ok: false, mismatch: true, detail: res.detail });
+              if (!sawOther) {
+                sawOther = true;
+                notify(
+                  "Waiting for this resume",
+                  "That reply belongs to a different request — still watching for this one."
+                );
+              }
               return;
             }
             // "not-json" → not the reply yet; keep polling.
           }
         }
-        if (Date.now() - startedAt > TIMEOUT_MS) finish({ ok: false, timeout: true });
+        if (Date.now() - startedAt > TIMEOUT_MS) {
+          finish({ ok: false, timeout: true, sawOther });
+        }
       }, 600);
-      clipWatch = { timer, resolve: (r) => finish(r) };
+      self.resolve = (r) => finish(r);
+      clipWatches.add(self);
     });
   });
 
   // Stop waiting for the clipboard reply (user cancelled / left the tab).
   ipcMain.handle("chatgpt:cancelClipboard", () => {
-    if (clipWatch) { clipWatch.resolve({ ok: false, canceled: true }); clipWatch = null; }
+    [...clipWatches].forEach((w) => w.resolve({ ok: false, canceled: true }));
+    clipWatches.clear();
     return { ok: true };
   });
 

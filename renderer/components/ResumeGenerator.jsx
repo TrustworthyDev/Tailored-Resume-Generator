@@ -821,13 +821,13 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       if (!res || !res.ok) {
         if (res && res.canceled) return;
         setView("generate"); // show the error on the generate tab
+        // Replies for other requests are skipped, not fatal — so the only way to
+        // end up here is a genuine timeout, a cancel, or an unreadable reply.
         setError(
           res && res.timeout
-            ? "Timed out waiting for the ChatGPT reply. Click Generate Resume to try again."
-            : res && res.mismatch
-            ? (res.detail === "job"
-                ? "That reply was generated for a different job description. Re-send this prompt in ChatGPT and copy the new reply."
-                : "That reply doesn't match this request. Re-send this prompt in ChatGPT and copy the new reply.")
+            ? res.sawOther
+              ? "Timed out. The replies copied so far belonged to other requests — re-send THIS prompt in ChatGPT and copy its reply."
+              : "Timed out waiting for the ChatGPT reply. Click Generate Resume to try again."
             : "Could not read the ChatGPT reply from the clipboard. Make sure you copied the whole answer."
         );
         return;

@@ -164,6 +164,9 @@ async function initDb(userDataDir) {
   } else {
     db = new SQL.Database();
   }
+  // Remember what we just read, so the schema work below isn't mistaken for
+  // another process's write and reloaded away.
+  stampFile();
 
   db.run(SCHEMA);
 
@@ -338,9 +341,46 @@ function migrate() {
   }
 }
 
+// ---- Multi-instance safety --------------------------------------------------
+// Several copies of the app can be open at once, and each one holds the whole
+// database in memory and rewrites the ENTIRE file on every change. Left alone,
+// whichever copy saved last would wipe everything the other had done since it
+// started. So we fingerprint the file after each of our own writes, and re-read
+// it before any query if the fingerprint no longer matches — meaning another
+// copy wrote in the meantime. Every mutation persists immediately, so our memory
+// and the file agree except in that window; re-reading then applying our
+// statement on top gives each copy's work a chance to land.
+let fileStamp = "";
+
+function stampFile() {
+  try {
+    const st = fs.statSync(dbPath);
+    // Size as well as mtime: two writes inside the same millisecond are
+    // indistinguishable by timestamp alone.
+    fileStamp = `${st.mtimeMs}:${st.size}`;
+  } catch (_) {
+    fileStamp = "";
+  }
+}
+
+function syncFromDisk() {
+  if (!db || !dbPath) return;
+  let st = null;
+  try { st = fs.statSync(dbPath); } catch (_) { return; } // no file yet — nothing to sync
+  const now = `${st.mtimeMs}:${st.size}`;
+  if (now === fileStamp) return;
+  let fresh = null;
+  try { fresh = new SQL.Database(fs.readFileSync(dbPath)); } catch (_) { return; }
+  const previous = db;
+  db = fresh;
+  fileStamp = now;
+  try { previous.close(); } catch (_) {}
+}
+
 function persist() {
   if (!db || !dbPath) return;
   fs.writeFileSync(dbPath, Buffer.from(db.export()));
+  stampFile();
 }
 
 // Absolute path of the on-disk SQLite file (used by the export feature).
@@ -359,6 +399,9 @@ function importDb(buffer) {
   const next = new SQL.Database(buffer);
   next.exec("SELECT name FROM sqlite_master LIMIT 1"); // throws if not a real DB
   db = next;
+  // Pin the fingerprint to the file as it stands now, so the schema/migration
+  // work below can't be mistaken for a foreign write and reload the import away.
+  stampFile();
 
   db.run(SCHEMA); // make sure every expected table exists
   migrate();      // bring an older imported schema up to date
@@ -372,7 +415,9 @@ function importDb(buffer) {
   persist();
 }
 
-function all(sql, params = []) {
+// Raw query against the current connection, with no disk check. Used where a
+// sync would be wrong (see insert).
+function query(sql, params = []) {
   const stmt = db.prepare(sql);
   stmt.bind(params);
   const rows = [];
@@ -381,11 +426,17 @@ function all(sql, params = []) {
   return rows;
 }
 
+function all(sql, params = []) {
+  syncFromDisk();
+  return query(sql, params);
+}
+
 function get(sql, params = []) {
   return all(sql, params)[0] || null;
 }
 
 function run(sql, params = []) {
+  syncFromDisk();
   const stmt = db.prepare(sql);
   stmt.bind(params);
   stmt.step();
@@ -394,9 +445,17 @@ function run(sql, params = []) {
 }
 
 function insert(sql, params = []) {
-  run(sql, params);
-  const row = get("SELECT last_insert_rowid() AS id");
-  return row ? row.id : null;
+  syncFromDisk();
+  const stmt = db.prepare(sql);
+  stmt.bind(params);
+  stmt.step();
+  stmt.free();
+  // Read the id BEFORE persisting: db.export() resets last_insert_rowid(), so
+  // asking afterwards always returned 0. And no syncFromDisk in between — the
+  // id belongs to this connection, and a reload would swap it out.
+  const rows = query("SELECT last_insert_rowid() AS id");
+  persist();
+  return rows[0] ? rows[0].id : null;
 }
 
 // ---- Selective import (merge specific rows from another .sqlite file) -------
