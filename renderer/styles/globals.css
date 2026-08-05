@@ -234,6 +234,9 @@ select.input {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 .spinner.small { width: 20px; height: 20px; margin: 0; border-width: 3px; }
+/* Startup overlay shown until the embedded ChatGPT tab has loaded. */
+.boot-overlay { z-index: 200; }
+.boot-actions { justify-content: center; margin-top: 18px; }
 
 /* Generate V2 — "waiting for the ChatGPT reply" banner. */
 .v2-wait {

@@ -145,6 +145,8 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const [chatHome, setChatHome] = useState(""); // V2: saved ChatGPT Project Home URL (used for auto-navigation)
   const [connMode, setConnMode] = useState("direct"); // app-wide: "direct" (local IP) | "proxy"
   const [connStatus, setConnStatus] = useState(null); // { mode, ok, proxy } from the main process
+  const connModeRef = useRef("direct"); // latest mode for the webview's failure handler
+  connModeRef.current = connMode;
   const [proxyList, setProxyList] = useState([]); // V2: proxies to choose from
   const [chatProxyId, setChatProxyId] = useState(""); // V2: chosen proxy id
   const [showPromptModal, setShowPromptModal] = useState(false); // view active prompt content
@@ -164,6 +166,16 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   // Brief in-app toast, shown by the single global toast in the app shell.
   const toast = (message, type = "alert") =>
     window.dispatchEvent(new CustomEvent("app-notify", { detail: { message, type } }));
+
+  // The V2 instance is the one mounted at startup to pre-warm the ChatGPT tab.
+  // It tells the app shell the moment that tab is up (or has definitively
+  // failed) so the startup overlay can close. Fires at most once.
+  const chatReadySentRef = useRef(false);
+  const signalChatReady = () => {
+    if (chatReadySentRef.current || variant !== "v2") return;
+    chatReadySentRef.current = true;
+    window.dispatchEvent(new CustomEvent("chat-ready"));
+  };
 
   // The description a generation runs on: an explicitly passed value (the very
   // text that was just extracted/pasted, avoiding a stale state read) or
@@ -703,6 +715,8 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       // works on the very first Extract after a fresh app open.
       const autoGen = v3AutoGenRef.current;
       const acctId = accountIdRef.current;
+      // The detail layer reports why it came up empty instead of failing silently.
+      if (res.aiNote && !meta.role && !meta.company) toast(res.aiNote, "warning");
       if (res.usedRaw) {
         toast("Couldn't fully parse the page — showing the raw text. Review and trim the Job Description below.", "warning");
       } else if (autoGen && acctId && jdText.trim()) {
@@ -807,13 +821,13 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       if (!res || !res.ok) {
         if (res && res.canceled) return;
         setView("generate"); // show the error on the generate tab
+        // Replies for other requests are skipped, not fatal — so the only way to
+        // end up here is a genuine timeout, a cancel, or an unreadable reply.
         setError(
           res && res.timeout
-            ? "Timed out waiting for the ChatGPT reply. Click Generate Resume to try again."
-            : res && res.mismatch
-            ? (res.detail === "job"
-                ? "That reply was generated for a different job description. Re-send this prompt in ChatGPT and copy the new reply."
-                : "That reply doesn't match this request. Re-send this prompt in ChatGPT and copy the new reply.")
+            ? res.sawOther
+              ? "Timed out. The replies copied so far belonged to other requests — re-send THIS prompt in ChatGPT and copy its reply."
+              : "Timed out waiting for the ChatGPT reply. Click Generate Resume to try again."
             : "Could not read the ChatGPT reply from the clipboard. Make sure you copied the whole answer."
         );
         return;
@@ -1161,16 +1175,50 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     };
     const onFail = async (e) => {
       if (!e || e.isMainFrame === false || e.errorCode === -3) return;
-      if (chatRetriedRef.current) return;
-      chatRetriedRef.current = true;
-      try { await api().chatgptSessionDirect(); } catch (_) {}
-      loadWebview(lastChatUrlRef.current || "https://chatgpt.com/");
+      const why = (e.errorDescription || "").trim() || `error ${e.errorCode}`;
+      // A proxied load that fails is almost always the proxy IP being refused
+      // (ChatGPT sits behind Cloudflare). Fall back to the local IP once — but
+      // SAY so, because silently ignoring the Connection choice is worse than
+      // the failure itself.
+      if (!chatRetriedRef.current && connModeRef.current === "proxy") {
+        chatRetriedRef.current = true;
+        try { await api().chatgptSessionDirect(); } catch (_) {}
+        toast(
+          `The proxy couldn't reach ChatGPT (${why}). Loading on your local IP instead — the resume itself still uses your Connection setting.`,
+          "warning"
+        );
+        loadWebview(lastChatUrlRef.current || "https://chatgpt.com/");
+        return;
+      }
+      toast(
+        `Couldn't load ChatGPT (${why}). Test the proxy in Settings → Proxy, or switch Connection to Local IP.`,
+        "danger"
+      );
+      signalChatReady(); // give up quietly — never leave the startup overlay hanging
     };
+    // A good load re-arms the retry, so a later failure is handled too instead
+    // of the one-shot guard staying latched for the rest of the session.
+    const onLoaded = () => {
+      chatRetriedRef.current = false;
+      // about:blank is the webview's placeholder src — the tab isn't really up
+      // until a real page has loaded.
+      let cur = "";
+      try { cur = wv.getURL() || ""; } catch (_) {}
+      if (cur && cur !== "about:blank") signalChatReady();
+    };
+    // The first load may already have finished before this effect re-ran (the
+    // user-agent arrives asynchronously and re-binds these listeners).
+    try {
+      const cur = wv.getURL() || "";
+      if (!wv.isLoading() && cur && cur !== "about:blank") signalChatReady();
+    } catch (_) {}
     wv.addEventListener("dom-ready", onReady);
     wv.addEventListener("did-fail-load", onFail);
+    wv.addEventListener("did-finish-load", onLoaded);
     return () => {
       try { wv.removeEventListener("dom-ready", onReady); } catch (_) {}
       try { wv.removeEventListener("did-fail-load", onFail); } catch (_) {}
+      try { wv.removeEventListener("did-finish-load", onLoaded); } catch (_) {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isV2, chatUa]);
@@ -1184,6 +1232,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   };
   const chooseConnMode = async (mode) => {
     setConnMode(mode);
+    connModeRef.current = mode;
     await api().setPref("chat_conn_mode", mode);
     // Default the proxy selection to the active one the first time Proxy is picked.
     if (mode === "proxy" && !chatProxyId && proxyList.length) {
@@ -1192,14 +1241,21 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       setChatProxyId(id);
       await api().setPref("chat_proxy_id", id);
     }
+    // Re-apply to the browser session too: a previous failure may have forced it
+    // to the local IP, and picking a connection again should restore the choice.
+    chatRetriedRef.current = false;
+    try { await api().chatgptSessionInfo(); } catch (_) {}
     refreshConn();
   };
   const chooseChatProxy = async (id) => {
     setChatProxyId(id);
     await api().setPref("chat_proxy_id", id);
+    chatRetriedRef.current = false;
+    try { await api().chatgptSessionInfo(); } catch (_) {}
     refreshConn();
   };
-  const proxyLabel = (p) => [p.url, p.port].filter(Boolean).join(":") || `Proxy ${p.id}`;
+  const proxyLabel = (p) =>
+    (p.name && p.name.trim()) || [p.url, p.port].filter(Boolean).join(":") || `Proxy ${p.id}`;
 
   const openFolder = async () => {
     if (!savedPath) { toast("Generate a resume first — then Open Folder will reveal the saved PDF.", "warning"); return; }
@@ -1435,7 +1491,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
             title={
               connMode === "proxy"
                 ? connStatus && connStatus.proxy
-                  ? `Routing through ${[connStatus.proxy.url, connStatus.proxy.port].filter(Boolean).join(":")}`
+                  ? `Routing through ${connStatus.proxy.name || [connStatus.proxy.url, connStatus.proxy.port].filter(Boolean).join(":")}`
                   : "Proxy selected, but none is available"
                 : "Using this computer's IP"
             }
