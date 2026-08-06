@@ -99,6 +99,9 @@ contextBridge.exposeInMainWorld("api", {
   awaitChatgptClipboard: (id, prompt, jobRef) => invoke("chatgpt:awaitClipboard", id, prompt, jobRef),
   cancelChatgptClipboard: () => invoke("chatgpt:cancelClipboard"),
   importResumeFile: () => invoke("resume:importFile"),
+  // One account as a Markdown record (export sends what's on screen).
+  exportAccountMd: (data) => invoke("account:exportMd", data),
+  importAccountMd: () => invoke("account:importMd"),
   previewResume: (html) => invoke("resume:preview", html),
   exportResumePdf: (data) => invoke("resume:exportPdf", data),
   revealPdf: (filePath) => invoke("pdf:reveal", filePath),
@@ -113,17 +116,14 @@ contextBridge.exposeInMainWorld("api", {
   applicationCounts: () => invoke("applications:counts"),
   searchApplications: (query) => invoke("applications:search", query),
   exportApplications: () => invoke("applications:export"),
+  exportApplicationsDb: () => invoke("applications:exportDb"),
+  importApplicationsDb: () => invoke("applications:importDb"),
   findDuplicateApplication: (accountId, role, company) => invoke("applications:findDuplicate", accountId, role, company),
   openGptForApplication: (id) => invoke("application:openGpt", id),
   getApplicationJobContent: (id) => invoke("application:jobContent", id),
   openExternalLink: (url) => invoke("link:openExternal", url),
   deleteApplication: (id) => invoke("app:delete", id),
   resetApplications: () => invoke("app:resetAll"),
-  startSession: () => invoke("session:start"),
-  endSession: () => invoke("session:end"),
-  getActiveSession: () => invoke("session:active"),
-  getTodayCount: () => invoke("app:todayCount"),
-  listTodayApplications: () => invoke("app:todayList"),
 
   // In-app notifications (the main process forwards messages here instead of
   // showing a native OS notification). Returns an unsubscribe function.

@@ -132,6 +132,24 @@ export default function AccountForm({ accountId, onSaved }) {
     setSaved(false);
   };
 
+  // Write the account out as a Markdown record — what's on screen, so unsaved
+  // edits are included.
+  const exportMd = async () => {
+    setImportError("");
+    const r = await api().exportAccountMd({ personal: info, education: [edu], work: roles });
+    if (r && !r.ok && !r.canceled) setImportError(r.error || "Could not export the account.");
+  };
+
+  // Read a Markdown record into the form. Fills the same fields the PDF import
+  // does; nothing is saved until Save is pressed.
+  const importMd = async () => {
+    setImportError("");
+    const r = await api().importAccountMd();
+    if (!r || r.canceled) return;
+    if (r.ok) applyImport(r.data);
+    else setImportError(r.error || "Could not read that file.");
+  };
+
   // Pick a resume PDF; the active AI key extracts the fields and fills the form.
   const runImport = async () => {
     if (importing) return;
@@ -168,9 +186,17 @@ export default function AccountForm({ accountId, onSaved }) {
       <section className="card">
         <div className="card-head">
           <h2>Personal Info</h2>
-          <button className="btn small" onClick={runImport} disabled={importing}>
-            {importing ? "Importing…" : "Import from PDF"}
-          </button>
+          <div className="list-actions">
+            <button className="btn small" onClick={runImport} disabled={importing}>
+              {importing ? "Importing…" : "Import from PDF"}
+            </button>
+            <button className="btn small" onClick={importMd} title="Fill this form from a Markdown account record">
+              Import MD
+            </button>
+            <button className="btn small" onClick={exportMd} title="Save this account as a Markdown record">
+              Export MD
+            </button>
+          </div>
         </div>
         {importError && <div className="error">{importError}</div>}
 
@@ -223,6 +249,23 @@ export default function AccountForm({ accountId, onSaved }) {
               <Field label="LinkedIn Link" value={info.linkedin} onChange={setI("linkedin")} />
               <Field label="Portfolio / Other Link" value={info.portfolio}
                 onChange={setI("portfolio")} />
+              {/* Record-keeping fields. Kept out of the resume and out of the AI
+                  prompt — they exist so a Markdown record round-trips intact. */}
+              <Field label="Resume Link" value={info.resume_link} onChange={setI("resume_link")} />
+              <Field label="Cover Letter Link" value={info.cover_letter_link}
+                onChange={setI("cover_letter_link")} />
+              <Field label="Time Zone" value={info.time_zone} onChange={setI("time_zone")}
+                placeholder="e.g. EET" />
+              <Field label="Recovery" value={info.recovery} onChange={setI("recovery")}
+                placeholder="recovery email or phone" />
+              <label className="field">
+                <span className="field-label">
+                  Password
+                  <span className="muted small"> · stored as typed; never sent to the AI</span>
+                </span>
+                <input className="input" type="password" value={info.password || ""}
+                  onChange={(e) => setI("password")(e.target.value)} />
+              </label>
             </div>
           )}
 

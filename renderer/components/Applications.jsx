@@ -104,6 +104,31 @@ export default function Applications() {
     else if (r && !r.canceled) setFileMsg(r && r.error ? r.error : "Could not export the history.");
   };
 
+  // The history on its own as a .sqlite file — everything the CSV flattens,
+  // and nothing from the rest of the database.
+  const doExportDb = async () => {
+    const r = await api().exportApplicationsDb();
+    if (r && r.ok) setFileMsg(`Exported ${r.count} application${r.count === 1 ? "" : "s"} to ${r.path}`);
+    else if (r && !r.canceled) setFileMsg(r && r.error ? r.error : "Could not export the history.");
+  };
+
+  // Merge an exported history back in; entries already here are left alone.
+  const doImportDb = async () => {
+    const r = await api().importApplicationsDb();
+    if (!r || r.canceled) return;
+    if (!r.ok) { setFileMsg(r.error || "Could not import the history."); return; }
+    const bits = [`Imported ${r.imported} application${r.imported === 1 ? "" : "s"}`];
+    if (r.skipped) bits.push(`${r.skipped} already here`);
+    if (r.accountsCreated) bits.push(`${r.accountsCreated} account${r.accountsCreated === 1 ? "" : "s"} added`);
+    setFileMsg(bits.join(" · "));
+    await loadAll();
+    if (selectedId != null) {
+      const rows = await api().applicationsByAccount(selectedId);
+      setApps(rows || []);
+    }
+    api().listAccounts().then((rows) => setAccounts(rows || []));
+  };
+
   const fmtDate = (iso) => {
     if (!iso) return "";
     const d = new Date(iso);
@@ -321,9 +346,24 @@ export default function Applications() {
                 className="btn small"
                 onClick={doExport}
                 disabled={counts.total === 0}
-                title="Export the whole history to a CSV file"
+                title="Export the history to a CSV file (opens in Excel / Sheets)"
               >
-                Export
+                Export CSV
+              </button>
+              <button
+                className="btn small"
+                onClick={doExportDb}
+                disabled={counts.total === 0}
+                title="Export the history on its own as a .sqlite file — every field, nothing else from the database"
+              >
+                Export SQLite
+              </button>
+              <button
+                className="btn small"
+                onClick={doImportDb}
+                title="Merge an exported .sqlite history in — entries already here are skipped"
+              >
+                Import SQLite
               </button>
               <button
                 className="btn small danger"

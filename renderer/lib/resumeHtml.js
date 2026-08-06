@@ -359,6 +359,7 @@ main h3{color:#1b1f27;font-weight:700;font-size:10.5pt;margin:9px 0 0;}
 /* The thin separator between a title and its organization / dates. */
 .bd-sep{color:#9aa1ae;font-weight:400;padding:0 3px;}
 .bd-meta{color:#6a7280;font-size:9.5pt;margin:1px 0 5px;}
+.bd-org{color:#1b1f27;font-weight:600;}
 /* Education sits centered under its band: degree, school, then the period. */
 .bd-edu{text-align:center;margin:9px 0 7px;break-inside:avoid;}
 .bd-edu-degree{font-size:11pt;color:#1b1f27;}
@@ -887,8 +888,11 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
     );
   }
 
-  // Banded style: rewrite each role heading as "Title | Company" with
-  // "Dates | Location" beneath, instead of the default right-floated dates.
+  // Banded style: the title line stays exactly as written, and the company joins
+  // the dates and location on the line beneath. The company used to be appended
+  // to the title with " | " — which broke once role titles themselves started
+  // carrying a pipe ("Senior DevOps Engineer | Terraform, Azure, Kubernetes"),
+  // leaving one line with two identical separators meaning different things.
   // Keeps the <h3> + .role-org shape so the keep-with-first-bullet pass below
   // still binds the heading to its bullets.
   if (id === "banded") {
@@ -906,10 +910,17 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
           .filter(Boolean);
         const company = parts[0] || "";
         const location = parts.slice(1).join(" · ");
-        const title = [roleTitle, company].filter(Boolean).join(BD_SEP);
-        const meta = [dates, location].filter(Boolean).join(BD_SEP);
+        // Company leads the meta line, weighted so it still reads as the
+        // employer rather than as another piece of grey metadata.
+        const meta = [
+          company ? `<span class="bd-org">${company}</span>` : "",
+          dates,
+          location,
+        ]
+          .filter(Boolean)
+          .join(BD_SEP);
         return (
-          `<h3${attr}>${title}</h3>` +
+          `<h3${attr}>${roleTitle}</h3>` +
           (meta ? `<div class="role-org bd-meta">${meta}</div>` : "")
         );
       }

@@ -84,6 +84,31 @@ const NO_CONTENT_MSG = "There is no resume content yet. Please generate a resume
 // `active` = this generator's tab is the one on screen. V2 stays mounted for the
 // whole session (its ChatGPT WebView pre-warms in the background), so it uses
 // this to refresh lists that would otherwise go stale — see the effect below.
+// Small copy-to-clipboard control shown beside a value. Flips to a tick briefly
+// so the click is acknowledged without shifting anything on screen.
+function CopyButton({ label, done, onCopy }) {
+  return (
+    <button
+      type="button"
+      className="copy-btn"
+      onClick={onCopy}
+      title={done ? "Copied" : `Copy ${label}`}
+      aria-label={`Copy ${label}`}
+    >
+      {done ? (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="20 6 9 17 4 12" />
+        </svg>
+      ) : (
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+          <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+        </svg>
+      )}
+    </button>
+  );
+}
+
 export default function ResumeGenerator({ variant = "v1", active = true }) {
   // V3 is "V2 + job-post-link extraction": it reuses the entire ChatGPT
   // generation path, but starts from a link instead of a pasted description.
@@ -151,6 +176,8 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const [chatProxyId, setChatProxyId] = useState(""); // V2: chosen proxy id
   const [showPromptModal, setShowPromptModal] = useState(false); // view active prompt content
   const [showInfo, setShowInfo] = useState(false); // "View info" modal (account + target job)
+  const [showSaved, setShowSaved] = useState(false); // post-generation modal with the file actions
+  const [copiedField, setCopiedField] = useState(""); // which contact field was just copied
   const [dupConfirm, setDupConfirm] = useState(null); // { role, company } when confirming a duplicate
   const dupResolveRef = useRef(null); // resolves the duplicate-confirm promise
   const [chatUa, setChatUa] = useState(""); // V2: user-agent for the embedded ChatGPT webview
@@ -203,11 +230,25 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     return `${lines.join("\n")}\n\nJob Description:\n${body}`;
   };
 
+  // The target job is persisted alongside the saved path so "View info" still
+  // has something to show — and still appears — after the app is closed and
+  // reopened. The generated resume text itself is not kept; the button is
+  // driven by these instead.
+  const rememberTarget = (role, company, country) => {
+    setJobRole(role || "");
+    setJobCompany(company || "");
+    setJobCountry(country || "");
+    api().setPref("gen_job_role", role || "");
+    api().setPref("gen_job_company", company || "");
+    api().setPref("gen_job_country", country || "");
+  };
+
+  // Drops the cached generation (the resume text and the file it produced).
+  // The target job is deliberately NOT cleared here — it is the last job we know
+  // about, and blanking it emptied "View info" every time the description was
+  // edited or a new link was extracted. It is replaced, never wiped.
   const clearCache = () => {
     setResult("");
-    setJobRole("");
-    setJobCompany("");
-    setJobCountry("");
     setSavedPath("");
     setSavedAt("");
     api().setPref("gen_saved_path", "");
@@ -281,6 +322,16 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       }
       if (savedPathPref && savedPathPref.value) setSavedPath(savedPathPref.value);
       if (savedAtPref && savedAtPref.value) setSavedAt(savedAtPref.value);
+
+      // The last target job, so "View info" survives a restart.
+      const [rolePref, companyPref, countryPref] = await Promise.all([
+        api().getPref("gen_job_role"),
+        api().getPref("gen_job_company"),
+        api().getPref("gen_job_country"),
+      ]);
+      if (rolePref && rolePref.value) setJobRole(rolePref.value);
+      if (companyPref && companyPref.value) setJobCompany(companyPref.value);
+      if (countryPref && countryPref.value) setJobCountry(countryPref.value);
 
       if (styleOrderPref && styleOrderPref.value) {
         const order = styleOrderPref.value.split(",");
@@ -595,6 +646,10 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
           copyFolderToClipboard(exp.path);
           // Windows notification (account + company + role + success). Not on colour re-renders.
           try { api().notifyResumeDone({ account: (acc && acc.name) || "", role: role || jobRole, company: company || jobCompany }); } catch (_) {}
+          // Land on the saved-resume modal. It replaces the optional preview
+          // modal rather than stacking on top of it.
+          setShowPreview(false);
+          setShowSaved(true);
         }
         return true;
       } else if (!opts.skipCover) setError(`Couldn't save the PDF — ${friendlyError({ message: (exp && exp.error) || "unknown error" })}`);
@@ -637,9 +692,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     try {
       const res = await callApi(useJd);
       setResult(res.text || "");
-      setJobRole(res.jobRole || "");
-      setJobCompany(res.jobCompany || "");
-      setJobCountry(res.jobCountry || "");
+      rememberTarget(res.jobRole, res.jobCompany, res.jobCountry);
       if (openModalAfterPreview) setShowPreview(true);
       // "Generate Resume" now does the full flow: fetch the content, then
       // immediately build + save the PDF and show it in the Preview tab.
@@ -657,26 +710,10 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   // Generate V2: build the same prompt, hand it to the user's signed-in ChatGPT
   // in the embedded browser, and wait for the reply to arrive on the clipboard
   // (recognised by the unique handshake id). Then render exactly like V1.
-  // Generate V3: forget an extraction once the link no longer matches the one it
-  // came from, so the details and description on screen always belong to the URL
-  // currently in the box. Only touches an actual extraction — a description
-  // typed by hand (no extraction behind it) is left alone.
-  const dropStaleExtraction = (nextLink) => {
-    const from = jobMetaRef.current;
-    if (!from) return;
-    if ((nextLink || "").trim() === (from.url || "").trim()) return;
-    setJobMeta(null);
-    jobMetaRef.current = null;
-    api().setPref("gen_v3_meta", "");
-    setJd("");
-    api().setPref(JD_PREF, "");
-    clearCache(); // the generated resume belonged to the old job too
-  };
-
-  // Generate V3: load the job-post link and extract the full posting. The Job
-  // Description box is emptied the moment Extract is clicked (so the previous
-  // job is never left on screen while the new one loads), then filled with the
-  // extracted details + description once the read finishes.
+  // Generate V3: load the job-post link and extract the full posting. Clearing
+  // happens on the Extract CLICK, not while the link is being typed or pasted —
+  // editing the box leaves the current job on screen until you actually ask for
+  // a new read.
   const fetchJobFromLink = async () => {
     const link = (jobLink || "").trim();
     if (!/^https?:\/\//i.test(link)) {
@@ -685,10 +722,14 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     }
     setFetchingJd(true);
     setError("");
+    // Drop the whole previous job now that a new read is starting: the detail
+    // chips, the description, the remembered extraction and the cached resume.
     setJobMeta(null);
-    // Clear the previous job right away — the field refills when the read lands.
+    jobMetaRef.current = null;
+    api().setPref("gen_v3_meta", "");
     setJd("");
     api().setPref(JD_PREF, "");
+    clearCache();
     try {
       const res = await api().fetchJobPost(link);
       if (!res || !res.ok) {
@@ -710,7 +751,11 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       const jdText = composeJobDescription(meta, res.jobDescription || "");
       setJd(jdText);
       api().setPref(JD_PREF, jdText);
-      clearCache();
+      clearCache(); // the cached resume belonged to the previous job
+      // Then adopt THIS job as the target, so "View info" is populated from the
+      // extraction onwards rather than sitting empty until a resume is built.
+      // Generation overwrites these with whatever the reply reports.
+      rememberTarget(meta.role, meta.company, meta.country);
       // Read the LATEST toggle/account via refs (not the stale closure) so this
       // works on the very first Extract after a fresh app open.
       const autoGen = v3AutoGenRef.current;
@@ -837,9 +882,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       // columns, kept separate so display and matching never interfere.
       const hasTarget = !!(target && target.company && target.role);
       setResult(res.text || "");
-      setJobRole(res.jobRole || "");
-      setJobCompany(res.jobCompany || "");
-      setJobCountry(res.jobCountry || (target && target.country) || "");
+      rememberTarget(res.jobRole, res.jobCompany, res.jobCountry || (target && target.country));
       if (openModalAfterPreview) setShowPreview(true);
       if (res.text) {
         // Capture the ChatGPT conversation URL from the webview for "Open GPT".
@@ -1282,6 +1325,22 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     setView("generate");
     toast("Folder path copied to clipboard.", "success");
   };
+  // Copy one contact value; the modal stays open so several can be taken.
+  const copyField = async (field, value) => {
+    if (!value) return;
+    try {
+      await navigator.clipboard.writeText(String(value));
+      setCopiedField(field);
+      setTimeout(() => setCopiedField(""), 1500);
+    } catch (_) {}
+  };
+
+  // Copying is the last thing you'd do here, so it closes the modal too.
+  const copySavedLocation = () => {
+    copyFolderToClipboard(savedPath);
+    toast("Folder path copied to clipboard.", "success");
+    setShowSaved(false);
+  };
 
   const copy = () => navigator.clipboard.writeText(result);
 
@@ -1472,8 +1531,9 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
           >
             Preview Resume
           </button>
-          {/* Only meaningful once a resume exists — it reports the target job too. */}
-          {result && (
+          {/* Driven by the remembered target rather than the in-memory resume
+              text, so it's still here after the app is closed and reopened. */}
+          {(result || jobRole || jobCompany || savedPath) && (
             <button
               type="button"
               className="resume-tab"
@@ -1524,7 +1584,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
                   type="url"
                   placeholder="https://…  (the job posting page)"
                   value={jobLink}
-                  onChange={(e) => { setJobLink(e.target.value); api().setPref("gen_job_link", e.target.value); dropStaleExtraction(e.target.value); }}
+                  onChange={(e) => { setJobLink(e.target.value); api().setPref("gen_job_link", e.target.value); }}
                   onKeyDown={(e) => { if (e.key === "Enter" && !fetchingJd) fetchJobFromLink(); }}
                 />
                 <button
@@ -1898,14 +1958,74 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       </div>
     )}
 
+    {/* Opens itself as soon as a resume is saved: what was generated, where it
+        went, and the actions you'd reach for next. */}
+    {showSaved && (
+      <div className="modal-overlay" onClick={() => setShowSaved(false)}>
+        <div className="modal modal-saved" onClick={(e) => e.stopPropagation()}>
+          {/* No Close in the corner — the actions at the bottom carry one. */}
+          <div className="card-head">
+            <h2>Resume saved</h2>
+          </div>
+
+          <div className="info-section">Target Job</div>
+          <div className="info-grid">
+            <div className="info-k">Company</div><div className="info-v">{jobCompany || "—"}</div>
+            <div className="info-k">Job Title</div><div className="info-v">{jobRole || "—"}</div>
+            <div className="info-k">Country</div><div className="info-v">{jobCountry || "—"}</div>
+          </div>
+
+          {/* The details you retype into an application form, with the two
+              awkward ones a click away. */}
+          <div className="info-section">Account Info</div>
+          <div className="info-grid">
+            <div className="info-k">Name</div>
+            <div className="info-v">{(acctInfo && acctInfo.name) || "—"}</div>
+            <div className="info-k">Email</div>
+            <div className="info-v copy-row">
+              <span className="copy-text">{(acctInfo && acctInfo.email) || "—"}</span>
+              {acctInfo && acctInfo.email ? (
+                <CopyButton value={acctInfo.email} label="email" done={copiedField === "email"}
+                  onCopy={() => copyField("email", acctInfo.email)} />
+              ) : null}
+            </div>
+            <div className="info-k">LinkedIn</div>
+            <div className="info-v copy-row">
+              <span className="copy-text">{(acctInfo && acctInfo.linkedin) || "—"}</span>
+              {acctInfo && acctInfo.linkedin ? (
+                <CopyButton value={acctInfo.linkedin} label="LinkedIn" done={copiedField === "linkedin"}
+                  onCopy={() => copyField("linkedin", acctInfo.linkedin)} />
+              ) : null}
+            </div>
+            <div className="info-k">Phone</div>
+            <div className="info-v">{(acctInfo && acctInfo.phone) || "—"}</div>
+          </div>
+
+          <div className="info-section">File</div>
+          <div className="info-grid">
+            <div className="info-k">Saved</div><div className="info-v">{savedAt || "—"}</div>
+            <div className="info-k">Location</div>
+            <div className="info-v saved-path">{savedPath || "—"}</div>
+          </div>
+
+          <div className="modal-actions saved-actions">
+            <button className="btn" onClick={openFolder} disabled={!savedPath}>Open Folder</button>
+            <button className="btn" onClick={openFile} disabled={!savedPath}>Open File</button>
+            <button className="btn" onClick={copySavedLocation} disabled={!savedPath}>
+              {copied ? "Copied ✓" : "Copy Location"}
+            </button>
+            <button className="btn primary" onClick={() => setShowSaved(false)}>Close</button>
+          </div>
+        </div>
+      </div>
+    )}
+
     {showInfo && (
       <div className="modal-overlay" onClick={() => setShowInfo(false)}>
-        <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <div className="modal modal-info" onClick={(e) => e.stopPropagation()}>
+          {/* Actions live at the bottom right, not in the corner. */}
           <div className="card-head">
             <h2>View info</h2>
-            <div className="list-actions">
-              <button className="btn small" onClick={() => setShowInfo(false)}>Close</button>
-            </div>
           </div>
 
           <div className="info-section">Project Info</div>
@@ -1926,16 +2046,42 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
               </div>
               <div className="info-k">Age</div>
               <div className="info-v">{ageFromBirthDate(acctInfo.birth_date) || "—"}</div>
-              <div className="info-k">Email</div><div className="info-v">{acctInfo.email || "—"}</div>
+              <div className="info-k">Email</div>
+              <div className="info-v copy-row">
+                <span className="copy-text">{acctInfo.email || "—"}</span>
+                {acctInfo.email ? (
+                  <CopyButton label="email" done={copiedField === "info-email"}
+                    onCopy={() => copyField("info-email", acctInfo.email)} />
+                ) : null}
+              </div>
               <div className="info-k">Phone</div><div className="info-v">{acctInfo.phone || "—"}</div>
               <div className="info-k">Address</div><div className="info-v">{acctInfo.address || "—"}</div>
               <div className="info-k">Country</div><div className="info-v">{acctInfo.country || "—"}</div>
-              <div className="info-k">LinkedIn</div><div className="info-v">{acctInfo.linkedin || "—"}</div>
+              <div className="info-k">LinkedIn</div>
+              <div className="info-v copy-row">
+                <span className="copy-text">{acctInfo.linkedin || "—"}</span>
+                {acctInfo.linkedin ? (
+                  <CopyButton label="LinkedIn" done={copiedField === "info-linkedin"}
+                    onCopy={() => copyField("info-linkedin", acctInfo.linkedin)} />
+                ) : null}
+              </div>
               <div className="info-k">Portfolio</div><div className="info-v">{acctInfo.portfolio || "—"}</div>
             </div>
           ) : (
             <p className="muted">Select an account to see its details.</p>
           )}
+
+          <div className="modal-actions">
+            <button
+              className="btn"
+              onClick={() => { copySavedLocation(); setShowInfo(false); }}
+              disabled={!savedPath}
+              title={savedPath || "Generate a resume first"}
+            >
+              Copy Location
+            </button>
+            <button className="btn primary" onClick={() => setShowInfo(false)}>Close</button>
+          </div>
         </div>
       </div>
     )}
