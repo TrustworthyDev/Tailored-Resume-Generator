@@ -38,6 +38,11 @@ const SCHEMA = `
       main_stack TEXT,
       additional_info TEXT,
       birth_date TEXT,
+      password    TEXT,
+      recovery    TEXT,
+      resume_link TEXT,
+      cover_letter_link TEXT,
+      time_zone   TEXT,
       sort_order INTEGER,
       created_at TEXT
     );
@@ -293,6 +298,21 @@ function migrate() {
     }
   });
 
+  // Account fields the Markdown record format carries that the resume itself
+  // never uses. Deliberately NOT part of the AI prompt payload, which whitelists
+  // its fields — a stored password must never travel to a model.
+  [
+    ["password", "TEXT"],
+    ["recovery", "TEXT"],
+    ["resume_link", "TEXT"],
+    ["cover_letter_link", "TEXT"],
+    ["time_zone", "TEXT"],
+  ].forEach(([col, type]) => {
+    if (!acctCols.some((c) => c.name === col)) {
+      db.run(`ALTER TABLE accounts ADD COLUMN ${col} ${type}`);
+    }
+  });
+
   // Ensure proxies has a name column (a label, so several proxies on the same
   // host:port are told apart by something other than their username).
   const proxyCols = all("PRAGMA table_info(proxies)");
@@ -388,6 +408,36 @@ function getDbPath() {
   return dbPath;
 }
 
+// A standalone .sqlite holding ONLY the application history — every column of
+// every row, plus the accounts the entries point at so the file reads on its
+// own. Separate from the Settings → Database backup, which copies everything
+// (API keys, proxies, prompts, personal data). Returns the file's bytes.
+function exportApplicationsDb() {
+  syncFromDisk();
+  const out = new SQL.Database();
+  out.run(SCHEMA); // same shape, so an exported file is a valid Careerva database
+
+  const copy = (table) => {
+    const rows = query(`SELECT * FROM ${table}`);
+    if (!rows.length) return 0;
+    const cols = Object.keys(rows[0]);
+    const sql = `INSERT INTO ${table} (${cols.join(", ")}) VALUES (${cols.map(() => "?").join(", ")})`;
+    rows.forEach((r) => {
+      const stmt = out.prepare(sql);
+      stmt.bind(cols.map((c) => (r[c] === undefined ? null : r[c])));
+      stmt.step();
+      stmt.free();
+    });
+    return rows.length;
+  };
+
+  const applications = copy("applications");
+  copy("accounts"); // names/stacks the history refers to
+  const bytes = Buffer.from(out.export());
+  try { out.close(); } catch (_) {}
+  return { bytes, count: applications };
+}
+
 // Replace the live database with the contents of an imported .sqlite file.
 // Throws if the bytes are not a valid SQLite database. This machine's license
 // key is preserved so importing another machine's backup can't deactivate the
@@ -456,6 +506,93 @@ function insert(sql, params = []) {
   const rows = query("SELECT last_insert_rowid() AS id");
   persist();
   return rows[0] ? rows[0].id : null;
+}
+
+// Merge the application history out of an exported .sqlite. Entries already
+// here are skipped — identified by their unique generation id (request_id), and
+// for older entries that have none, by account + role + company + date. Rows are
+// re-pointed at the local account of the same name, creating it if it's missing,
+// because account ids differ between databases.
+function importApplications(filePath) {
+  syncFromDisk();
+  let src;
+  try {
+    src = new SQL.Database(fs.readFileSync(filePath));
+    src.exec("SELECT name FROM sqlite_master LIMIT 1");
+  } catch (_) {
+    return { ok: false, error: "That file isn't a readable SQLite database." };
+  }
+  if (!srcHasTable(src, "applications")) {
+    try { src.close(); } catch (_) {}
+    return { ok: false, error: "That database has no application history in it." };
+  }
+
+  const rows = srcAll(src, "SELECT * FROM applications ORDER BY id");
+  const srcAccounts = srcHasTable(src, "accounts")
+    ? srcAll(src, "SELECT * FROM accounts")
+    : [];
+  try { src.close(); } catch (_) {}
+
+  const norm = (v) => String(v == null ? "" : v).trim().toLowerCase();
+  const signature = (r) =>
+    [norm(r.match_account), norm(r.role), norm(r.company), norm(r.applied_at)].join("|");
+
+  const existing = all("SELECT * FROM applications");
+  const seenIds = new Set(existing.map((r) => norm(r.request_id)).filter(Boolean));
+  const seenSigs = new Set(existing.map(signature));
+
+  // Local accounts by name, so imported entries land under the right person.
+  const localAccounts = all("SELECT id, name FROM accounts");
+  const byName = new Map(localAccounts.map((a) => [norm(a.name), a.id]));
+  const srcAccountById = new Map(srcAccounts.map((a) => [a.id, a]));
+
+  const columns = all("PRAGMA table_info(applications)")
+    .map((c) => c.name)
+    .filter((c) => c !== "id"); // let the local table assign its own ids
+
+  let imported = 0;
+  let skipped = 0;
+  let accountsCreated = 0;
+
+  rows.forEach((r) => {
+    const rid = norm(r.request_id);
+    if (rid ? seenIds.has(rid) : seenSigs.has(signature(r))) { skipped++; return; }
+
+    // Resolve the owning account by name.
+    let accountId = null;
+    const srcAcc = srcAccountById.get(r.account_id);
+    const accName = norm(srcAcc && srcAcc.name) || norm(r.match_account);
+    if (accName) {
+      if (byName.has(accName)) accountId = byName.get(accName);
+      else if (srcAcc) {
+        accountId = insert(
+          `INSERT INTO accounts (name, title, email, phone, address, country, linkedin,
+             portfolio, main_stack, additional_info, birth_date, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [srcAcc.name ?? null, srcAcc.title ?? null, srcAcc.email ?? null, srcAcc.phone ?? null,
+           srcAcc.address ?? null, srcAcc.country ?? null, srcAcc.linkedin ?? null,
+           srcAcc.portfolio ?? null, srcAcc.main_stack ?? null, srcAcc.additional_info ?? null,
+           srcAcc.birth_date ?? null, srcAcc.created_at ?? new Date().toISOString()]
+        );
+        byName.set(accName, accountId);
+        accountsCreated++;
+      }
+    }
+
+    const values = columns.map((c) => {
+      if (c === "account_id") return accountId;
+      return r[c] === undefined ? null : r[c];
+    });
+    insert(
+      `INSERT INTO applications (${columns.join(", ")}) VALUES (${columns.map(() => "?").join(", ")})`,
+      values
+    );
+    if (rid) seenIds.add(rid);
+    seenSigs.add(signature(r));
+    imported++;
+  });
+
+  return { ok: true, imported, skipped, accountsCreated, total: rows.length };
 }
 
 // ---- Selective import (merge specific rows from another .sqlite file) -------
@@ -662,4 +799,5 @@ function importSelected(filePath, selection = {}) {
 
 module.exports = {
   initDb, all, get, run, insert, getDbPath, importDb, scanFile, importSelected,
+  exportApplicationsDb, importApplications,
 };

@@ -5,7 +5,6 @@ import Instructions from "../components/Instructions";
 import AccountManagement from "../components/AccountManagement";
 import ResumeGenerator from "../components/ResumeGenerator";
 import Applications from "../components/Applications";
-import Tracker from "../components/Tracker";
 import Activation from "../components/Activation";
 import { applyTheme } from "../components/Appearance";
 
@@ -17,7 +16,6 @@ const TABS = [
   { id: "generate", label: "Generate V1" },
   { id: "generate2", label: "Generate V2" },
   { id: "generate3", label: "Generate V3" },
-  { id: "tracker", label: "Tracker" },
 ];
 
 // Icon per notification category (danger | warning | alert | success | info).
@@ -145,7 +143,6 @@ export default function Home() {
         {tab === "applications" && <Applications />}
         {tab === "generate" && <ResumeGenerator variant="v1" />}
         {tab === "generate3" && <ResumeGenerator variant="v3" />}
-        {tab === "tracker" && <Tracker />}
       </main>
 
       {booting && (

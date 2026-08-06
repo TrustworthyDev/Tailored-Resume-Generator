@@ -7,6 +7,7 @@ const {
   buildPromptJson, parseResumeJson, refineV2Prompt, extractJdTarget, extractJobPost,
 } = require("./ai");
 const license = require("./license");
+const accountMd = require("./accountMd");
 
 const isDev = !!process.env.ELECTRON_DEV;
 
@@ -111,12 +112,6 @@ function migrateLegacyData() {
   }
 }
 
-function todayStr() {
-  // Local YYYY-MM-DD
-  const d = new Date();
-  const off = d.getTimezoneOffset() * 60000;
-  return new Date(d.getTime() - off).toISOString().slice(0, 10);
-}
 
 function nowIso() {
   return new Date().toISOString();
@@ -426,7 +421,8 @@ function registerIpc() {
     db.run(
       `UPDATE accounts SET name = ?, title = ?, email = ?, phone = ?, address = ?,
          country = ?, linkedin = ?, portfolio = ?, main_stack = ?, additional_info = ?,
-         birth_date = ? WHERE id = ?`,
+         birth_date = ?, password = ?, recovery = ?, resume_link = ?,
+         cover_letter_link = ?, time_zone = ? WHERE id = ?`,
       [
         d.name || "",
         d.title || "",
@@ -439,6 +435,11 @@ function registerIpc() {
         d.main_stack || "",
         d.additional_info || "",
         d.birth_date || "",
+        d.password || "",
+        d.recovery || "",
+        d.resume_link || "",
+        d.cover_letter_link || "",
+        d.time_zone || "",
         d.id,
       ]
     );
@@ -597,7 +598,9 @@ function registerIpc() {
     try {
       const rows = db.all(
         `SELECT ap.applied_at, ac.name AS account_name, ac.main_stack AS account_stack,
-                ap.role, ap.company, ap.country, ap.request_id, ap.pdf_path
+                ap.role, ap.company, ap.country, ap.location, ap.industry,
+                ap.employment_type, ap.salary_range, ap.request_id, ap.job_link,
+                ap.gpt_url, ap.pdf_path, ap.job_description
          FROM applications ap
          LEFT JOIN accounts ac ON ac.id = ap.account_id
          ORDER BY ap.id DESC`
@@ -613,17 +616,102 @@ function registerIpc() {
 
       // Quote every field so commas/quotes/newlines in values stay intact.
       const esc = (v) => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
-      const header = ["Applied At", "Account", "Stack", "Role", "Company", "Country", "Unique ID", "PDF Path"];
+      const header = [
+        "Applied At", "Account", "Stack", "Role", "Company", "Country",
+        "Location", "Industry", "Employment Type", "Salary", "Unique ID",
+        "Job Link", "ChatGPT URL", "PDF Path", "Job Description",
+      ];
       const lines = [header.map(esc).join(",")];
       rows.forEach((r) => {
         lines.push([
           r.applied_at, r.account_name, r.account_stack, r.role,
-          r.company, r.country, r.request_id, r.pdf_path,
+          r.company, r.country, r.location, r.industry, r.employment_type,
+          r.salary_range, r.request_id, r.job_link, r.gpt_url, r.pdf_path,
+          r.job_description,
         ].map(esc).join(","));
       });
       // BOM so Excel opens UTF-8 correctly.
       fs.writeFileSync(res.filePath, "﻿" + lines.join("\r\n"), "utf8");
       return { ok: true, path: res.filePath, count: rows.length };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
+  // Export the application history as its own .sqlite file — every column of
+  // every entry, independent of the Settings → Database backup (which carries
+  // API keys, proxies, prompts and personal data as well).
+  ipcMain.handle("applications:exportDb", async () => {
+    try {
+      const { bytes, count } = db.exportApplicationsDb();
+      if (!count) return { ok: false, error: "No applications to export." };
+
+      const stamp = nowStamp().folder.replace(/[: ]/g, "-");
+      const res = await dialog.showSaveDialog(mainWindow, {
+        title: "Export application history",
+        defaultPath: `careerva-applications ${stamp}.sqlite`,
+        filters: [{ name: "SQLite Database", extensions: ["sqlite"] }],
+      });
+      if (res.canceled || !res.filePath) return { canceled: true };
+
+      fs.writeFileSync(res.filePath, bytes);
+      return { ok: true, path: res.filePath, count };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
+  // Merge an exported history back in. Entries already present are skipped, so
+  // importing the same file twice is harmless.
+  ipcMain.handle("applications:importDb", async () => {
+    try {
+      const res = await dialog.showOpenDialog(mainWindow, {
+        title: "Import application history",
+        properties: ["openFile"],
+        filters: [{ name: "SQLite Database", extensions: ["sqlite", "sqlite3", "db"] }],
+      });
+      if (res.canceled || !res.filePaths.length) return { canceled: true };
+      return db.importApplications(res.filePaths[0]);
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
+  // One account as a Markdown record. The renderer sends what's on screen, so
+  // unsaved edits export too.
+  ipcMain.handle("account:exportMd", async (_e, d) => {
+    try {
+      const info = (d && d.personal) || {};
+      const name = String(info.name || "account").replace(/[<>:"/\\|?*\x00-\x1f]+/g, " ").trim();
+      const res = await dialog.showSaveDialog(mainWindow, {
+        title: "Export account",
+        defaultPath: `${name || "account"}.md`,
+        filters: [{ name: "Markdown", extensions: ["md"] }],
+      });
+      if (res.canceled || !res.filePath) return { canceled: true };
+      const md = accountMd.toMarkdown(info, (d && d.education) || [], (d && d.work) || []);
+      fs.writeFileSync(res.filePath, md, "utf8");
+      return { ok: true, path: res.filePath };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
+  // Read a Markdown record into the form — same shape the PDF import returns.
+  ipcMain.handle("account:importMd", async () => {
+    try {
+      const res = await dialog.showOpenDialog(mainWindow, {
+        title: "Import account",
+        properties: ["openFile"],
+        filters: [{ name: "Markdown", extensions: ["md", "markdown", "txt"] }],
+      });
+      if (res.canceled || !res.filePaths.length) return { canceled: true };
+      const text = fs.readFileSync(res.filePaths[0], "utf8");
+      const data = accountMd.parseMarkdown(text);
+      if (!data.personal.name && !data.work.length) {
+        return { ok: false, error: "That file doesn't look like an account record — no name or work history found." };
+      }
+      return { ok: true, data };
     } catch (e) {
       return { ok: false, error: (e && e.message) || String(e) };
     }
@@ -2032,21 +2120,6 @@ function registerIpc() {
     return { ok: true };
   });
 
-  ipcMain.handle("app:todayCount", () => {
-    const row = db.get(
-      "SELECT COUNT(*) AS c FROM applications WHERE substr(applied_at, 1, 10) = ?",
-      [todayStr()]
-    );
-    return { count: row ? row.c : 0 };
-  });
-
-  ipcMain.handle("app:todayList", () =>
-    db.all(
-      "SELECT * FROM applications WHERE substr(applied_at, 1, 10) = ? ORDER BY id DESC",
-      [todayStr()]
-    )
-  );
-
   ipcMain.handle("app:listAll", () =>
     db.all("SELECT * FROM applications ORDER BY id DESC")
   );
@@ -2071,31 +2144,6 @@ function registerIpc() {
     return { ok: true };
   });
 
-  // Sessions (start/end counting)
-  ipcMain.handle("session:start", () => {
-    const active = db.get("SELECT id FROM sessions WHERE end_time IS NULL");
-    if (active) return { ok: true, id: active.id, alreadyActive: true };
-    const id = db.insert(
-      "INSERT INTO sessions (start_time, end_time) VALUES (?, NULL)",
-      [nowIso()]
-    );
-    return { ok: true, id };
-  });
-
-  ipcMain.handle("session:end", () => {
-    db.run(
-      "UPDATE sessions SET end_time = ? WHERE end_time IS NULL",
-      [nowIso()]
-    );
-    return { ok: true };
-  });
-
-  ipcMain.handle("session:active", () => {
-    const row = db.get(
-      "SELECT id, start_time FROM sessions WHERE end_time IS NULL ORDER BY id DESC LIMIT 1"
-    );
-    return { active: !!row, session: row || null };
-  });
 }
 
 app.whenReady().then(async () => {
