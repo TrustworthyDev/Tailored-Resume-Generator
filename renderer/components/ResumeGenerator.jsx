@@ -159,6 +159,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const [openModalAfterPreview, setOpenModalAfterPreview] = useState(true);
   const [autoGenerate, setAutoGenerate] = useState(false);
   const [coverLetter, setCoverLetter] = useState(true);
+  const [autoOpenPdf, setAutoOpenPdf] = useState(false); // open the saved PDF in the system viewer
   const [prefsReady, setPrefsReady] = useState(false); // toggles render after load
   const [copied, setCopied] = useState(false);
   const [acctInfo, setAcctInfo] = useState(null); // contact info for the live viewer
@@ -322,6 +323,9 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       }
       if (savedPathPref && savedPathPref.value) setSavedPath(savedPathPref.value);
       if (savedAtPref && savedAtPref.value) setSavedAt(savedAtPref.value);
+
+      const autoOpenPref = await api().getPref("auto_open_pdf");
+      if (autoOpenPref && autoOpenPref.value != null) setAutoOpenPdf(autoOpenPref.value === "1");
 
       // The last target job, so "View info" survives a restart.
       const [rolePref, companyPref, countryPref] = await Promise.all([
@@ -646,6 +650,8 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
           copyFolderToClipboard(exp.path);
           // Windows notification (account + company + role + success). Not on colour re-renders.
           try { api().notifyResumeDone({ account: (acc && acc.name) || "", role: role || jobRole, company: company || jobCompany }); } catch (_) {}
+          // Optionally hand the finished PDF straight to the system viewer.
+          if (autoOpenPdf) { try { api().openPdf(exp.path); } catch (_) {} }
           // Land on the saved-resume modal. It replaces the optional preview
           // modal rather than stacking on top of it.
           setShowPreview(false);
@@ -710,10 +716,22 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   // Generate V2: build the same prompt, hand it to the user's signed-in ChatGPT
   // in the embedded browser, and wait for the reply to arrive on the clipboard
   // (recognised by the unique handshake id). Then render exactly like V1.
-  // Generate V3: load the job-post link and extract the full posting. Clearing
-  // happens on the Extract CLICK, not while the link is being typed or pasted —
-  // editing the box leaves the current job on screen until you actually ask for
-  // a new read.
+  // Generate V3: editing the link drops only the detail chips under it, since
+  // they describe a URL that is no longer in the box. Everything else — the
+  // description, the cached resume, the remembered target — is left alone until
+  // Extract is actually clicked.
+  const clearExtractedDetails = (nextLink) => {
+    const from = jobMetaRef.current;
+    if (!from) return;
+    if ((nextLink || "").trim() === (from.url || "").trim()) return;
+    setJobMeta(null);
+    jobMetaRef.current = null;
+    api().setPref("gen_v3_meta", "");
+  };
+
+  // Generate V3: load the job-post link and extract the full posting. The full
+  // clear — description, cached resume, remembered extraction — happens on the
+  // Extract CLICK, not while the link is being typed.
   const fetchJobFromLink = async () => {
     const link = (jobLink || "").trim();
     if (!/^https?:\/\//i.test(link)) {
@@ -1335,11 +1353,13 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     } catch (_) {}
   };
 
-  // Copying is the last thing you'd do here, so it closes the modal too.
+  // Copying is the last thing you'd do here: close the modal and land back on
+  // Generate Resume, ready for the next job.
   const copySavedLocation = () => {
     copyFolderToClipboard(savedPath);
     toast("Folder path copied to clipboard.", "success");
     setShowSaved(false);
+    setView("generate");
   };
 
   const copy = () => navigator.clipboard.writeText(result);
@@ -1538,7 +1558,14 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
               type="button"
               className="resume-tab"
               onClick={() => setShowInfo(true)}
-              title="Show this account's personal info and the target job"
+              // Mid-generation the target job is still the previous one, so the
+              // modal would show stale details. Off limits until it settles.
+              disabled={loading || v2Waiting}
+              title={
+                loading || v2Waiting
+                  ? "Available once the resume has finished generating"
+                  : "Show this account's personal info and the target job"
+              }
             >
               View info
             </button>
@@ -1584,7 +1611,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
                   type="url"
                   placeholder="https://…  (the job posting page)"
                   value={jobLink}
-                  onChange={(e) => { setJobLink(e.target.value); api().setPref("gen_job_link", e.target.value); }}
+                  onChange={(e) => { setJobLink(e.target.value); api().setPref("gen_job_link", e.target.value); clearExtractedDetails(e.target.value); }}
                   onKeyDown={(e) => { if (e.key === "Enter" && !fetchingJd) fetchJobFromLink(); }}
                 />
                 <button
@@ -1820,6 +1847,18 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
             </label>
             )}
             </>)}
+            {/* Applies to every generator, so it sits outside the V1/V2-only group. */}
+            {prefsReady && (
+            <label className="toggle" title="When ON, the saved PDF opens in your default viewer as soon as it is generated.">
+              <input
+                type="checkbox"
+                checked={autoOpenPdf}
+                onChange={(e) => { setAutoOpenPdf(e.target.checked); api().setPref("auto_open_pdf", e.target.checked ? "1" : "0"); }}
+              />
+              <span className="toggle-track"><span className="toggle-thumb" /></span>
+              <span className="toggle-label">Open PDF after generate</span>
+            </label>
+            )}
           </div>
           <div className="action-group">
             <button className="btn primary" onClick={() => runGenerate()} disabled={loading}>

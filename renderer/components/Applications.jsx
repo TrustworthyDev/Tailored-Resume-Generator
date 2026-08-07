@@ -212,8 +212,22 @@ export default function Applications() {
     const meta = [];
     if (a.company) meta.push(<span key="c" className="app-company">{a.company}</span>);
     if (a.country) meta.push(<span key="ct" className="app-country">{country(a.country)}</span>);
-    if (showAccount && a.account_name) meta.push(<span key="ac">Account: {a.account_name}{cat}</span>);
-    else if (cat) meta.push(<span key="cat">{cat}</span>);
+    // The account, with the flag of where that person is based — distinct from
+    // the job's country above it.
+    if (a.account_name) {
+      meta.push(
+        <span key="ac">
+          Account: {a.account_name}
+          {a.account_country ? (
+            <span className="app-account-country" title={a.account_country}>
+              <span className="flag">{countryFlag(a.account_country)}</span>
+              {a.account_country}
+            </span>
+          ) : null}
+          {cat}
+        </span>
+      );
+    } else if (cat) meta.push(<span key="cat">{cat}</span>);
     return (
       <div className="app-card" key={a.id}>
         <div className="app-top">
@@ -480,7 +494,8 @@ export default function Applications() {
                 </p>
               )}
 
-              <div className="app-list">{rows.map((a) => renderApp(a, searching))}</div>
+              {/* Same card as All Applications, account line included. */}
+              <div className="app-list">{rows.map((a) => renderApp(a, true))}</div>
             </section>
           </div>
         </div>

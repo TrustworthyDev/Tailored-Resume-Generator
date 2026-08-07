@@ -501,7 +501,8 @@ function registerIpc() {
       `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
               ap.gpt_url, (CASE WHEN IFNULL(ap.gpt_url,'') <> '' THEN 1 ELSE 0 END) AS has_gpt,
               ap.job_link, (CASE WHEN IFNULL(ap.job_link,'') <> '' THEN 1 ELSE 0 END) AS has_link,
-              ac.main_stack AS account_stack
+              ac.name AS account_name, ac.main_stack AS account_stack,
+              ac.country AS account_country
        FROM applications ap
        LEFT JOIN accounts ac ON ac.id = ap.account_id
        WHERE ap.account_id = ? ORDER BY ap.id DESC`,
@@ -516,7 +517,8 @@ function registerIpc() {
       `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
               ap.gpt_url, (CASE WHEN IFNULL(ap.gpt_url,'') <> '' THEN 1 ELSE 0 END) AS has_gpt,
               ap.job_link, (CASE WHEN IFNULL(ap.job_link,'') <> '' THEN 1 ELSE 0 END) AS has_link,
-              ac.name AS account_name, ac.main_stack AS account_stack
+              ac.name AS account_name, ac.main_stack AS account_stack,
+              ac.country AS account_country
        FROM applications ap
        LEFT JOIN accounts ac ON ac.id = ap.account_id
        ORDER BY ap.id DESC`
@@ -530,7 +532,8 @@ function registerIpc() {
       `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
               ap.gpt_url, (CASE WHEN IFNULL(ap.gpt_url,'') <> '' THEN 1 ELSE 0 END) AS has_gpt,
               ap.job_link, (CASE WHEN IFNULL(ap.job_link,'') <> '' THEN 1 ELSE 0 END) AS has_link,
-              ac.name AS account_name, ac.main_stack AS account_stack
+              ac.name AS account_name, ac.main_stack AS account_stack,
+              ac.country AS account_country
        FROM applications ap
        LEFT JOIN accounts ac ON ac.id = ap.account_id
        WHERE LOWER(IFNULL(ac.name, '')) LIKE ?
