@@ -149,7 +149,7 @@ export default function Home() {
         <div className="modal-overlay boot-overlay" role="status" aria-live="polite">
           <div className="modal modal-progress">
             <div className="spinner" />
-            <h3 className="modal-title">Starting Careerva</h3>
+            <h3 className="modal-title">Starting RGenerator</h3>
             <p className="muted modal-msg">
               Opening the ChatGPT tab in the background. This only happens once per launch.
             </p>

@@ -27,7 +27,7 @@ export default function Security() {
         )}
       </div>
       <p className="muted">
-        Careerva is locked to this machine. Activation uses a license key
+        RGenerator is locked to this machine. Activation uses a license key
         generated for the Machine ID below.
       </p>
 

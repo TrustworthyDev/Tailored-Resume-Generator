@@ -8,6 +8,8 @@ const os = require("os");
 const { execSync } = require("child_process");
 
 // Shared secret — MUST match the keygen tool. Keep the keygen private.
+// NOT renamed with the app: every key ever issued is an HMAC over this exact
+// string, so changing it would invalidate every existing activation.
 const SECRET = "Careerva-9f4Qe2$Kx7!pZr3@Lm8#Vn1&Hb6^Wd0-v1";
 
 // A stable per-machine fingerprint (Windows MachineGuid; OS fallback).
