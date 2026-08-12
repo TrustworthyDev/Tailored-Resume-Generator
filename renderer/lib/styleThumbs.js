@@ -141,29 +141,34 @@ export function styleThumb(style) {
       break;
     }
     case "classic": {
-      inner += rc(70, 20, 100, 14, nameC || "#111111", 2);   // centered name
-      inner += rc(55, 40, 130, 6, titleC || "#333333");      // centered title
-      inner += rc(20, 54, 200, 2, "#111111");                // double rule (thick)
-      inner += rc(20, 58, 200, 1, "#111111");                // double rule (thin)
-      inner += rc(64, 64, 112, 4, G);                        // centered contacts
-      inner += rc(20, 80, 80, 8, head || "#111111");         // Summary heading
-      inner += rc(20, 92, 200, 4, G);
-      inner += rc(20, 100, 188, 4, G);
-      inner += rc(20, 114, 60, 8, head || "#111111");        // Skills heading
-      for (let i = 0; i < 3; i++) {
-        inner += `<circle cx='24' cy='${129 + i * 8}' r='1.6' fill='#333333'/>`;
-        inner += rc(30, 127 + i * 8, 190, 3.5, G);
+      // Name, role title, then the technology line; contacts bracketed by two
+      // coloured double rules with an icon leading each item; section headings
+      // centred between rules that run out to both edges.
+      const rule = head || "#111111";
+      inner += rc(70, 16, 100, 14, nameC || "#111111", 2);   // centered name
+      inner += rc(62, 36, 116, 6, titleC || "#333333");      // centered role title
+      inner += rc(50, 47, 140, 5, titleC || "#555555");      // centered tech line
+      inner += rc(20, 58, 200, 2, rule);                     // double rule (thick)
+      inner += rc(20, 62, 200, 1, rule);                     // double rule (thin)
+      for (let i = 0; i < 4; i++) {                          // contacts, with icons
+        const x = 28 + i * 49;
+        inner += rc(x, 69, 6, 6, rule, 1);                   // icon
+        inner += rc(x + 9, 70.5, 30, 4, G);                  // text
       }
-      inner += rc(20, 158, 92, 8, head || "#111111");        // Experience heading
-      let y = 172;
-      for (let k = 0; k < 2; k++) {
-        inner += rc(20, y, 112, 6, "#111111");               // Role, Dates (bold)
-        inner += rc(20, y + 9, 70, 4, "#666666");            // Company (italic)
+      inner += rc(20, 82, 200, 2, rule);                     // second double rule
+      inner += rc(20, 86, 200, 1, rule);
+      let y = 98;
+      for (let k = 0; k < 3; k++) {
+        inner += rc(20, y + 3, 62, 1.5, head || "#111111");  // rule to the label
+        inner += rc(90, y, 60, 8, head || "#111111");        // centred heading
+        inner += rc(158, y + 3, 62, 1.5, head || "#111111"); // rule to the edge
+        inner += rc(20, y + 16, 112, 6, "#111111");          // role | stack
+        inner += rc(20, y + 25, 70, 4, "#666666");           // company
         for (let i = 0; i < 3; i++) {
-          inner += `<circle cx='24' cy='${y + 21 + i * 7}' r='1.6' fill='#333333'/>`;
-          inner += rc(30, y + 19 + i * 7, 180, 3.5, G);
+          inner += `<circle cx='24' cy='${y + 37 + i * 7}' r='1.6' fill='#333333'/>`;
+          inner += rc(30, y + 35 + i * 7, 180, 3.5, G);
         }
-        y += 52;
+        y += 62;
       }
       break;
     }
@@ -180,8 +185,8 @@ export function styleThumb(style) {
         inner += rc(40, y + 3, 26, 2, a);
         inner += rc(90, y, 60, 7, a);
         inner += rc(174, y + 3, 26, 2, a);
-        inner += rc(75, y + 15, 90, 6, "#1a1a1a");                // company – location
-        inner += rc(85, y + 25, 70, 4, a);                        // role, dates (accent)
+        inner += rc(75, y + 15, 90, 6, a);                        // role | stack (accent)
+        inner += rc(85, y + 25, 70, 4, "#555555");                // company - country | dates
         for (let i = 0; i < 3; i++) {
           inner += `<circle cx='26' cy='${y + 37 + i * 8}' r='1.6' fill='#555555'/>`;
           inner += rc(32, y + 35 + i * 8, 188, 3.5, G);
@@ -218,7 +223,8 @@ export function styleThumb(style) {
       inner += rc(20, 54, 200, 1, a);                             // rule under header
       let y = 66;
       for (let k = 0; k < 4; k++) {
-        inner += rc(20, y, 62, 12, "#ece7e1", 1);                 // shaded heading band
+        // The heading band is tinted from the Name picker, matching the template.
+        inner += rc(20, y, 62, 12, nameC ? nameC + "26" : "#ece7e1", 1);
         inner += rc(25, y + 4, 44, 5, "#1a1a1a");
         inner += rc(20, y + 19, 96, 6, a);                        // accent role/degree title
         inner += rc(20, y + 29, 76, 4, G);                        // company · dates
@@ -277,22 +283,23 @@ export function styleThumb(style) {
       break;
     }
     case "formal": {
-      // Centered uppercase name bracketed by rules, a centered summary, and
-      // section labels reversed out of solid boxes.
-      inner += rc(16, 16, 208, 2, a);                            // rule above
-      inner += rc(66, 25, 108, 14, nameC || "#111111", 1);       // centered name
-      inner += rc(84, 44, 72, 5, titleC || "#555555");           // centered title
-      inner += rc(16, 56, 208, 2, a);                            // rule below
+      // Centered uppercase name inside a box ruled on all four sides, a centered
+      // summary, and section labels reversed out of solid boxes.
+      inner += `<rect x='16' y='16' width='208' height='42' rx='1' fill='none' stroke='${a}' stroke-width='2'/>`;
+      inner += rc(66, 24, 108, 14, nameC || "#111111", 1);       // centered name
+      inner += rc(84, 43, 72, 5, titleC || "#555555");           // centered title
       inner += rc(52, 64, 136, 4, G);                            // centered contacts
       inner += rc(40, 74, 160, 4, G);                            // centered summary
       inner += rc(56, 82, 128, 4, G);
       let y = 98;
       for (let k = 0; k < 3; k++) {
+        inner += rc(16, y + 5, 58, 2, a);                        // rule to the label
         inner += rc(78, y, 84, 12, a, 1);                        // solid label box
         inner += rc(88, y + 4, 64, 4, "#ffffff");
-        inner += rc(90, y + 19, 60, 5, "#333333");               // centered role
-        inner += rc(76, y + 28, 88, 5, "#111111");               // centered org (bold)
-        inner += rc(94, y + 37, 52, 4, "#666666");               // centered dates
+        inner += rc(166, y + 5, 58, 2, a);                       // rule to the edge
+        inner += rc(84, y + 19, 72, 6, a);                       // role | stack (accent, bold)
+        inner += rc(76, y + 29, 88, 5, "#555555");               // company · location (unweighted)
+        inner += rc(94, y + 38, 52, 4, "#666666");               // dates
         for (let i = 0; i < 3; i++) {
           inner += `<circle cx='24' cy='${y + 51 + i * 8}' r='1.6' fill='#555555'/>`;
           inner += rc(30, y + 49 + i * 8, 190, 3.5, G);
@@ -303,7 +310,7 @@ export function styleThumb(style) {
     }
     case "banded": {
       // Centered name/title in a tinted rounded panel, then full-width centered
-      // section bands with "Title | Org" over "Dates | Location" entries.
+      // section bands with "Role | Stack" over "Company | Location | Dates".
       const band = head ? head + "33" : "#e9eaf3";
       inner += `<rect x='16' y='14' width='208' height='48' rx='6' fill='${band}'/>`;
       inner += rc(78, 22, 84, 14, nameC || "#1b1f27", 2);        // centered name
@@ -312,9 +319,9 @@ export function styleThumb(style) {
       let y = 74;
       for (let k = 0; k < 4; k++) {
         inner += rc(16, y, 208, 12, band, 2);                    // full-width band
-        inner += rc(96, y + 4, 48, 5, "#1b1f27");                // centered label
-        inner += rc(20, y + 20, 108, 6, "#1b1f27");              // Title | Org
-        inner += rc(20, y + 30, 72, 4, G);                       // Dates | Location
+        inner += rc(96, y + 4, 48, 5, nameC || "#1b1f27");       // centered label (name colour)
+        inner += rc(20, y + 20, 108, 6, "#1b1f27");              // Role | Stack
+        inner += rc(20, y + 30, 88, 4, G);                       // Company | Location | Dates
         for (let i = 0; i < 3; i++) {
           inner += `<circle cx='26' cy='${y + 43 + i * 8}' r='1.6' fill='#555555'/>`;
           inner += rc(32, y + 41 + i * 8, 188, 3.5, G);

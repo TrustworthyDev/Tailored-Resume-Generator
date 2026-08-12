@@ -147,7 +147,9 @@ function buildPrompt(personal, work, education, projects, jobDescription, style,
   lines.push("- Line 2: the professional title only, as plain text (no heading, no bold).");
   lines.push("- Line 3: contacts on ONE line separated by ` | ` — email | phone | city, country | LinkedIn URL.");
   lines.push("- Then each section as a level-2 heading, e.g. `## Professional Summary`, `## Core Technical Skills`, `## Professional Experience`.");
-  lines.push("- Each job under experience as a level-3 heading `### Title — Company · Location | Dates`, then `- ` bullet points (omit `· Location` if there is no location).");
+  lines.push("- Each job under experience as a level-3 heading `### Role Title | Tech1, Tech2, Tech3 — Company · Location | Dates`, then `- ` bullet points (omit `· Location` if there is no location, and the ` | Tech…` part if the role has no headline stack).");
+  lines.push("- Those three separators are parsed to lay out the role line, so use them exactly: COMMAS between the technologies (never `|`), an em dash ` — ` before the company, and a middle dot ` · ` between company and location.");
+  lines.push("- KEYWORDS: inside the experience bullets and project descriptions, wrap every technology, tool, framework, platform or named skill that also appears in the job description in `**bold**` — these are what a recruiter skims and an ATS scores. Bold the term ONLY, never a whole clause or sentence, and use the job description's exact spelling and casing. Leave ordinary prose unbolded; if nearly everything is bold, nothing stands out.");
   lines.push("- Never put the name, title, and contacts on the same line, and do not wrap the LinkedIn URL in a Markdown link.");
   if (jobDescription && jobDescription.trim()) {
     lines.push(
@@ -556,7 +558,8 @@ function buildPromptJson(personal, work, education, projects, jobDescription, st
         "Echo `request_id` and `job_ref` back EXACTLY as given above so the app can verify the reply matches this request. " +
         "`user_prompt` is the SOLE authority for the resume's content, wording, tone and emphasis — follow it. Build the resume FRESH from THIS JSON only (never reuse a resume from earlier in the conversation) and fill every field of `resume` following this schema EXACTLY. " +
         "NOTHING you write is dropped: if `user_prompt` calls for a section the fixed fields don't cover (Key Achievements, Certifications, Languages, Awards, Publications…), put it in `additional_sections` with its heading, its lines in `bullets`, and `position` saying where it belongs. Use `additional_sections` rather than inventing new top-level keys. " +
-        "Fill `target` (used to file the application): `target.role` = the job title copied VERBATIM from job_description; `target.company` = the hiring company; `target.country` = the job's country as a plain country name (infer from location/office; map a city to its country); use \"Unknown\" only when a part is genuinely absent. " +
+        "KEYWORDS: inside every `experience[].bullets` entry and each `projects[].description`, wrap each technology, tool, framework, platform or named skill that also appears in `job_description` in Markdown `**bold**`, using the job description's exact spelling and casing. Bold the term ONLY — never a whole clause or sentence — and leave ordinary prose unbolded, since bolding everything makes nothing stand out. " +
+        "Fill `target` (used to file the application): `target.role` = the job title copied VERBATIM from job_description;`target.company` = the hiring company; `target.country` = the job's country as a plain country name (infer from location/office; map a city to its country); use \"Unknown\" only when a part is genuinely absent. " +
         (extra ? "Honour `additional_info_for_this_application` — job-specific notes for THIS application. " : "") +
         "If the user later asks job-application questions, answer each in its own fenced code block — positive, first-person, consistent with the resume; this does not change the resume output.",
       request_id: id,
@@ -568,7 +571,7 @@ function buildPromptJson(personal, work, education, projects, jobDescription, st
         contact: { email: "<email>", phone: "<phone>", location: "<City, Country>", linkedin: "<LinkedIn URL>", portfolio: "<portfolio URL or empty>" },
         summary: "<2-3 sentence professional summary tailored to the job>",
         skills: [{ category: "<e.g. Programming Languages>", items: ["<skill>", "<skill>"] }],
-        experience: [{ title: "<role title>", company: "<company>", location: "<location or empty>", dates: "<date range>", bullets: ["<achievement>", "<achievement>"] }],
+        experience: [{ title: "<role title, optionally followed by ' | ' and 2-3 COMMA-separated technologies>", company: "<company>", location: "<location or empty>", dates: "<date range>", bullets: ["<achievement>", "<achievement>"] }],
         education: [{ degree: "<degree>", university: "<university>", location: "<location>", period: "<period>" }],
         projects: [{ title: "<project title>", link: "<full URL or empty>", description: "<one-line description>" }],
         additional_sections: [{ heading: "<any other section, e.g. Key Achievements>", position: "after_summary | after_skills | after_experience | after_education | end", bullets: ["<line>", "<line>"] }],

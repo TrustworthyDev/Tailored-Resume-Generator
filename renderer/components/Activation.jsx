@@ -28,7 +28,7 @@ export default function Activation({ onActivated }) {
       <div className="activation-card">
         <div className="brand-row">
           <span className="logo">C</span>
-          <h1>Activate Careerva</h1>
+          <h1>Activate RGenerator</h1>
         </div>
         <p className="muted">
           This copy must be activated on this machine. Share the Machine ID below

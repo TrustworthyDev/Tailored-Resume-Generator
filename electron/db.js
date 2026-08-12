@@ -162,7 +162,8 @@ async function initDb(userDataDir) {
       path.join(__dirname, "..", "node_modules", "sql.js", "dist", file),
   });
 
-  dbPath = path.join(userDataDir, "careerva.sqlite");
+  // Kept in step with DB_FILE in main.js, which migrates it across renames.
+  dbPath = path.join(userDataDir, "rgenerator.sqlite");
 
   if (fs.existsSync(dbPath)) {
     db = new SQL.Database(fs.readFileSync(dbPath));
@@ -415,7 +416,7 @@ function getDbPath() {
 function exportApplicationsDb() {
   syncFromDisk();
   const out = new SQL.Database();
-  out.run(SCHEMA); // same shape, so an exported file is a valid Careerva database
+  out.run(SCHEMA); // same shape, so an exported file is a valid RGenerator database
 
   const copy = (table) => {
     const rows = query(`SELECT * FROM ${table}`);

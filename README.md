@@ -1,4 +1,4 @@
-# Careerva v1
+# RGenerator v1
 
 Desktop app to generate tailored resumes (via Gemini) and track job applications.
 
@@ -29,6 +29,7 @@ npm run dist         # electron-builder -> release/
 ```
 
 ## Data location
-A real SQLite file `careerva.sqlite` is stored in Electron's `userData` directory
-(Windows: `%APPDATA%/Careerva`). Data from the previous `TailorApply` name is
+A real SQLite file `rgenerator.sqlite` is stored in Electron's `userData` directory
+(Windows: `%APPDATA%/RGenerator`). Data from the previous `Careerva` and
+`TailorApply` names — the database and the signed-in ChatGPT session — is
 migrated automatically on first launch.

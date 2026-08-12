@@ -21,7 +21,7 @@ try {
   const exeDir = path.basename(path.dirname(process.execPath)).toLowerCase();
   isUnpackedBuild = app.isPackaged && exeDir === "win-unpacked";
   if (isUnpackedBuild) {
-    const devData = path.join(app.getPath("appData"), "Careerva (Unpacked)");
+    const devData = path.join(app.getPath("appData"), "RGenerator (Unpacked)");
     fs.mkdirSync(devData, { recursive: true });
     app.setPath("userData", devData);
   }
@@ -34,7 +34,7 @@ function logCrash(where, err) {
     const line = `[${new Date().toISOString()}] ${where}: ${
       (err && err.stack) || err
     }\n`;
-    fs.appendFileSync(path.join(app.getPath("userData"), "careerva.log"), line);
+    fs.appendFileSync(path.join(app.getPath("userData"), "rgenerator.log"), line);
   } catch (_) {}
 }
 process.on("uncaughtException", (e) => logCrash("uncaughtException", e));
@@ -94,19 +94,60 @@ function seedConnectionMode() {
 process.on("unhandledRejection", (e) => logCrash("unhandledRejection", e));
 let mainWindow = null;
 
-// One-time migration: the app was renamed from "TailorApply" to "Careerva",
-// which changes the userData folder. If this machine has data from the old
-// name and none yet under the new one, copy the database over so nothing is
-// lost. Runs once — after the new DB exists it's a no-op.
+// The app's database file, inside whatever userData folder the product name
+// resolves to. Kept in step with db.js.
+const DB_FILE = "rgenerator.sqlite";
+
+// Every name this app has shipped under, newest first. Renaming changes the
+// userData folder, so a rename would otherwise look like a fresh install with
+// an empty database.
+const LEGACY_INSTALLS = [
+  { dir: "Careerva", db: "careerva.sqlite" },
+  { dir: "TailorApply", db: "tailorapply.sqlite" },
+];
+
+// Chromium's throwaway directories — regenerated on demand, and by far the
+// bulk of a session folder. No reason to copy them during a migration.
+const DISPOSABLE_DIRS = new Set([
+  "Cache", "Code Cache", "GPUCache", "DawnCache", "ShaderCache",
+  "GraphiteDawnCache", "DawnGraphiteCache", "DawnWebGPUCache",
+]);
+
+function copyTree(src, dest) {
+  let entries;
+  try { entries = fs.readdirSync(src, { withFileTypes: true }); } catch (_) { return; }
+  try { fs.mkdirSync(dest, { recursive: true }); } catch (_) { return; }
+  entries.forEach((entry) => {
+    if (entry.isDirectory()) {
+      if (DISPOSABLE_DIRS.has(entry.name)) return;
+      copyTree(path.join(src, entry.name), path.join(dest, entry.name));
+    } else {
+      try { fs.copyFileSync(path.join(src, entry.name), path.join(dest, entry.name)); } catch (_) {}
+    }
+  });
+}
+
+// One-time migration after a rename: bring the previous install's database and
+// its signed-in ChatGPT session across, so nothing is lost and V2/V3 don't ask
+// for a fresh login. Runs once — once the new database exists it's a no-op.
 function migrateLegacyData() {
   try {
     const newDir = app.getPath("userData");
-    const newDb = path.join(newDir, "careerva.sqlite");
-    if (fs.existsSync(newDb)) return; // already migrated, or fresh install
-    const oldDb = path.join(app.getPath("appData"), "TailorApply", "tailorapply.sqlite");
-    if (!fs.existsSync(oldDb)) return; // nothing from the old name to bring over
+    const newDb = path.join(newDir, DB_FILE);
+    if (fs.existsSync(newDb)) return; // already migrated, or a genuine fresh install
+    const appData = app.getPath("appData");
+
+    const previous = LEGACY_INSTALLS.map((legacy) => ({
+      dir: path.join(appData, legacy.dir),
+      db: path.join(appData, legacy.dir, legacy.db),
+    })).find((candidate) => fs.existsSync(candidate.db));
+    if (!previous) return; // nothing from an earlier name to bring over
+
     fs.mkdirSync(newDir, { recursive: true });
-    fs.copyFileSync(oldDb, newDb);
+    fs.copyFileSync(previous.db, newDb);
+    // The embedded browser's cookies live here; without them the ChatGPT tab
+    // would come up signed out after the rename.
+    copyTree(path.join(previous.dir, "Partitions"), path.join(newDir, "Partitions"));
   } catch (e) {
     logCrash("migrateLegacyData", e);
   }
@@ -221,7 +262,7 @@ function createWindow() {
     minWidth: 900,
     minHeight: 640,
     center: true,
-    title: "Careerva",
+    title: "RGenerator",
     // Match the app's dark theme so there's no white flash before the UI paints.
     backgroundColor: "#0c0e13",
     webPreferences: {
@@ -652,7 +693,7 @@ function registerIpc() {
       const stamp = nowStamp().folder.replace(/[: ]/g, "-");
       const res = await dialog.showSaveDialog(mainWindow, {
         title: "Export application history",
-        defaultPath: `careerva-applications ${stamp}.sqlite`,
+        defaultPath: `rgenerator-applications ${stamp}.sqlite`,
         filters: [{ name: "SQLite Database", extensions: ["sqlite"] }],
       });
       if (res.canceled || !res.filePath) return { canceled: true };
@@ -910,7 +951,7 @@ function registerIpc() {
     try {
       const res = await dialog.showSaveDialog(mainWindow, {
         title: "Export database",
-        defaultPath: "careerva-backup.sqlite",
+        defaultPath: "rgenerator-backup.sqlite",
         filters: [{ name: "SQLite Database", extensions: ["sqlite"] }],
       });
       if (res.canceled || !res.filePath) return { canceled: true };
@@ -1784,7 +1825,7 @@ function registerIpc() {
     // Open on the SAME display as the main app window (multi-monitor setups),
     // centered within that display's work area.
     const winOpts = {
-      width: 1180, height: 860, title: "ChatGPT — Careerva V2",
+      width: 1180, height: 860, title: "ChatGPT — RGenerator V2",
       autoHideMenuBar: true,
       show: true,
       webPreferences: {
@@ -2152,7 +2193,7 @@ function registerIpc() {
 app.whenReady().then(async () => {
   try {
     // Attribute Windows toast notifications to this app (and use its icon).
-    try { app.setAppUserModelId("com.careerva.app"); } catch (_) {}
+    try { app.setAppUserModelId("com.rgenerator.app"); } catch (_) {}
     // The unpacked build is a separate sandbox — don't pull in legacy data.
     if (!isUnpackedBuild) migrateLegacyData();
     await db.initDb(app.getPath("userData"));

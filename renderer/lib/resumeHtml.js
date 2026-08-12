@@ -46,13 +46,18 @@ main h3 { font-size: 11pt; margin: 8px 0 1px; color: #333333; font-weight: 700; 
    words, and PDF text extractors read those wide gaps as extra separators —
    which splits phrases an ATS is trying to match. It reads better too. */
 main p { margin: 3px 0; text-align: left; }
-main p.skills { line-height: 1.6; text-align: left; }
+/* One paragraph per skill category, so margins are zeroed and the 1.6 line
+   height alone provides the spacing the single <br>-joined block used to have. */
+main p.skills { margin: 0; line-height: 1.6; text-align: left; }
 main ul { margin: 3px 0 6px; padding-left: 18px; }
 main li { margin: 1px 0; text-align: left; }
 /* Tighten the skills section so the first experience entry fits on page 1. */
 main h2 + ul { margin-top: 2px; }
-/* Body emphasis is NOT bold — only headings and skill categories are. */
-main strong { color: #14181e; font-weight: normal; }
+/* Body emphasis IS bold. The model marks the job description's technologies in
+   the bullets, and those keywords are exactly what a recruiter skims and an ATS
+   scores, so they need to stand off the surrounding prose rather than blend in.
+   Styles that want a different weight override this per selector. */
+main strong { color: #14181e; font-weight: 700; }
 main p.skills strong { font-weight: 700; }
 main em { color: #5a6573; font-style: italic; }
 /* Work-history role line: title (with right-aligned dates) + company·location. */
@@ -81,7 +86,15 @@ main h2, main h3 { break-after: avoid; }
 .kh { break-inside: avoid; }
 .kh-first { margin-bottom: 0; }
 .kh-rest { margin-top: 0; }
-main li { break-inside: avoid; }
+/* Nothing that carries a sentence may be cut by a page break. A bullet, the
+   summary, a skills line, a project description or an education entry that
+   doesn't fit at the foot of a page moves to the next one whole. Beyond reading
+   badly, a sentence split across the fold comes back from a PDF text extractor
+   as two fragments, so an ATS matching a phrase can miss it. orphans/widows stay
+   as a fallback for renderers that ignore break-inside. */
+main li, main p, .proj-head, .proj-desc, .edu-line, .edu-org, .role-org,
+.fm-head, .ctr-head, .bd-meta, .bd-edu, .tl-date, .tl-loc, .tl-company,
+.edu-ctr-degree, .edu-ctr-org, .edu-ctr-period { break-inside: avoid; }
 main p { orphans: 2; widows: 2; }
 a { text-decoration: none; }
 /* Header contact links follow the contact-line colour (visible on every style,
@@ -97,7 +110,7 @@ a { text-decoration: none; }
 // change with the picker. `accent` already follows the pick for elements that
 // were always themed; `head || <default>` themes the rest without altering the
 // Default appearance.
-function templateCss(id, accent, head) {
+function templateCss(id, accent, head, nameColor) {
   switch (id) {
     case "modern":
       return `body{font-family:"Segoe UI",Arial,sans-serif;}
@@ -205,7 +218,14 @@ a{color:${accent};}
 .tl-main::before{content:"";position:absolute;box-sizing:border-box;left:-6px;top:3px;width:10px;height:10px;border-radius:50%;background:#1f2937;border:2px solid #ffffff;}
 .tl-main h3{margin:0 0 1px;}
 .tl-company{color:${accent};font-weight:700;font-size:10.5pt;margin:0 0 5px;}
-.tl-main ul{margin:3px 0 0;padding-left:16px;}`;
+.tl-main ul{margin:3px 0 0;padding-left:16px;}
+/* Education entries share the rail. They carry no bullets, so the rail segment
+   is shorter. The heading itself stays unweighted so the degree keeps its
+   bold-terms / normal-connectives treatment ("**Bachelor's Degree** in
+   **Computer Science**") rather than going uniformly bold as an h3. */
+.tl-edu{padding-bottom:10px;}
+.tl-edu h3{font-weight:400;font-size:11pt;color:#23272e;}
+.tl-edu h3 .edu-degree{font-weight:700;color:#14181e;}`;
     case "classic":
       // A traditional, centered serif header (small-caps name + title, double
       // rule) with left bold section headings; each role shows "Role, Dates"
@@ -214,8 +234,18 @@ a{color:${accent};}
 header{text-align:center;margin-bottom:16px;}
 header h1{margin:0;font-family:Georgia,"Times New Roman",serif;font-variant:small-caps;font-weight:600;font-size:24pt;letter-spacing:1px;color:#111;}
 .title{font-family:Georgia,"Times New Roman",serif;font-variant:small-caps;font-weight:600;font-size:12pt;letter-spacing:.5px;color:#111;margin-top:4px;white-space:normal;}
-.contacts{border-top:3px double #111;margin-top:8px;padding-top:7px;color:#333;font-size:9pt;text-align:center;}
-main h2{font-size:13pt;font-weight:700;color:${head || "#111"};text-transform:none;border:none;margin:16px 0 7px;}
+/* The technology list drops to its own line beneath the role title. */
+.title-stack{font-family:Georgia,"Times New Roman",serif;font-variant:small-caps;font-weight:600;font-size:10.5pt;letter-spacing:.4px;color:#333;margin-top:1px;white-space:normal;}
+/* Contacts sit between two rules, each item led by its matching icon. Both rules
+   take the picked content colour so the header reads as one system with the
+   section headings; the icons take it too and sit a step larger than their text,
+   which is what carries them at print size. */
+.contacts{border-top:3px double ${head || accent};border-bottom:3px double ${head || accent};margin-top:8px;padding:8px 0;color:#333;font-size:9pt;text-align:center;display:flex;flex-wrap:wrap;justify-content:center;gap:4px 18px;}
+.contact{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;}
+.contact svg{width:14px;height:14px;flex:0 0 auto;fill:${head || accent};vertical-align:-2px;}
+/* Section headings are flanked by rules that run out to both page edges. */
+main h2{display:flex;align-items:center;gap:10px;font-size:13pt;font-weight:700;color:${head || "#111"};text-transform:none;border:none;margin:16px 0 7px;}
+main h2::before,main h2::after{content:"";flex:1 1 auto;height:1px;background:currentColor;}
 main h3{font-size:11pt;font-weight:700;color:#111;margin:10px 0 0;}
 .role-dates{float:right;font-weight:400;color:#6a7280;font-size:9.5pt;}
 .role-org{font-style:italic;color:#333;font-size:10pt;margin:0 0 4px;}
@@ -235,15 +265,19 @@ main h2{display:flex;align-items:center;justify-content:center;gap:12px;border:n
 main h2::before,main h2::after{content:"";flex:0 0 auto;width:42px;height:2px;background:${accent};}
 main ul{list-style:disc;padding-left:26px;}
 main li{margin:2px 0;}
-/* Centered role block: company/location bold, then "Role, Dates" in accent italic. */
+/* Centered role block: the role title and its stack lead in the picked content
+   colour, then "Company - Country | Dates" as plain metadata beneath. */
 .ctr-head{text-align:center;margin:10px 0 4px;break-inside:avoid;break-after:avoid;}
-.ctr-org{font-weight:700;color:#1a1a1a;font-size:11pt;}
-.ctr-role{margin-top:1px;color:${accent};font-style:italic;font-size:10pt;}
-/* Education in the same centered block: degree, period, then the school. */
+.ctr-role{color:${accent};font-weight:700;font-size:11pt;}
+.ctr-org{margin-top:1px;color:#1a1a1a;font-weight:400;font-size:10pt;}
+/* Education in the same centered block: degree, the school, then the study
+   period last. The period stays a neutral grey — it is metadata, so it is
+   deliberately left out of the picked content colour. */
 .edu-ctr{margin:9px 0 4px;break-after:auto;}
 .edu-ctr-degree{font-size:11pt;color:#1a1a1a;}
 .edu-ctr-degree .edu-degree{font-weight:700;color:#1a1a1a;}
 .edu-ctr-org{margin-top:1px;color:#3a4250;font-size:10pt;}
+.edu-ctr-period{margin-top:1px;color:#5a6573;font-style:italic;font-size:10pt;}
 a{color:${accent};}`;
     case "ats":
       // Maximally ATS-safe: single column, left-aligned (never justified),
@@ -277,7 +311,10 @@ header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;c
 header h1{grid-column:1;grid-row:1;margin:0;font-size:24pt;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#1a1a1a;line-height:1.06;}
 .title{grid-column:1;grid-row:2;margin-top:6px;color:${accent};text-transform:uppercase;letter-spacing:1px;font-weight:700;font-size:9pt;white-space:normal;}
 .contacts{grid-column:2;grid-row:1/3;align-self:start;justify-self:end;text-align:right;color:#333;font-size:8.5pt;line-height:1.7;white-space:normal;max-width:250px;word-break:break-word;}
-main h2{display:inline-block;background:#ece7e1;color:#1a1a1a;font-size:10pt;font-weight:700;text-transform:uppercase;letter-spacing:.8px;border:none;padding:3px 9px;margin:14px 0 7px;}
+/* The heading band is tinted from the Name picker — the same colour the name
+   and title carry — at low alpha so the dark label text keeps its contrast.
+   Falls back to the original warm grey when the picker is on Default. */
+main h2{display:inline-block;background:${nameColor ? nameColor + "26" : "#ece7e1"};color:#1a1a1a;font-size:10pt;font-weight:700;text-transform:uppercase;letter-spacing:.8px;border:none;padding:3px 9px;margin:14px 0 7px;}
 main h3{color:${accent};font-weight:700;font-size:10.5pt;margin:8px 0 0;}
 .role-dates{float:right;color:#6a7280;font-weight:400;font-size:9.5pt;}
 .role-org{color:#6a7280;font-size:9.5pt;margin:1px 0 5px;}
@@ -328,31 +365,44 @@ a{color:${accent};}`;
       // section labels reversed out of solid boxes, and three centered lines
       // per entry (role, organization, dates) above left-aligned bullets.
       return `body{font-family:Georgia,"Times New Roman",serif;color:#222;}
-header{text-align:center;border-top:2px solid ${accent};border-bottom:2px solid ${accent};padding:10px 0 9px;margin-bottom:11px;}
+header{text-align:center;border:2px solid ${accent};padding:10px 16px 9px;margin-bottom:11px;}
 header h1{margin:0;font-size:21pt;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#111;}
 .title{margin-top:5px;color:#444;font-size:10pt;white-space:normal;}
 .contacts{margin-top:7px;color:#222;font-size:8.5pt;white-space:normal;}
-main h2{display:table;margin:14px auto 7px;background:${accent};color:#ffffff;font-size:9.5pt;font-weight:700;text-transform:uppercase;letter-spacing:.8px;border:none;padding:3px 14px;}
+/* The label keeps its solid box; the h2 around it is a plain row whose ::before
+   and ::after rules run from the left edge up to the label and from the label
+   out to the right edge. */
+main h2{display:flex;align-items:center;gap:12px;margin:14px 0 7px;background:none;color:inherit;border:none;padding:0;}
+main h2::before,main h2::after{content:"";flex:1 1 auto;height:2px;background:${accent};}
+.fm-h2{flex:0 0 auto;background:${accent};color:#ffffff;font-size:9.5pt;font-weight:700;text-transform:uppercase;letter-spacing:.8px;padding:3px 14px;}
 .summary-box{margin:0 0 4px;}
 .summary-box p{text-align:center;margin:0;}
 main ul{list-style:disc;padding-left:26px;}
 main li{margin:2px 0;}
-/* Centered three-line entry head: role, organization, then dates. */
+/* Centered three-line entry head: the role title leads in bold and the picked
+   content colour, with the company and its location left unweighted beneath. */
 .fm-head{text-align:center;margin:10px 0 3px;break-inside:avoid;break-after:avoid;}
-.fm-role{font-size:10.5pt;color:#222;}
-.fm-org{font-weight:700;font-size:10.5pt;color:#111;}
+.fm-role{font-size:10.5pt;color:${accent};font-weight:700;}
+.fm-org{font-weight:400;font-size:10.5pt;color:#111;}
 .fm-dates{font-style:italic;color:#444;font-size:9.5pt;}
+/* Education keeps its own weights — school, degree, then the period last — so
+   the experience treatment above never leaks into it. */
+.fm-edu-school{font-weight:700;font-size:10.5pt;color:#111;}
+.fm-edu-degree{font-size:10.5pt;color:#222;}
+.fm-edu-period{font-style:italic;color:#444;font-size:9.5pt;}
 a{color:${accent};}`;
     case "banded":
       // Centered name + title inside a soft tinted panel, full-width centered
       // section bands, a tinted summary panel, and entries written as
-      // "Title | Organization" over "Dates | Location".
+      // "Role Title | Stack" over "Company | Location | Dates".
       return `body{font-family:"Segoe UI",Arial,Helvetica,sans-serif;color:#2f333b;}
 header{background:${head ? head + "1f" : "#e9eaf3"};border-radius:9px;padding:16px 22px 14px;text-align:center;margin-bottom:14px;}
 header h1{margin:0;font-size:23pt;font-weight:700;color:#1b1f27;letter-spacing:.2px;}
 .title{margin-top:6px;color:#5a6070;font-size:8.5pt;text-transform:uppercase;letter-spacing:.8px;white-space:normal;}
 .contacts{margin-top:9px;color:#4a5060;font-size:8.5pt;white-space:normal;}
-main h2{display:block;background:${head ? head + "1f" : "#e9eaf3"};color:#1b1f27;text-align:center;font-size:10pt;font-weight:700;text-transform:none;letter-spacing:.3px;border:none;border-radius:4px;padding:4px 10px;margin:14px 0 8px;}
+/* The band stays tinted from the Content picker; the label text takes the Name
+   picker, so the headings read with the name rather than against it. */
+main h2{display:block;background:${head ? head + "1f" : "#e9eaf3"};color:${nameColor || "#1b1f27"};text-align:center;font-size:10pt;font-weight:700;text-transform:none;letter-spacing:.3px;border:none;border-radius:4px;padding:4px 10px;margin:14px 0 8px;}
 .summary-box{background:${head ? head + "12" : "#f0f1f7"};border-radius:6px;padding:1px 14px 9px;margin-bottom:4px;}
 .summary-box h2{margin:10px 0 7px;}
 main h3{color:#1b1f27;font-weight:700;font-size:10.5pt;margin:9px 0 0;}
@@ -451,6 +501,82 @@ function extractProjectLink(rest) {
   return { link: "", desc: rest };
 }
 
+// A role heading reads "Role | Tech1, Tech2, Tech3 — Company · Location | Dates".
+// The role title now carries a pipe of its own, so the trailing pipe segment is
+// only the date range when it actually reads as one — otherwise a heading with
+// no dates donates its last technology (or the whole company) to the date slot.
+function looksLikeDates(s) {
+  const t = String(s || "").trim();
+  if (!t) return false;
+  return /\b(19|20)\d{2}\b/.test(t) || /\b(present|current|now|ongoing)\b/i.test(t);
+}
+
+// A trailing legal suffix is part of the company name, never a place.
+const CORP_SUFFIX =
+  /^(inc|llc|l\.l\.c|ltd|limited|corp|corporation|co|company|holdings|group|gmbh|ag|kg|sa|sas|sarl|bv|nv|ab|as|oy|aps|plc|pty|srl|spa|s\.p\.a|kk|kft|zoo)\.?$/i;
+
+// "Acme Corp, Berlin" -> "Acme Corp · Berlin", so the styles that split the org
+// line on a middle dot (timeline, banded, centered) still find the location when
+// the model wrote a comma instead.
+function normalizeOrg(org) {
+  const t = String(org || "").trim();
+  if (!t || /[·•]/.test(t)) return t;
+  const i = t.lastIndexOf(",");
+  if (i === -1) return t;
+  const tail = t.slice(i + 1).trim();
+  if (!tail || CORP_SUFFIX.test(tail)) return t;
+  return t.slice(0, i).trim() + " · " + tail;
+}
+
+// Split a role heading into its title, company·location, and dates.
+function splitRoleHeading(head) {
+  let main = head;
+  let dates = "";
+  const d = head.match(/^([\s\S]*?)\s*\|\s*([^|]+)$/);
+  if (d && looksLikeDates(d[2])) {
+    main = d[1].trim();
+    dates = d[2].trim();
+  }
+  let roleTitle = main;
+  let org = "";
+  // An em/en dash separates the role from the company. A plain hyphen is
+  // accepted only as a fallback, and only when the tail carries no pipe — that
+  // keeps a hyphenated title ("Senior Engineer - Platform | Go, Docker") from
+  // being read as a company.
+  const o =
+    main.match(/^([\s\S]*?)\s+[—–]\s+([\s\S]+)$/) ||
+    main.match(/^([\s\S]*?)\s+-\s+([^|]+)$/);
+  if (o) {
+    roleTitle = o[1].trim();
+    org = normalizeOrg(o[2].trim());
+  }
+  return { roleTitle, org, dates };
+}
+
+// Any section whose heading names a section: matches up to the next h2.
+const SECTION_RE = (word) =>
+  new RegExp(`<h2[^>]*>[^<]*(?:${word})[^<]*<\\/h2>[\\s\\S]*?(?=<h2|$)`, "i");
+const EDUCATION_SECTION = SECTION_RE("Education");
+const EXPERIENCE_SECTION = SECTION_RE("Experience|Employment|Work\\s+History|Career");
+
+// Education belongs immediately after the work history, in every style. The
+// model puts it wherever it likes — and when it omits the heading entirely the
+// section used to be appended to the very end, landing after Projects. Lift it
+// out of wherever it sits and re-attach it to the end of the experience section
+// so the two always read as one continuous block.
+function placeEducation(body, eduHtml) {
+  const existing = body.match(EDUCATION_SECTION);
+  const heading = existing
+    ? (existing[0].match(/<h2[^>]*>[^<]*<\/h2>/i) || ["<h2>Education</h2>"])[0]
+    : "<h2>Education</h2>";
+  // Drop the model's own Education section from wherever it landed.
+  const stripped = existing ? body.replace(EDUCATION_SECTION, "") : body;
+  const block = `${heading}${eduHtml}`;
+  return EXPERIENCE_SECTION.test(stripped)
+    ? stripped.replace(EXPERIENCE_SECTION, (section) => `${section}${block}`)
+    : stripped + block;
+}
+
 // Build the contact line from the account's own fields. Authoritative, so the
 // header is always correct even when the model mangles or drops contacts.
 function buildContacts(info) {
@@ -496,6 +622,33 @@ function linkifyContact(part) {
   return escapeHtml(t);
 }
 
+// Contact icons drawn inline so the PDF stays self-contained (no font or remote
+// asset) and the text beside each one is still exactly what a parser reads.
+const CONTACT_ICONS = {
+  email:
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 3h13c.28 0 .5.22.5.5v9c0 .28-.22.5-.5.5h-13a.5.5 0 0 1-.5-.5v-9c0-.28.22-.5.5-.5Zm.5 1.4V12h12V4.4L8 8.6 2 4.4ZM12.9 4H3.1L8 7.4 12.9 4Z"/></svg>',
+  phone:
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M5.2 1.6c.4 0 .7.2.9.6l1.1 2.3c.2.4.1.9-.2 1.2l-.9.9c.7 1.4 1.8 2.5 3.2 3.2l.9-.9c.3-.3.8-.4 1.2-.2l2.3 1.1c.4.2.6.5.6.9v2.1c0 .7-.6 1.3-1.3 1.2C7.1 13.6 2.4 8.9 1.9 2.9c-.1-.7.5-1.3 1.2-1.3h2.1Z"/></svg>',
+  location:
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1a5 5 0 0 0-5 5c0 3.6 4.3 8.4 4.5 8.6.3.3.7.3 1 0C8.7 14.4 13 9.6 13 6a5 5 0 0 0-5-5Zm0 7a2 2 0 1 1 0-4 2 2 0 0 1 0 4Z"/></svg>',
+  linkedin:
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.1 5.6h2.3V14H3.1V5.6Zm1.2-3.7c.8 0 1.4.6 1.4 1.3s-.6 1.3-1.4 1.3-1.4-.6-1.4-1.3.6-1.3 1.4-1.3ZM7 5.6h2.2v1.2h.03c.3-.6 1.1-1.2 2.2-1.2 2.3 0 2.8 1.5 2.8 3.5V14h-2.3V9.6c0-1 0-2.4-1.4-2.4s-1.6 1.1-1.6 2.3V14H7V5.6Z"/></svg>',
+  link:
+    '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1Zm4.9 6h-2c-.1-1.5-.5-2.8-1-3.7A5.5 5.5 0 0 1 12.9 7ZM8 2.6c.6.7 1.2 2.1 1.3 4.4H6.7c.1-2.3.7-3.7 1.3-4.4ZM3.1 7a5.5 5.5 0 0 1 3-3.7c-.5.9-.9 2.2-1 3.7h-2Zm0 2h2c.1 1.5.5 2.8 1 3.7A5.5 5.5 0 0 1 3.1 9ZM8 13.4c-.6-.7-1.2-2.1-1.3-4.4h2.6c-.1 2.3-.7 3.7-1.3 4.4Zm1.9-.7c.5-.9.9-2.2 1-3.7h2a5.5 5.5 0 0 1-3 3.7Z"/></svg>',
+};
+
+// Which icon belongs beside a contact item. Mirrors linkifyContact's tests, so
+// an item that becomes a mailto/tel/https link gets the matching glyph and
+// anything left over (a city, an address) reads as a place.
+function contactKind(t) {
+  const s = String(t || "").trim();
+  if (/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s)) return "email";
+  if (/linkedin\.com/i.test(s)) return "linkedin";
+  if ((s.match(/\d/g) || []).length >= 7 && /^[+()\d\s.\-]+$/.test(s)) return "phone";
+  if (/^https?:\/\//i.test(s) || /^www\./i.test(s) || /^[^\s/]+\.[a-z]{2,}(?:[/?#]|$)/i.test(s)) return "link";
+  return "location";
+}
+
 // Shared header markup (used by both the resume and the cover letter). For the
 // "cards" and "highlight" styles the contact items stack vertically on the
 // right. Each contact item is linkified so it's clickable in the PDF.
@@ -505,11 +658,34 @@ const BD_SEP = ' <span class="bd-sep">|</span> ';
 const STACKED_CONTACTS = new Set(["cards", "highlight", "darkheader"]);
 function headerHtml(id, name, title, contacts) {
   if (!name) return "";
-  const items = String(contacts || "")
+  const raw = String(contacts || "")
     .split("  •  ")
     .map((s) => s.trim())
-    .filter(Boolean)
-    .map(linkifyContact);
+    .filter(Boolean);
+
+  // Classic: the role title and its technology list take separate lines, and the
+  // contacts sit between two rules with an icon matching each item.
+  if (id === "classic") {
+    const full = String(title || "").trim();
+    const cut = full.indexOf("|");
+    const role = cut === -1 ? full : full.slice(0, cut).trim();
+    const stack = cut === -1 ? "" : full.slice(cut + 1).trim();
+    const contactsHtml = raw
+      .map(
+        (t) =>
+          `<span class="contact">${CONTACT_ICONS[contactKind(t)] || ""}` +
+          `${linkifyContact(t)}</span>`
+      )
+      .join("");
+    return (
+      `<header><h1>${escapeHtml(name)}</h1>` +
+      `${role ? `<div class="title">${escapeHtml(role)}</div>` : ""}` +
+      `${stack ? `<div class="title-stack">${escapeHtml(stack)}</div>` : ""}` +
+      `${raw.length ? `<div class="contacts">${contactsHtml}</div>` : ""}</header>`
+    );
+  }
+
+  const items = raw.map(linkifyContact);
   const contactsHtml = STACKED_CONTACTS.has(id) ? items.join("<br>") : items.join("  •  ");
   return (
     `<header><h1>${escapeHtml(name)}</h1>` +
@@ -621,26 +797,29 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
       );
       return `<div class="skills-grid">${cards.join("")}</div>`;
     }
-    let first = true;
-    const out = inner.replace(/\s*<strong>([^<]*:)<\/strong>/g, (_mm, lbl) => {
-      if (first) { first = false; return `<strong>${lbl}</strong>`; }
-      return `<br><strong>${lbl}</strong>`;
-    });
-    return `<p class="skills">${out}</p>`;
+    // Each category becomes its own paragraph rather than one <br>-separated
+    // block, so a single category can never be split across a page while the
+    // section as a whole still flows. Margins are zeroed in the base CSS, so
+    // this lays out exactly as the <br> version did.
+    const parts = [];
+    const lead = inner.slice(0, inner.indexOf("<strong>")).trim();
+    if (lead) parts.push(`<p class="skills">${lead}</p>`);
+    inner.replace(
+      /<strong>([^<]*?:)<\/strong>\s*([\s\S]*?)(?=<strong>|$)/g,
+      (_mm, lbl, items) => {
+        const text = items.replace(/<br\s*\/?>/gi, " ").trim();
+        parts.push(`<p class="skills"><strong>${lbl}</strong> ${text}</p>`);
+        return _mm;
+      }
+    );
+    return parts.length ? parts.join("") : m;
   });
 
   // Split every role heading "Title — Company · Location | Dates" into a title
   // line (with right-aligned dates) and a company·location line below. Applies
   // to ALL styles.
   body = body.replace(/<h3\b([^>]*)>([\s\S]*?)<\/h3>/g, (mm, attr, head) => {
-    let main = head;
-    let dates = "";
-    const d = head.match(/^([\s\S]*?)\s*\|\s*([^|]+)$/);
-    if (d) { main = d[1].trim(); dates = d[2].trim(); }
-    let roleTitle = main;
-    let org = "";
-    const o = main.match(/^([\s\S]*?)\s+[—–]\s+([\s\S]+)$/);
-    if (o) { roleTitle = o[1].trim(); org = o[2].trim(); }
+    const { roleTitle, org, dates } = splitRoleHeading(head);
     const ds = dates ? `<span class="role-dates">${dates}</span>` : "";
     const od = org ? `<div class="role-org">${org}</div>` : "";
     return `<h3${attr}>${roleTitle}${ds}</h3>${od}`;
@@ -680,20 +859,36 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
           return (
             `<div class="ctr-head edu-ctr">` +
             `<div class="edu-ctr-degree">${primary}</div>` +
-            (period ? `<div class="ctr-role">${escapeHtml(period)}</div>` : "") +
             (second ? `<div class="edu-ctr-org">${second}</div>` : "") +
+            (period ? `<div class="edu-ctr-period">${escapeHtml(period)}</div>` : "") +
             `</div>`
           );
         }
+        // Timeline style: education rides the same rail as the work history —
+        // period and location on the left, then the line with its dot, then the
+        // degree and school on the right.
+        if (id === "timeline") {
+          const school = degree && uni ? uni : "";
+          return (
+            `<div class="tl-entry">` +
+            `<div class="tl-side">` +
+            (period ? `<div class="tl-date">${escapeHtml(period)}</div>` : "") +
+            (loc ? `<div class="tl-loc">${escapeHtml(loc)}</div>` : "") +
+            `</div>` +
+            `<div class="tl-main tl-edu"><h3>${primary}</h3>` +
+            (school ? `<div class="tl-company">${escapeHtml(school)}</div>` : "") +
+            `</div></div>`
+          );
+        }
         // Formal style: the same centered three-line block as its experience
-        // entries — school, period, then the degree.
+        // entries — school, the degree, then the study period last.
         if (id === "formal") {
           const school = [uni, loc].filter(Boolean).map(escapeHtml).join(", ");
           return (
             `<div class="fm-head">` +
-            (school ? `<div class="fm-org">${school}</div>` : "") +
-            (period ? `<div class="fm-dates">${escapeHtml(period)}</div>` : "") +
-            (degree ? `<div class="fm-role">${primary}</div>` : "") +
+            (school ? `<div class="fm-edu-school">${school}</div>` : "") +
+            (degree ? `<div class="fm-edu-degree">${primary}</div>` : "") +
+            (period ? `<div class="fm-edu-period">${escapeHtml(period)}</div>` : "") +
             `</div>`
           );
         }
@@ -716,13 +911,14 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
         return `<div class="edu-line">${primary}${dates}</div>${sub}`;
       })
       .join("");
-    if (/<h2[^>]*>[^<]*Education[^<]*<\/h2>/i.test(body)) {
-      body = body.replace(
-        /(<h2[^>]*>[^<]*Education[^<]*<\/h2>)([\s\S]*?)(?=<h2|$)/i,
-        (mm, heading) => `${heading}${eduHtml}`
-      );
-    } else {
-      body += `<h2>Education</h2>${eduHtml}`;
+    body = placeEducation(body, eduHtml);
+  } else {
+    // No structured education to render, but the model may still have written an
+    // Education section of its own. Move it after the work history all the same.
+    const own = body.match(EDUCATION_SECTION);
+    if (own) {
+      const inner = own[0].replace(/^<h2[^>]*>[^<]*<\/h2>/i, "");
+      body = placeEducation(body, inner);
     }
   }
 
@@ -832,12 +1028,12 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
         const roleTitle = h3inner
           .replace(/<span class="role-dates">[\s\S]*?<\/span>/, "")
           .trim();
-        const orgText = (org || "").trim().replace(/\s*·\s*/g, " – ");
-        const roleLine = [roleTitle, dates].filter(Boolean).join(", ");
+        const orgText = (org || "").trim().replace(/\s*·\s*/g, " - ");
+        const orgLine = [orgText, dates].filter(Boolean).join(" | ");
         return (
           `<div class="ctr-head">` +
-          (orgText ? `<div class="ctr-org">${orgText}</div>` : "") +
-          (roleLine ? `<div class="ctr-role">${roleLine}</div>` : "") +
+          (roleTitle ? `<div class="ctr-role">${roleTitle}</div>` : "") +
+          (orgLine ? `<div class="ctr-org">${orgLine}</div>` : "") +
           `</div>`
         );
       }
@@ -886,6 +1082,13 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
         );
       }
     );
+    // The section heading keeps its solid label box, so the label moves into its
+    // own element and the h2 becomes the row that carries a rule out to each
+    // page edge. Every regex that matches on h2 text has already run by here.
+    body = body.replace(
+      /<h2\b([^>]*)>([\s\S]*?)<\/h2>/g,
+      (m, attr, inner) => `<h2${attr}><span class="fm-h2">${inner}</span></h2>`
+    );
   }
 
   // Banded style: the title line stays exactly as written, and the company joins
@@ -911,11 +1114,12 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
         const company = parts[0] || "";
         const location = parts.slice(1).join(" · ");
         // Company leads the meta line, weighted so it still reads as the
-        // employer rather than as another piece of grey metadata.
+        // employer rather than as another piece of grey metadata, then its
+        // location, then the period.
         const meta = [
           company ? `<span class="bd-org">${company}</span>` : "",
-          dates,
           location,
+          dates,
         ]
           .filter(Boolean)
           .join(BD_SEP);
@@ -941,7 +1145,7 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
   );
 
   const css =
-    BASE + "\n" + templateCss(id, accent, head) + nameTitleCss(nameColor) +
+    BASE + "\n" + templateCss(id, accent, head, nameColor) + nameTitleCss(nameColor) +
     "\nmain h2{margin-top:13px;margin-bottom:5px;}" +
     "\n.edu-line{font-size:11pt;color:#23272e;font-weight:normal;margin:8px 0 0;}" +
     "\n.edu-line .edu-degree{font-weight:700;color:#14181e;}" +
@@ -986,7 +1190,7 @@ export function buildCoverLetterHtml(coverMarkdown, style, contactInfo = null) {
   });
 
   const css =
-    BASE + "\n" + templateCss(id, accent, head) + nameTitleCss(nameColor) +
+    BASE + "\n" + templateCss(id, accent, head, nameColor) + nameTitleCss(nameColor) +
     "\n.contacts{overflow-wrap:anywhere;}" +
     "\nmain p{margin:0 0 11px;line-height:1.5;text-align:left;}" +
     fontOverride(style);

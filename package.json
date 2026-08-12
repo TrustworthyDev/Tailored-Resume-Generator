@@ -1,7 +1,7 @@
 {
-  "name": "careerva",
+  "name": "rgenerator",
   "version": "3.0.0",
-  "description": "Careerva - generate tailored resumes and track job applications",
+  "description": "RGenerator - generate tailored resumes and track job applications",
   "private": true,
   "main": "electron/main.js",
   "author": "Hayashi Benjiro",
@@ -31,8 +31,8 @@
     "wait-on": "^8.0.1"
   },
   "build": {
-    "appId": "com.careerva.app",
-    "productName": "Careerva",
+    "appId": "com.rgenerator.app",
+    "productName": "RGenerator",
     "files": [
       "electron/**/*",
       "renderer/out/**/*",
