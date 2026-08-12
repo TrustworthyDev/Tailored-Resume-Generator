@@ -134,6 +134,9 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   // V3 keeps its own persisted Job Description so clearing the box after an
   // Extract never wipes what's typed on the V1/V2 tabs (they share one pref).
   const JD_PREF = isV3 ? "gen_v3_jd" : "gen_jd";
+  // The last generated resume text, scoped like the job description it came
+  // from, so V3 and V1/V2 never overwrite each other's last result.
+  const RESULT_PREF = isV3 ? "gen_v3_result" : "gen_result";
   // Generate V3: extract the job posting from a link.
   const [jobLink, setJobLink] = useState("");
   const [fetchingJd, setFetchingJd] = useState(false);
@@ -233,8 +236,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
 
   // The target job is persisted alongside the saved path so "View info" still
   // has something to show — and still appears — after the app is closed and
-  // reopened. The generated resume text itself is not kept; the button is
-  // driven by these instead.
+  // reopened. The resume text is kept too — see rememberResult below.
   const rememberTarget = (role, company, country) => {
     setJobRole(role || "");
     setJobCompany(company || "");
@@ -242,6 +244,15 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     api().setPref("gen_job_role", role || "");
     api().setPref("gen_job_company", company || "");
     api().setPref("gen_job_country", country || "");
+  };
+
+  // The generated resume text is kept alongside the target job. Without it the
+  // style, colour and font controls had nothing to re-render after a restart and
+  // could only report that there was no resume content — so the last resume can
+  // now be restyled at any time, not just in the session that produced it.
+  const rememberResult = (text) => {
+    setResult(text || "");
+    api().setPref(RESULT_PREF, text || "");
   };
 
   // Drops the cached generation (the resume text and the file it produced).
@@ -252,6 +263,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     setResult("");
     setSavedPath("");
     setSavedAt("");
+    api().setPref(RESULT_PREF, "");
     api().setPref("gen_saved_path", "");
     api().setPref("gen_saved_at", "");
   };
@@ -327,15 +339,19 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       const autoOpenPref = await api().getPref("auto_open_pdf");
       if (autoOpenPref && autoOpenPref.value != null) setAutoOpenPdf(autoOpenPref.value === "1");
 
-      // The last target job, so "View info" survives a restart.
-      const [rolePref, companyPref, countryPref] = await Promise.all([
+      // The last target job, so "View info" survives a restart — and the resume
+      // text that went with it, so the style/colour/font controls can re-render
+      // it straight away instead of reporting that there is nothing to restyle.
+      const [rolePref, companyPref, countryPref, resultPref] = await Promise.all([
         api().getPref("gen_job_role"),
         api().getPref("gen_job_company"),
         api().getPref("gen_job_country"),
+        api().getPref(RESULT_PREF),
       ]);
       if (rolePref && rolePref.value) setJobRole(rolePref.value);
       if (companyPref && companyPref.value) setJobCompany(companyPref.value);
       if (countryPref && countryPref.value) setJobCountry(countryPref.value);
+      if (resultPref && resultPref.value) setResult(resultPref.value);
 
       if (styleOrderPref && styleOrderPref.value) {
         const order = styleOrderPref.value.split(",");
@@ -697,7 +713,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     setSavedPath("");
     try {
       const res = await callApi(useJd);
-      setResult(res.text || "");
+      rememberResult(res.text || "");
       rememberTarget(res.jobRole, res.jobCompany, res.jobCountry);
       if (openModalAfterPreview) setShowPreview(true);
       // "Generate Resume" now does the full flow: fetch the content, then
@@ -899,7 +915,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       // matching uses the Gemini JD extraction (target) via dedicated index
       // columns, kept separate so display and matching never interfere.
       const hasTarget = !!(target && target.company && target.role);
-      setResult(res.text || "");
+      rememberResult(res.text || "");
       rememberTarget(res.jobRole, res.jobCompany, res.jobCountry || (target && target.country));
       if (openModalAfterPreview) setShowPreview(true);
       if (res.text) {

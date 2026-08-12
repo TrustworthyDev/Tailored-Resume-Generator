@@ -53,8 +53,11 @@ main ul { margin: 3px 0 6px; padding-left: 18px; }
 main li { margin: 1px 0; text-align: left; }
 /* Tighten the skills section so the first experience entry fits on page 1. */
 main h2 + ul { margin-top: 2px; }
-/* Body emphasis is NOT bold — only headings and skill categories are. */
-main strong { color: #14181e; font-weight: normal; }
+/* Body emphasis IS bold. The model marks the job description's technologies in
+   the bullets, and those keywords are exactly what a recruiter skims and an ATS
+   scores, so they need to stand off the surrounding prose rather than blend in.
+   Styles that want a different weight override this per selector. */
+main strong { color: #14181e; font-weight: 700; }
 main p.skills strong { font-weight: 700; }
 main em { color: #5a6573; font-style: italic; }
 /* Work-history role line: title (with right-aligned dates) + company·location. */
@@ -107,7 +110,7 @@ a { text-decoration: none; }
 // change with the picker. `accent` already follows the pick for elements that
 // were always themed; `head || <default>` themes the rest without altering the
 // Default appearance.
-function templateCss(id, accent, head) {
+function templateCss(id, accent, head, nameColor) {
   switch (id) {
     case "modern":
       return `body{font-family:"Segoe UI",Arial,sans-serif;}
@@ -215,7 +218,14 @@ a{color:${accent};}
 .tl-main::before{content:"";position:absolute;box-sizing:border-box;left:-6px;top:3px;width:10px;height:10px;border-radius:50%;background:#1f2937;border:2px solid #ffffff;}
 .tl-main h3{margin:0 0 1px;}
 .tl-company{color:${accent};font-weight:700;font-size:10.5pt;margin:0 0 5px;}
-.tl-main ul{margin:3px 0 0;padding-left:16px;}`;
+.tl-main ul{margin:3px 0 0;padding-left:16px;}
+/* Education entries share the rail. They carry no bullets, so the rail segment
+   is shorter. The heading itself stays unweighted so the degree keeps its
+   bold-terms / normal-connectives treatment ("**Bachelor's Degree** in
+   **Computer Science**") rather than going uniformly bold as an h3. */
+.tl-edu{padding-bottom:10px;}
+.tl-edu h3{font-weight:400;font-size:11pt;color:#23272e;}
+.tl-edu h3 .edu-degree{font-weight:700;color:#14181e;}`;
     case "classic":
       // A traditional, centered serif header (small-caps name + title, double
       // rule) with left bold section headings; each role shows "Role, Dates"
@@ -226,10 +236,13 @@ header h1{margin:0;font-family:Georgia,"Times New Roman",serif;font-variant:smal
 .title{font-family:Georgia,"Times New Roman",serif;font-variant:small-caps;font-weight:600;font-size:12pt;letter-spacing:.5px;color:#111;margin-top:4px;white-space:normal;}
 /* The technology list drops to its own line beneath the role title. */
 .title-stack{font-family:Georgia,"Times New Roman",serif;font-variant:small-caps;font-weight:600;font-size:10.5pt;letter-spacing:.4px;color:#333;margin-top:1px;white-space:normal;}
-/* Contacts sit between two rules, each item led by its matching icon. */
-.contacts{border-top:3px double #111;border-bottom:3px double #111;margin-top:8px;padding:7px 0;color:#333;font-size:9pt;text-align:center;display:flex;flex-wrap:wrap;justify-content:center;gap:3px 16px;}
-.contact{display:inline-flex;align-items:center;gap:4px;white-space:nowrap;}
-.contact svg{width:10px;height:10px;flex:0 0 auto;fill:currentColor;}
+/* Contacts sit between two rules, each item led by its matching icon. Both rules
+   take the picked content colour so the header reads as one system with the
+   section headings; the icons take it too and sit a step larger than their text,
+   which is what carries them at print size. */
+.contacts{border-top:3px double ${head || accent};border-bottom:3px double ${head || accent};margin-top:8px;padding:8px 0;color:#333;font-size:9pt;text-align:center;display:flex;flex-wrap:wrap;justify-content:center;gap:4px 18px;}
+.contact{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;}
+.contact svg{width:14px;height:14px;flex:0 0 auto;fill:${head || accent};vertical-align:-2px;}
 /* Section headings are flanked by rules that run out to both page edges. */
 main h2{display:flex;align-items:center;gap:10px;font-size:13pt;font-weight:700;color:${head || "#111"};text-transform:none;border:none;margin:16px 0 7px;}
 main h2::before,main h2::after{content:"";flex:1 1 auto;height:1px;background:currentColor;}
@@ -257,13 +270,14 @@ main li{margin:2px 0;}
 .ctr-head{text-align:center;margin:10px 0 4px;break-inside:avoid;break-after:avoid;}
 .ctr-role{color:${accent};font-weight:700;font-size:11pt;}
 .ctr-org{margin-top:1px;color:#1a1a1a;font-weight:400;font-size:10pt;}
-/* Education in the same centered block: degree, period, then the school. The
-   period keeps the italic accent treatment the role line used to carry. */
+/* Education in the same centered block: degree, the school, then the study
+   period last. The period stays a neutral grey — it is metadata, so it is
+   deliberately left out of the picked content colour. */
 .edu-ctr{margin:9px 0 4px;break-after:auto;}
 .edu-ctr-degree{font-size:11pt;color:#1a1a1a;}
 .edu-ctr-degree .edu-degree{font-weight:700;color:#1a1a1a;}
-.edu-ctr-period{margin-top:1px;color:${accent};font-style:italic;font-size:10pt;}
 .edu-ctr-org{margin-top:1px;color:#3a4250;font-size:10pt;}
+.edu-ctr-period{margin-top:1px;color:#5a6573;font-style:italic;font-size:10pt;}
 a{color:${accent};}`;
     case "ats":
       // Maximally ATS-safe: single column, left-aligned (never justified),
@@ -297,7 +311,10 @@ header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;c
 header h1{grid-column:1;grid-row:1;margin:0;font-size:24pt;font-weight:800;text-transform:uppercase;letter-spacing:.5px;color:#1a1a1a;line-height:1.06;}
 .title{grid-column:1;grid-row:2;margin-top:6px;color:${accent};text-transform:uppercase;letter-spacing:1px;font-weight:700;font-size:9pt;white-space:normal;}
 .contacts{grid-column:2;grid-row:1/3;align-self:start;justify-self:end;text-align:right;color:#333;font-size:8.5pt;line-height:1.7;white-space:normal;max-width:250px;word-break:break-word;}
-main h2{display:inline-block;background:#ece7e1;color:#1a1a1a;font-size:10pt;font-weight:700;text-transform:uppercase;letter-spacing:.8px;border:none;padding:3px 9px;margin:14px 0 7px;}
+/* The heading band is tinted from the Name picker — the same colour the name
+   and title carry — at low alpha so the dark label text keeps its contrast.
+   Falls back to the original warm grey when the picker is on Default. */
+main h2{display:inline-block;background:${nameColor ? nameColor + "26" : "#ece7e1"};color:#1a1a1a;font-size:10pt;font-weight:700;text-transform:uppercase;letter-spacing:.8px;border:none;padding:3px 9px;margin:14px 0 7px;}
 main h3{color:${accent};font-weight:700;font-size:10.5pt;margin:8px 0 0;}
 .role-dates{float:right;color:#6a7280;font-weight:400;font-size:9.5pt;}
 .role-org{color:#6a7280;font-size:9.5pt;margin:1px 0 5px;}
@@ -352,7 +369,12 @@ header{text-align:center;border:2px solid ${accent};padding:10px 16px 9px;margin
 header h1{margin:0;font-size:21pt;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#111;}
 .title{margin-top:5px;color:#444;font-size:10pt;white-space:normal;}
 .contacts{margin-top:7px;color:#222;font-size:8.5pt;white-space:normal;}
-main h2{display:table;margin:14px auto 7px;background:${accent};color:#ffffff;font-size:9.5pt;font-weight:700;text-transform:uppercase;letter-spacing:.8px;border:none;padding:3px 14px;}
+/* The label keeps its solid box; the h2 around it is a plain row whose ::before
+   and ::after rules run from the left edge up to the label and from the label
+   out to the right edge. */
+main h2{display:flex;align-items:center;gap:12px;margin:14px 0 7px;background:none;color:inherit;border:none;padding:0;}
+main h2::before,main h2::after{content:"";flex:1 1 auto;height:2px;background:${accent};}
+.fm-h2{flex:0 0 auto;background:${accent};color:#ffffff;font-size:9.5pt;font-weight:700;text-transform:uppercase;letter-spacing:.8px;padding:3px 14px;}
 .summary-box{margin:0 0 4px;}
 .summary-box p{text-align:center;margin:0;}
 main ul{list-style:disc;padding-left:26px;}
@@ -378,7 +400,9 @@ header{background:${head ? head + "1f" : "#e9eaf3"};border-radius:9px;padding:16
 header h1{margin:0;font-size:23pt;font-weight:700;color:#1b1f27;letter-spacing:.2px;}
 .title{margin-top:6px;color:#5a6070;font-size:8.5pt;text-transform:uppercase;letter-spacing:.8px;white-space:normal;}
 .contacts{margin-top:9px;color:#4a5060;font-size:8.5pt;white-space:normal;}
-main h2{display:block;background:${head ? head + "1f" : "#e9eaf3"};color:#1b1f27;text-align:center;font-size:10pt;font-weight:700;text-transform:none;letter-spacing:.3px;border:none;border-radius:4px;padding:4px 10px;margin:14px 0 8px;}
+/* The band stays tinted from the Content picker; the label text takes the Name
+   picker, so the headings read with the name rather than against it. */
+main h2{display:block;background:${head ? head + "1f" : "#e9eaf3"};color:${nameColor || "#1b1f27"};text-align:center;font-size:10pt;font-weight:700;text-transform:none;letter-spacing:.3px;border:none;border-radius:4px;padding:4px 10px;margin:14px 0 8px;}
 .summary-box{background:${head ? head + "12" : "#f0f1f7"};border-radius:6px;padding:1px 14px 9px;margin-bottom:4px;}
 .summary-box h2{margin:10px 0 7px;}
 main h3{color:#1b1f27;font-weight:700;font-size:10.5pt;margin:9px 0 0;}
@@ -527,6 +551,30 @@ function splitRoleHeading(head) {
     org = normalizeOrg(o[2].trim());
   }
   return { roleTitle, org, dates };
+}
+
+// Any section whose heading names a section: matches up to the next h2.
+const SECTION_RE = (word) =>
+  new RegExp(`<h2[^>]*>[^<]*(?:${word})[^<]*<\\/h2>[\\s\\S]*?(?=<h2|$)`, "i");
+const EDUCATION_SECTION = SECTION_RE("Education");
+const EXPERIENCE_SECTION = SECTION_RE("Experience|Employment|Work\\s+History|Career");
+
+// Education belongs immediately after the work history, in every style. The
+// model puts it wherever it likes — and when it omits the heading entirely the
+// section used to be appended to the very end, landing after Projects. Lift it
+// out of wherever it sits and re-attach it to the end of the experience section
+// so the two always read as one continuous block.
+function placeEducation(body, eduHtml) {
+  const existing = body.match(EDUCATION_SECTION);
+  const heading = existing
+    ? (existing[0].match(/<h2[^>]*>[^<]*<\/h2>/i) || ["<h2>Education</h2>"])[0]
+    : "<h2>Education</h2>";
+  // Drop the model's own Education section from wherever it landed.
+  const stripped = existing ? body.replace(EDUCATION_SECTION, "") : body;
+  const block = `${heading}${eduHtml}`;
+  return EXPERIENCE_SECTION.test(stripped)
+    ? stripped.replace(EXPERIENCE_SECTION, (section) => `${section}${block}`)
+    : stripped + block;
 }
 
 // Build the contact line from the account's own fields. Authoritative, so the
@@ -811,9 +859,25 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
           return (
             `<div class="ctr-head edu-ctr">` +
             `<div class="edu-ctr-degree">${primary}</div>` +
-            (period ? `<div class="edu-ctr-period">${escapeHtml(period)}</div>` : "") +
             (second ? `<div class="edu-ctr-org">${second}</div>` : "") +
+            (period ? `<div class="edu-ctr-period">${escapeHtml(period)}</div>` : "") +
             `</div>`
+          );
+        }
+        // Timeline style: education rides the same rail as the work history —
+        // period and location on the left, then the line with its dot, then the
+        // degree and school on the right.
+        if (id === "timeline") {
+          const school = degree && uni ? uni : "";
+          return (
+            `<div class="tl-entry">` +
+            `<div class="tl-side">` +
+            (period ? `<div class="tl-date">${escapeHtml(period)}</div>` : "") +
+            (loc ? `<div class="tl-loc">${escapeHtml(loc)}</div>` : "") +
+            `</div>` +
+            `<div class="tl-main tl-edu"><h3>${primary}</h3>` +
+            (school ? `<div class="tl-company">${escapeHtml(school)}</div>` : "") +
+            `</div></div>`
           );
         }
         // Formal style: the same centered three-line block as its experience
@@ -847,13 +911,14 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
         return `<div class="edu-line">${primary}${dates}</div>${sub}`;
       })
       .join("");
-    if (/<h2[^>]*>[^<]*Education[^<]*<\/h2>/i.test(body)) {
-      body = body.replace(
-        /(<h2[^>]*>[^<]*Education[^<]*<\/h2>)([\s\S]*?)(?=<h2|$)/i,
-        (mm, heading) => `${heading}${eduHtml}`
-      );
-    } else {
-      body += `<h2>Education</h2>${eduHtml}`;
+    body = placeEducation(body, eduHtml);
+  } else {
+    // No structured education to render, but the model may still have written an
+    // Education section of its own. Move it after the work history all the same.
+    const own = body.match(EDUCATION_SECTION);
+    if (own) {
+      const inner = own[0].replace(/^<h2[^>]*>[^<]*<\/h2>/i, "");
+      body = placeEducation(body, inner);
     }
   }
 
@@ -1017,6 +1082,13 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
         );
       }
     );
+    // The section heading keeps its solid label box, so the label moves into its
+    // own element and the h2 becomes the row that carries a rule out to each
+    // page edge. Every regex that matches on h2 text has already run by here.
+    body = body.replace(
+      /<h2\b([^>]*)>([\s\S]*?)<\/h2>/g,
+      (m, attr, inner) => `<h2${attr}><span class="fm-h2">${inner}</span></h2>`
+    );
   }
 
   // Banded style: the title line stays exactly as written, and the company joins
@@ -1073,7 +1145,7 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
   );
 
   const css =
-    BASE + "\n" + templateCss(id, accent, head) + nameTitleCss(nameColor) +
+    BASE + "\n" + templateCss(id, accent, head, nameColor) + nameTitleCss(nameColor) +
     "\nmain h2{margin-top:13px;margin-bottom:5px;}" +
     "\n.edu-line{font-size:11pt;color:#23272e;font-weight:normal;margin:8px 0 0;}" +
     "\n.edu-line .edu-degree{font-weight:700;color:#14181e;}" +
@@ -1118,7 +1190,7 @@ export function buildCoverLetterHtml(coverMarkdown, style, contactInfo = null) {
   });
 
   const css =
-    BASE + "\n" + templateCss(id, accent, head) + nameTitleCss(nameColor) +
+    BASE + "\n" + templateCss(id, accent, head, nameColor) + nameTitleCss(nameColor) +
     "\n.contacts{overflow-wrap:anywhere;}" +
     "\nmain p{margin:0 0 11px;line-height:1.5;text-align:left;}" +
     fontOverride(style);
