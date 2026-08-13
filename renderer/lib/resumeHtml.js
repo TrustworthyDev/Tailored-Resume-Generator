@@ -86,6 +86,21 @@ main h2, main h3 { break-after: avoid; }
 .kh { break-inside: avoid; }
 .kh-first { margin-bottom: 0; }
 .kh-rest { margin-top: 0; }
+/* A gap between one role and the next, so where a job ends and the next begins
+   is clear without drawing a line across the page. Only an entry that FOLLOWS
+   another entry gets it: the first role in a section is preceded by its h2,
+   which breaks the adjacency, and education entries follow an h2 or each other
+   rather than a bullet list, so they never match. Each selector covers a
+   different entry shape — .kh is the generic wrapper, and the centered, formal
+   and timeline templates restructure roles into their own blocks. */
+main ul + .kh,
+main .kh + .kh,
+main ul + .ctr-head,
+main ul + .fm-head,
+main ul + h3,
+main .tl-entry + .tl-entry:not(.tl-edu-entry) {
+  margin-top: 20px;
+}
 /* Nothing that carries a sentence may be cut by a page break. A bullet, the
    summary, a skills line, a project description or an education entry that
    doesn't fit at the foot of a page moves to the next one whole. Beyond reading
@@ -870,7 +885,7 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
         if (id === "timeline") {
           const school = degree && uni ? uni : "";
           return (
-            `<div class="tl-entry">` +
+            `<div class="tl-entry tl-edu-entry">` +
             `<div class="tl-side">` +
             (period ? `<div class="tl-date">${escapeHtml(period)}</div>` : "") +
             (loc ? `<div class="tl-loc">${escapeHtml(loc)}</div>` : "") +
