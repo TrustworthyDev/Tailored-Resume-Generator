@@ -1155,6 +1155,59 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     try { return await wv.executeJavaScript(js, true); } catch (_) { return "error"; }
   };
 
+  // Put ChatGPT on its highest reasoning effort before the prompt goes in — a
+  // JD-tailored resume is exactly the kind of long, constraint-heavy task that
+  // degrades on a fast model. Opens the model picker, takes the Thinking entry
+  // if one is offered, then clicks the "High" effort option.
+  //
+  // This drives ChatGPT's own DOM, which its authors change without notice, so
+  // every step is best-effort: each lookup retries briefly, anything unfound is
+  // skipped, and the menu is dismissed on the way out. A failure here returns a
+  // reason string and never blocks sending — the prompt still goes through on
+  // whatever model is already selected.
+  const setReasoningHigh = async () => {
+    const wv = webviewRef.current;
+    if (!wv) return "no-webview";
+    const js =
+      "(async () => {" +
+      "  const sleep = ms => new Promise(r=>setTimeout(r,ms));" +
+      "  const vis = (el) => { if(!el) return false; const r=el.getBoundingClientRect(); return r.width>0 && r.height>0; };" +
+      "  const realClick = (el) => { const o={bubbles:true,cancelable:true,view:window};" +
+      "    try{ el.dispatchEvent(new PointerEvent('pointerdown',o)); }catch(e){}" +
+      "    el.dispatchEvent(new MouseEvent('mousedown',o));" +
+      "    try{ el.dispatchEvent(new PointerEvent('pointerup',o)); }catch(e){}" +
+      "    el.dispatchEvent(new MouseEvent('mouseup',o));" +
+      "    try{ el.click(); }catch(e){ el.dispatchEvent(new MouseEvent('click',o)); } };" +
+      // 1. Find the model picker first, so it can be excluded from the menu
+      // scan below — its own label often reads "GPT-5 Thinking", which would
+      // otherwise match the Thinking lookup and re-click the button, closing
+      // the menu instead of stepping into it.
+      "  const opener = document.querySelector('[data-testid=\"model-switcher-dropdown-button\"]')" +
+      "    || Array.from(document.querySelectorAll('button')).filter(vis).find(b => /model|gpt|thinking/i.test(((b.getAttribute('aria-label')||'')+' '+(b.textContent||'')).trim()));" +
+      "  if (!opener) return 'no-picker';" +
+      // Menu items render as role=menuitem/option/radio depending on the build.
+      "  const items = () => Array.from(document.querySelectorAll('[role=\"menuitem\"],[role=\"menuitemradio\"],[role=\"option\"],[data-testid^=\"model-switcher\"]')).filter(el => vis(el) && el !== opener && !opener.contains(el));" +
+      "  const byText = (re) => items().find(el => re.test((el.textContent||'').trim()));" +
+      "  const waitFor = async (fn, tries) => { for(let i=0;i<tries;i++){ const v=fn(); if(v) return v; await sleep(150); } return null; };" +
+      "  realClick(opener);" +
+      "  if (!(await waitFor(() => items().length ? true : null, 20))) return 'menu-did-not-open';" +
+      // 2. If the effort options aren't on this level, step into the Thinking entry.
+      "  let high = byText(/^high$/i);" +
+      "  if (!high) {" +
+      "    const thinking = byText(/thinking|reasoning/i);" +
+      "    if (thinking) { realClick(thinking); await sleep(400); high = await waitFor(() => byText(/^high$/i), 20); }" +
+      "  }" +
+      // 3. Fall back to a label that merely contains "high" (e.g. "High effort").
+      "  if (!high) high = byText(/\\bhigh\\b/i);" +
+      "  if (!high) { try{ document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})); }catch(e){} return 'no-high-option'; }" +
+      "  realClick(high);" +
+      "  await sleep(400);" +
+      "  try{ document.body.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true})); }catch(e){}" +
+      "  return 'ok';" +
+      "})();";
+    try { return await wv.executeJavaScript(js, true); } catch (_) { return "error"; }
+  };
+
   // Wait for the completed resume-JSON reply (request_id matches, valid JSON with
   // a `resume` object), click its code-block Copy button, and also place the JSON
   // on the clipboard directly so the reply watcher reliably picks it up.
@@ -1165,12 +1218,79 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       "(async () => {" +
       "  const reqId = " + JSON.stringify(String(reqId)) + ";" +
       "  const sleep = ms => new Promise(r=>setTimeout(r,ms));" +
-      "  const complete = (pre) => { const t=(pre.textContent||'').trim(); if(!t.includes(reqId)) return null; let o; try{o=JSON.parse(t);}catch(e){return null;} return (o && String(o.request_id||'')===reqId && o.resume && typeof o.resume==='object') ? t : null; };" +
-      "  const findCopyBtn = (pre) => { let node=pre; for(let up=0;up<6&&node;up++){ node=node.parentElement; if(!node) break; let b=node.querySelector('button[aria-label*=\"opy\"],button[data-testid*=\"copy\"]'); if(!b){ b=Array.from(node.querySelectorAll('button')).find(x=>/copy/i.test(((x.textContent||'')+' '+(x.getAttribute('aria-label')||'')))); } if(b) return b; } return null; };" +
-      "  for (let i=0;i<900;i++){" +
-      "    let text=null, target=null; const pres=document.querySelectorAll('pre');" +
-      "    for(const p of pres){ const t=complete(p); if(t){ text=t; target=p; } }" +
-      "    if(text && target){ const b=findCopyBtn(target); if(b){ try{ b.click(); }catch(e){} } return text; }" +
+      // Find the reply by SCANNING TEXT for a balanced JSON object that contains
+      // this request_id, rather than requiring a particular element to parse
+      // whole. Every previous attempt tied detection to ChatGPT's markup — first
+      // pre.textContent (which includes the "JSON" header label and so never
+      // parsed), then the <code> child (which assumes a <pre>-shaped block). The
+      // markup keeps moving; the text does not. Walk back from the request_id to
+      // its enclosing '{', match braces while respecting strings and escapes, and
+      // validate the candidate. Header labels, syntax-highlight spans and any
+      // surrounding prose all become irrelevant.
+      "  const findJson = (text) => {" +
+      "    if(!text) return null;" +
+      "    const at = text.indexOf(reqId); if(at < 0) return null;" +
+      "    for(let s = text.lastIndexOf('{', at); s >= 0; s = text.lastIndexOf('{', s-1)){" +
+      "      let depth=0, inStr=false, esc=false;" +
+      "      for(let p=s; p<text.length; p++){" +
+      "        const ch = text[p];" +
+      "        if(esc){ esc=false; continue; }" +
+      "        if(ch === '\\\\'){ esc=true; continue; }" +
+      "        if(ch === '\"'){ inStr = !inStr; continue; }" +
+      "        if(inStr) continue;" +
+      "        if(ch === '{') depth++;" +
+      "        else if(ch === '}'){ depth--;" +
+      "          if(depth === 0){" +
+      "            const cand = text.slice(s, p+1);" +
+      "            if(cand.indexOf(reqId) > -1){ try{ const o = JSON.parse(cand); if(o && String(o.request_id||'') === reqId && o.resume && typeof o.resume === 'object') return cand; }catch(e){} }" +
+      "            break;" +
+      "          }" +
+      "        }" +
+      "      }" +
+      "      if(s === 0) break;" +
+      "    }" +
+      "    return null;" +
+      "  };" +
+      // The Copy button is icon-only — no text, and in some builds no aria-label
+      // either — so match on any copy-ish attribute first, then fall back to a
+      // button in the block's header that clearly is not one of the page's other
+      // controls.
+      "  const attrs = (b) => ((b.getAttribute('aria-label')||'')+' '+(b.getAttribute('data-testid')||'')+' '+(b.getAttribute('title')||'')+' '+(b.textContent||'')).toLowerCase();" +
+      "  const NOT_COPY = /send|stop|scroll|voice|mic|model|share|more|menu|edit|regenerate|thumb|attach|search/;" +
+      "  const findCopyBtn = (el) => {" +
+      "    let node = el;" +
+      "    for(let up=0; up<8 && node; up++){" +
+      "      const btns = Array.from(node.querySelectorAll('button'));" +
+      "      const hit = btns.find(b => /copy/.test(attrs(b)));" +
+      "      if(hit) return hit;" +
+      "      if(up > 0){ const only = btns.filter(b => !NOT_COPY.test(attrs(b))); if(only.length === 1) return only[0]; }" +
+      "      node = node.parentElement;" +
+      "    }" +
+      "    return null;" +
+      "  };" +
+      // The same real-pointer sequence the send button needs. A bare .click() is
+      // ignored by ChatGPT's React handlers.
+      "  const realClick = (el) => { const o={bubbles:true,cancelable:true,view:window};" +
+      "    try{ el.dispatchEvent(new PointerEvent('pointerdown',o)); }catch(e){}" +
+      "    el.dispatchEvent(new MouseEvent('mousedown',o));" +
+      "    try{ el.dispatchEvent(new PointerEvent('pointerup',o)); }catch(e){}" +
+      "    el.dispatchEvent(new MouseEvent('mouseup',o));" +
+      "    try{ el.click(); }catch(e){ el.dispatchEvent(new MouseEvent('click',o)); } };" +
+      // Wait on a DEADLINE, not an iteration count. This used to poll 900 times
+      // at 400ms — exactly 6 minutes — while the clipboard watcher in the main
+      // process waits 15. A high-reasoning model routinely thinks for longer than
+      // 6 minutes, so the loop gave up before the answer arrived, the Copy button
+      // was never clicked, and the watcher then sat idle until its own timeout.
+      // Matching the watcher's window keeps the two in step.
+      "  const deadline = Date.now() + 15*60*1000;" +
+      "  while (Date.now() < deadline) {" +
+      "    let text=null, target=null;" +
+      // Prefer a code container, so the matching Copy button can be located.
+      "    for(const c of document.querySelectorAll('pre,code')){ const t=findJson(c.textContent||''); if(t){ text=t; target=c; } }" +
+      // Nothing matched a container — fall back to the page text, so the resume
+      // is still captured even if the block is rendered in some other element.
+      "    if(!text){ try{ text = findJson(document.body ? document.body.innerText : ''); }catch(e){} }" +
+      "    if(text){ if(target){ const b=findCopyBtn(target); if(b){ try{ realClick(b); }catch(e){} } } return text; }" +
       "    await sleep(400);" +
       "  }" +
       "  return '';" +
@@ -1179,6 +1299,10 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     try { text = await wv.executeJavaScript(js, true); } catch (_) {}
     if (text && typeof text === "string" && text.trim()) {
       try { await api().clipboardWrite(text); } catch (_) {}
+    } else {
+      // Say so rather than leaving "Waiting for your ChatGPT reply…" on screen
+      // with no explanation — the user can still finish by copying by hand.
+      toast("Couldn't auto-copy the reply — select the JSON block in the ChatGPT tab and copy it (Ctrl+C).", "warning");
     }
   };
 
@@ -1203,6 +1327,10 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       // autoSend() also polls internally for ChatGPT's composer to mount, so
       // this works whether the page just finished loading or loaded earlier.
       setTimeout(async () => {
+        // Select the high-reasoning model BEFORE the prompt goes in — switching
+        // afterwards would not affect a message already sent. Best-effort: if the
+        // picker can't be driven, send anyway on whatever model is selected.
+        try { await setReasoningHigh(); } catch (_) {}
         const r = await autoSend(promptText);
         if (r !== "sent") {
           toast("Couldn't auto-send — paste the prompt (Ctrl+V) in the ChatGPT tab and send it.", "warning");
