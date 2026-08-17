@@ -91,7 +91,15 @@ contextBridge.exposeInMainWorld("api", {
   chatgptSessionInfo: () => invoke("chatgpt:sessionInfo"),
   chatgptSessionDirect: () => invoke("chatgpt:sessionDirect"),
   clipboardWrite: (text) => invoke("clipboard:write", text),
+  // Read the clipboard back to check whether ChatGPT's own Copy button wrote to it.
+  clipboardRead: () => invoke("clipboard:read"),
+  // Real (trusted) mouse click at a point inside the embedded ChatGPT WebView.
+  // One object: invoke() above forwards a single payload, so separate arguments
+  // would arrive as undefined.
+  chatSendClick: (data) => invoke("chat:sendClick", data),
   notifyResumeDone: (data) => invoke("notify:resumeDone", data),
+  // One line per run describing what the copy step found in the page.
+  logCopyDiag: (line) => invoke("log:copyDiag", line),
   saveChatgptHome: (url) => invoke("chatgpt:saveHome", url),
   getChatgptHome: () => invoke("chatgpt:getHome"),
   clearChatgptHome: () => invoke("chatgpt:clearHome"),

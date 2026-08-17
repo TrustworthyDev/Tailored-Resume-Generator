@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Notification, dialog, shell, clipboard, session, screen } = require("electron");
+const { app, BrowserWindow, ipcMain, Notification, dialog, shell, clipboard, session, screen, webContents } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const db = require("./db");
@@ -1759,8 +1759,57 @@ function registerIpc() {
     catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
   });
 
+  // Read the clipboard back, so the copy step can tell whether ChatGPT's own
+  // Copy button actually put anything there (compare before/after the click).
+  ipcMain.handle("clipboard:read", () => {
+    try { return { ok: true, text: clipboard.readText() || "" }; }
+    catch (e) { return { ok: false, text: "", error: (e && e.message) || String(e) }; }
+  });
+
+  // Click a point inside the embedded ChatGPT WebView with a REAL input event.
+  //
+  // Everything the page script dispatches itself is synthetic: isTrusted false,
+  // and it confers no user activation. ChatGPT's Copy handler calls
+  // navigator.clipboard.writeText(), which Chromium can refuse without an
+  // activation — so a click could land and still copy nothing. sendInputEvent
+  // comes from the browser process instead, so the guest sees an ordinary
+  // trusted mouse click, indistinguishable from the user's.
+  //
+  // Coordinates are CSS pixels in the guest's own viewport (what
+  // getBoundingClientRect returns there), NOT screen coordinates — the WebView
+  // can stay parked off-screen and still receive this.
+  ipcMain.handle("chat:sendClick", (_e, d) => {
+    try {
+      const wc = webContents.fromId(Number(d && d.id));
+      if (!wc || wc.isDestroyed()) return { ok: false, error: "no-webcontents" };
+      const px = Math.round(Number(d && d.x) || 0);
+      const py = Math.round(Number(d && d.y) || 0);
+      if (px <= 0 || py <= 0) return { ok: false, error: "bad-coordinates" };
+      // Chromium wants the pointer over the target before the press, or the
+      // button never reaches its hover/active state and some handlers no-op.
+      wc.sendInputEvent({ type: "mouseMove", x: px, y: py });
+      wc.sendInputEvent({ type: "mouseDown", x: px, y: py, button: "left", clickCount: 1 });
+      wc.sendInputEvent({ type: "mouseUp", x: px, y: py, button: "left", clickCount: 1 });
+      return { ok: true, x: px, y: py };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
   // Windows system notification when a resume finishes generating. Clicking it
   // brings the app window to the front.
+  // Append one line describing what the copy step actually saw in the page, so
+  // the DOM can be inspected after a real run instead of guessed at.
+  ipcMain.handle("log:copyDiag", (_e, line) => {
+    try {
+      fs.appendFileSync(
+        path.join(app.getPath("userData"), "copy-diag.log"),
+        `[${new Date().toISOString()}] ${String(line || "")}\n`
+      );
+    } catch (_) {}
+    return { ok: true };
+  });
+
   ipcMain.handle("notify:resumeDone", (_e, d) => {
     try {
       const account = ((d && d.account) || "").trim();
