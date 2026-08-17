@@ -1,0 +1,76 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><title>fixture</title></head>
+<body>
+<script>window.__clicks = [];</script>
+
+<!-- The prompt echo above the reply. It ALSO contains the request_id, and it has
+     its own Copy button — the reply's button must win, not this one. -->
+<div class="user-message">
+  <div class="whitespace-pre-wrap">{ "request_id": "wqx15ajzai", "task": "tailored_resume" }</div>
+  <div class="flex items-center">
+    <button type="button" aria-label="Copy" onclick="window.__clicks.push('PROMPT')">
+      <svg width="20" height="20" aria-hidden="true"></svg>
+    </button>
+  </div>
+</div>
+
+<!-- The assistant reply, reproducing the structure from DevTools. -->
+<div class="relative w-full mt-4 mb-1">
+ <div class="">
+  <div class="contents">
+   <div class="border border-token-border-light border-radius-3xl corner-superellipse/1.1 rounded-3xl">
+    <div class="relative h-full w-full border-radius-3xl bg-(--code-block-surface) corner-superellipse/1.1 overflow-clip rounded-3xl [--code-block-surface:var(--bg-elevated-secondary)]">
+     <div class="select-none sticky z-2 top-(--sticky-padding-top)">
+      <div class="flex w-full items-center justify-between py-1.5 ps-4 pe-1.5 font-sans md:ps-5 bg-(--code-block-surface)">
+       <div class="flex max-w-[75%] min-w-0 cursor-default items-center text-sm font-medium justify-self-start text-token-text-primary">JSON</div>
+       <div class="flex flex-row items-center gap-0.5 justify-self-end">
+        <button type="button"
+                class="flex gap-1 items-center select-none py-2 text-sm font-medium hover:bg-black/5 dark:hover:bg-white/10 size-9 rounded-full px-2"
+                aria-label="Copy" data-state="closed"
+                onclick="window.__clicks.push('CODEBLOCK')">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" aria-hidden="true" class="icon-md"></svg>
+        </button>
+       </div>
+      </div>
+     </div>
+     <div class="pointer-events-none absolute inset-x-4 top-12 bottom-4"></div>
+     <div class="relative">
+      <!-- Crucially: the <pre> encloses the header too, so pre.textContent is
+           "JSON { … }" and JSON.parse throws — the actual breakage. -->
+      <pre class="overflow-visible! px-0"><code class="language-json">{
+  "request_id": "wqx15ajzai",
+  "job_ref": "57a9cd352d7d",
+  "target": { "role": "AI Engineer", "company": "INDG", "country": "Netherlands" },
+  "resume": {
+    "name": "Robin Kovaljov",
+    "title": "Senior AI Engineer | Python, PyTorch",
+    "summary": "He said \"hi\" and used a backslash \\ here.",
+    "skills": [{ "category": "Lang", "items": ["Python", "Go"] }]
+  }
+}</code></pre>
+     </div>
+    </div>
+   </div>
+  </div>
+ </div>
+</div>
+
+<!-- The whole-message action row below the reply, with its own Copy. -->
+<div class="flex items-center gap-1">
+  <button type="button" aria-label="Copy" onclick="window.__clicks.push('MESSAGE')">
+    <svg width="20" height="20" aria-hidden="true"></svg>
+  </button>
+  <button type="button" aria-label="Share" onclick="window.__clicks.push('SHARE')"></button>
+</div>
+
+<script>
+  // Make pre.textContent unparseable exactly as ChatGPT does: the header label
+  // sits inside the <pre>'s subtree in the real page. Emulate by prepending it.
+  const pre = document.querySelector('pre');
+  const label = document.createElement('span');
+  label.textContent = 'JSON\n';
+  pre.insertBefore(label, pre.firstChild);
+</script>
+</body>
+</html>
