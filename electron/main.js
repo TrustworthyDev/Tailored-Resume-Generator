@@ -8,6 +8,7 @@ const {
 } = require("./ai");
 const license = require("./license");
 const accountMd = require("./accountMd");
+const { sortRoles } = require("./workOrder");
 
 const isDev = !!process.env.ELECTRON_DEV;
 
@@ -309,6 +310,41 @@ function createWindow() {
 
 // ---- IPC handlers ----------------------------------------------------------
 
+// Every read of an account's roles uses this, so the form, the resume, the
+// prompt and the cover letter all see the same newest-first order. Rows written
+// before sort_order existed fall back to id, keeping them together at the end
+// until the next save renumbers them.
+const WORK_BY_ACCOUNT =
+  "SELECT * FROM work_history WHERE account_id = ? ORDER BY COALESCE(sort_order, 9999) ASC, id ASC";
+
+// Re-derive the newest-first ordering for one account from the dates on its
+// roles, and write it back as sort_order. Called after anything that adds,
+// edits or replaces a role, so the stored order always matches the dates.
+function renumberWork(accountId) {
+  const rows = db.all(
+    "SELECT id, work_duration FROM work_history WHERE account_id = ? ORDER BY COALESCE(sort_order, 9999) ASC, id ASC",
+    [accountId]
+  );
+  if (!rows.length) return;
+  const sorted = sortRoles(rows);
+  db.runMany(
+    sorted.map((r, i) => ["UPDATE work_history SET sort_order = ? WHERE id = ?", [i, r.id]])
+  );
+}
+
+// One-off on startup: number the roles that predate the sort_order column.
+function backfillWorkOrder() {
+  try {
+    const pending = db.all(
+      "SELECT DISTINCT account_id FROM work_history WHERE sort_order IS NULL AND account_id IS NOT NULL"
+    );
+    pending.forEach((r) => renumberWork(r.account_id));
+    if (pending.length) console.log(`[work] ordered roles for ${pending.length} account(s)`);
+  } catch (e) {
+    console.log("[work] could not order existing roles:", (e && e.message) || e);
+  }
+}
+
 function registerIpc() {
   // License / activation (machine-locked)
   ipcMain.handle("license:status", () => {
@@ -451,11 +487,17 @@ function registerIpc() {
   });
 
   // Persist a new ranking from drag-and-drop (array of account ids in order).
+  // One statement per account, but a SINGLE read-modify-write of the database.
+  // As separate run() calls this rewrote the whole 8MB file once per account and
+  // left the ranking half-applied in between — so two quick drags could
+  // interleave and land a mix of the old and new order.
   ipcMain.handle("accounts:reorder", (_e, ids) => {
-    (ids || []).forEach((id, i) => {
-      db.run("UPDATE accounts SET sort_order = ? WHERE id = ?", [i, id]);
-    });
-    return { ok: true };
+    const list = (ids || []).filter((id) => id != null);
+    if (!list.length) return { ok: false, error: "no-ids" };
+    db.runMany(list.map((id, i) => ["UPDATE accounts SET sort_order = ? WHERE id = ?", [i, id]]));
+    // Hand back what is now stored, so the caller can render the saved truth
+    // instead of assuming the write landed.
+    return { ok: true, accounts: db.all("SELECT id, name, title, country, main_stack FROM accounts ORDER BY sort_order ASC, id ASC") };
   });
 
   ipcMain.handle("accounts:save", (_e, d) => {
@@ -463,7 +505,8 @@ function registerIpc() {
       `UPDATE accounts SET name = ?, title = ?, email = ?, phone = ?, address = ?,
          country = ?, linkedin = ?, portfolio = ?, main_stack = ?, additional_info = ?,
          birth_date = ?, password = ?, recovery = ?, resume_link = ?,
-         cover_letter_link = ?, time_zone = ? WHERE id = ?`,
+         cover_letter_link = ?, time_zone = ?, resume_style = ?, resume_accent = ?,
+         resume_name_color = ?, resume_font = ?, resume_font_size = ? WHERE id = ?`,
       [
         d.name || "",
         d.title || "",
@@ -481,6 +524,32 @@ function registerIpc() {
         d.resume_link || "",
         d.cover_letter_link || "",
         d.time_zone || "",
+        // The saved resume look. Empty string = no preference for this account.
+        d.resume_style || "",
+        d.resume_accent || "",
+        d.resume_name_color || "",
+        d.resume_font || "",
+        d.resume_font_size || "",
+        d.id,
+      ]
+    );
+    return { ok: true };
+  });
+
+  // Save ONLY the resume look (Set Resume tab). Separate from accounts:save so a
+  // template or colour takes effect the moment it is clicked, without also
+  // writing whatever half-finished edits are sitting on the other tabs.
+  ipcMain.handle("accounts:saveLook", (_e, d) => {
+    if (!d || !d.id) return { ok: false, error: "no-account" };
+    db.run(
+      `UPDATE accounts SET resume_style = ?, resume_accent = ?, resume_name_color = ?,
+         resume_font = ?, resume_font_size = ? WHERE id = ?`,
+      [
+        d.resume_style || "",
+        d.resume_accent || "",
+        d.resume_name_color || "",
+        d.resume_font || "",
+        d.resume_font_size || "",
         d.id,
       ]
     );
@@ -549,6 +618,20 @@ function registerIpc() {
        WHERE ap.account_id = ? ORDER BY ap.id DESC`,
       [accountId]
     )
+  );
+
+  // The most recent resume actually generated for an account, used to preview a
+  // style/colour/font choice against real content on the "Set Resume" tab
+  // instead of a mock-up. Rows with no stored text are skipped, so an older
+  // application that does have content still gives something to show.
+  ipcMain.handle("applications:lastResume", (_e, accountId) =>
+    db.get(
+      `SELECT resume_content, role, company, applied_at
+         FROM applications
+        WHERE account_id = ? AND IFNULL(resume_content, '') <> ''
+        ORDER BY id DESC LIMIT 1`,
+      [accountId]
+    ) || null
   );
 
   // Every application across all accounts (with the owning account's name),
@@ -795,13 +878,8 @@ function registerIpc() {
     return { ok: true };
   });
 
-  // Work history (scoped to an account)
-  ipcMain.handle("work:list", (_e, accountId) =>
-    db.all(
-      "SELECT * FROM work_history WHERE account_id = ? ORDER BY id DESC",
-      [accountId]
-    )
-  );
+  // Work history (scoped to an account), newest job first — see workOrder.js.
+  ipcMain.handle("work:list", (_e, accountId) => db.all(WORK_BY_ACCOUNT, [accountId]));
 
   ipcMain.handle("work:add", (_e, d) => {
     const id = db.insert(
@@ -816,6 +894,8 @@ function registerIpc() {
         nowIso(),
       ]
     );
+    // A new role slots into place by its dates rather than landing at the end.
+    renumberWork(d.account_id);
     return { id };
   });
 
@@ -831,6 +911,9 @@ function registerIpc() {
         d.id,
       ]
     );
+    // The dates may have moved, so the role may belong somewhere else now.
+    const owner = db.get("SELECT account_id FROM work_history WHERE id = ?", [d.id]);
+    if (owner && owner.account_id) renumberWork(owner.account_id);
     return { ok: true };
   });
 
@@ -844,7 +927,8 @@ function registerIpc() {
   ipcMain.handle("work:replaceAll", (_e, d) => {
     const accountId = d.accountId;
     db.run("DELETE FROM work_history WHERE account_id = ?", [accountId]);
-    (d.rows || []).forEach((r) => {
+    // Stored newest job first, whatever order they were typed in.
+    sortRoles(d.rows || []).forEach((r, i) => {
       const empty =
         !(r.role_name || "").trim() &&
         !(r.company_name || "").trim() &&
@@ -852,14 +936,15 @@ function registerIpc() {
         !(r.work_duration || "").trim();
       if (empty) return;
       db.insert(
-        `INSERT INTO work_history (account_id, role_name, company_name, location, work_duration, created_at)
-         VALUES (?, ?, ?, ?, ?, ?)`,
+        `INSERT INTO work_history (account_id, role_name, company_name, location, work_duration, sort_order, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
         [
           accountId,
           r.role_name || "",
           r.company_name || "",
           r.location || "",
           r.work_duration || "",
+          i,
           nowIso(),
         ]
       );
@@ -1173,7 +1258,7 @@ function registerIpc() {
       if (!role && !company) {
         // Fall back to the candidate's latest work history if no JD target.
         const work = db.get(
-          "SELECT role_name, company_name FROM work_history WHERE account_id = ? ORDER BY id DESC LIMIT 1",
+          "SELECT role_name, company_name FROM work_history WHERE account_id = ? ORDER BY COALESCE(sort_order, 9999) ASC, id ASC LIMIT 1",
           [d.accountId]
         );
         role = sani(work && work.role_name);
@@ -1358,7 +1443,7 @@ function registerIpc() {
       : null;
     const work = accountId
       ? db.all(
-          "SELECT * FROM work_history WHERE account_id = ? ORDER BY id ASC",
+          WORK_BY_ACCOUNT,
           [accountId]
         )
       : [];
@@ -1678,7 +1763,7 @@ function registerIpc() {
     const accountId = payload && payload.accountId;
     const personal = accountId ? db.get("SELECT * FROM accounts WHERE id = ?", [accountId]) : null;
     if (!personal) throw new Error("Select an account to build a resume for.");
-    const work = db.all("SELECT * FROM work_history WHERE account_id = ? ORDER BY id ASC", [accountId]);
+    const work = db.all(WORK_BY_ACCOUNT, [accountId]);
     const education = db.all("SELECT * FROM education WHERE account_id = ? ORDER BY id ASC", [accountId]);
     const projects = db.all("SELECT * FROM projects WHERE account_id = ? ORDER BY id ASC", [accountId]);
     const instrId = payload && payload.instructionId;
@@ -2119,7 +2204,7 @@ function registerIpc() {
       : null;
     if (!personal) throw new Error("Select an account to build a cover letter for.");
     const work = db.all(
-      "SELECT * FROM work_history WHERE account_id = ? ORDER BY id ASC",
+      WORK_BY_ACCOUNT,
       [accountId]
     );
     const education = db.all(
@@ -2246,6 +2331,9 @@ app.whenReady().then(async () => {
     // The unpacked build is a separate sandbox — don't pull in legacy data.
     if (!isUnpackedBuild) migrateLegacyData();
     await db.initDb(app.getPath("userData"));
+    // Number any roles saved before ordering existed, so existing accounts read
+    // newest-first straight away rather than only after their next save.
+    backfillWorkOrder();
     // Settle the connection choice, then apply it before any API calls.
     seedConnectionMode();
     applyApiConnection();

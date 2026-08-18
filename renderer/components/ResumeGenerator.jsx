@@ -2,81 +2,13 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { buildResumeHtml, buildCoverLetterHtml } from "../lib/resumeHtml";
 import { styleThumb } from "../lib/styleThumbs";
+import { STYLES, PRESET_COLORS, FONT_OPTIONS, SIZE_OPTIONS, hasSavedLook, rankStyles } from "../lib/resumeStyles";
 import { modelTiny, providerLabel } from "../lib/aiModels";
 import { friendlyError } from "../lib/errors";
 import { ageFromBirthDate } from "../lib/age";
 import FlagSelect from "./FlagSelect";
 import ConfirmModal from "./ConfirmModal";
 
-const STYLES = [
-  { id: "ats", label: "ATS-Safe", accent: "#333333" },
-  { id: "modern", label: "Modern", accent: "#0d9488" },
-  { id: "minimal", label: "Minimal", accent: "#6b7280" },
-  { id: "creative", label: "Creative", accent: "#7c3aed" },
-  { id: "technical", label: "Technical", accent: "#2563eb" },
-  { id: "academic", label: "Academic", accent: "#334155" },
-  { id: "compact", label: "Compact", accent: "#475569" },
-  { id: "cards", label: "Cards", accent: "#0d9488" },
-  { id: "timeline", label: "Timeline", accent: "#2563eb" },
-  { id: "classic", label: "Classic", accent: "#1f2937" },
-  { id: "centered", label: "Centered", accent: "#14b8a6" },
-  { id: "highlight", label: "Highlight", accent: "#c2410c" },
-  { id: "banded", label: "Banded", accent: "#4b5563" },
-  { id: "darkheader", label: "Dark Header", accent: "#1f1f1f" },
-  { id: "ribbon", label: "Ribbon", accent: "#8b2635" },
-  { id: "formal", label: "Formal", accent: "#111111" },
-];
-
-// Sample colors. The Content picker applies one to EVERY template's borders,
-// category headings and backgrounds; the Name picker recolors the name + title.
-// "Default" (empty) lets each template keep its own built-in colors.
-const PRESET_COLORS = [
-  { name: "Blue", value: "#2563eb" },
-  { name: "Teal", value: "#0d9488" },
-  { name: "Purple", value: "#7c3aed" },
-  { name: "Navy", value: "#1f3a5f" },
-  { name: "Green", value: "#16a34a" },
-  { name: "Crimson", value: "#dc2626" },
-  { name: "Orange", value: "#ea580c" },
-  { name: "Slate", value: "#475569" },
-  { name: "Indigo", value: "#4f46e5" },
-  { name: "Sky", value: "#0ea5e9" },
-  { name: "Cyan", value: "#0891b2" },
-  { name: "Rose", value: "#e11d48" },
-  { name: "Pink", value: "#db2777" },
-  { name: "Charcoal", value: "#1f2937" },
-];
-
-// Font family choices ("" keeps each template's own default).
-const FONT_OPTIONS = [
-  { value: "", label: "Template default" },
-  // ATS-recommended sans-serif (fall back to a system sans if not installed)
-  { value: "'Open Sans', Arial, Helvetica, sans-serif", label: "Open Sans" },
-  { value: "Roboto, Arial, Helvetica, sans-serif", label: "Roboto" },
-  { value: "Lato, 'Segoe UI', Arial, sans-serif", label: "Lato" },
-  // Sans-serif
-  { value: "Calibri, 'Segoe UI', Arial, sans-serif", label: "Calibri" },
-  { value: "'Segoe UI', Arial, sans-serif", label: "Segoe UI" },
-  { value: "Arial, Helvetica, sans-serif", label: "Arial" },
-  { value: "'Helvetica Neue', Arial, sans-serif", label: "Helvetica" },
-  { value: "Verdana, Geneva, sans-serif", label: "Verdana" },
-  { value: "Tahoma, Geneva, sans-serif", label: "Tahoma" },
-  { value: "'Trebuchet MS', Tahoma, sans-serif", label: "Trebuchet MS" },
-  { value: "Candara, 'Segoe UI', sans-serif", label: "Candara" },
-  { value: "Corbel, 'Segoe UI', sans-serif", label: "Corbel" },
-  { value: "'Century Gothic', 'Apple SD Gothic Neo', sans-serif", label: "Century Gothic" },
-  { value: "'Franklin Gothic Book', 'Arial Narrow', sans-serif", label: "Franklin Gothic" },
-  { value: "'Lucida Sans', 'Lucida Grande', sans-serif", label: "Lucida Sans" },
-  // Serif
-  { value: "Georgia, 'Times New Roman', serif", label: "Georgia" },
-  { value: "'Times New Roman', Times, serif", label: "Times New Roman" },
-  { value: "Cambria, Georgia, serif", label: "Cambria" },
-  { value: "Constantia, Georgia, serif", label: "Constantia" },
-  { value: "'Palatino Linotype', 'Book Antiqua', Palatino, serif", label: "Palatino" },
-  { value: "'Book Antiqua', Palatino, Georgia, serif", label: "Book Antiqua" },
-  { value: "Garamond, 'EB Garamond', Georgia, serif", label: "Garamond" },
-];
-const SIZE_OPTIONS = ["", "8", "8.5", "9", "9.5", "10", "10.5", "11", "11.5", "12"];
 
 // Shown when the user tweaks a style/colour/font but hasn't generated a resume.
 const NO_CONTENT_MSG = "There is no resume content yet. Please generate a resume first.";
@@ -165,6 +97,11 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const [autoOpenPdf, setAutoOpenPdf] = useState(false); // open the saved PDF in the system viewer
   const [prefsReady, setPrefsReady] = useState(false); // toggles render after load
   const [copied, setCopied] = useState(false);
+  // Marks the generated resume as "taken" — set by any Copy Location button, so
+  // the form carries a green border until the next Generate Resume clears it.
+  // Persisted, since copying the folder is usually followed by leaving the app
+  // to file the application.
+  const [locationCopied, setLocationCopied] = useState(false);
   const [acctInfo, setAcctInfo] = useState(null); // contact info for the live viewer
   const [eduRows, setEduRows] = useState([]); // structured education for the resume
   const [view, setView] = useState("generate"); // "generate" | "preview" sub-tab
@@ -339,6 +276,10 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       const autoOpenPref = await api().getPref("auto_open_pdf");
       if (autoOpenPref && autoOpenPref.value != null) setAutoOpenPdf(autoOpenPref.value === "1");
 
+      // Whether the last generated resume has already had its location copied.
+      const copiedPref = await api().getPref("gen_location_copied");
+      if (copiedPref && copiedPref.value != null) setLocationCopied(copiedPref.value === "1");
+
       // The last target job, so "View info" survives a restart — and the resume
       // text that went with it, so the style/colour/font controls can re-render
       // it straight away instead of reporting that there is nothing to restyle.
@@ -353,15 +294,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       if (countryPref && countryPref.value) setJobCountry(countryPref.value);
       if (resultPref && resultPref.value) setResult(resultPref.value);
 
-      if (styleOrderPref && styleOrderPref.value) {
-        const order = styleOrderPref.value.split(",");
-        const ranked = [...STYLES].sort((a, b) => {
-          const ia = order.indexOf(a.id);
-          const ib = order.indexOf(b.id);
-          return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
-        });
-        setStyles(ranked);
-      }
+      if (styleOrderPref && styleOrderPref.value) setStyles(rankStyles(styleOrderPref.value));
 
       // Everything loaded — now the toggles can render with their saved values.
       setPrefsReady(true);
@@ -395,6 +328,15 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       setKeyId((cur) => keep(ks, cur, true));
       setPrompts(instrs || []);
       setPromptId((cur) => keep(instrs, cur, true));
+      // Re-read the selected account's saved look. Without this, a template
+      // chosen on that account's Set Resume tab would not show up here until the
+      // account was re-selected — the account-change effect never fires when the
+      // selection is already the one that was edited.
+      const id = accountIdRef.current;
+      if (id) {
+        const acc = await api().getAccount(Number(id));
+        if (!cancelled) applyAccountLook(acc);
+      }
     })();
     return () => { cancelled = true; };
   }, [active, isV2]);
@@ -404,10 +346,33 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   useEffect(() => {
     if (!accountId) { setAcctInfo(null); setEduRows([]); return; }
     let cancelled = false;
-    api().getAccount(Number(accountId)).then((a) => { if (!cancelled) setAcctInfo(a || null); });
+    api().getAccount(Number(accountId)).then((a) => {
+      if (cancelled) return;
+      setAcctInfo(a || null);
+      applyAccountLook(a);
+    });
     api().listEducation(Number(accountId)).then((rows) => { if (!cancelled) setEduRows(rows || []); });
     return () => { cancelled = true; };
   }, [accountId]);
+
+  // Switch the style, colour and font controls to whatever this account has
+  // saved on its "Set Resume" tab. Each setting is applied only when the account
+  // actually carries one, so an account with nothing set leaves the current
+  // selection alone rather than resetting it to defaults. The preview re-renders
+  // by itself — the effect below already watches these five values.
+  const applyAccountLook = (acc) => {
+    if (!hasSavedLook(acc)) return;
+    const styleId = (acc.resume_style || "").trim();
+    if (styleId && STYLES.some((s) => s.id === styleId)) setStyle(styleId);
+    const accentVal = (acc.resume_accent || "").trim();
+    if (accentVal) setAccent(accentVal);
+    const nameVal = (acc.resume_name_color || "").trim();
+    if (nameVal) setNameColor(nameVal);
+    const fontVal = (acc.resume_font || "").trim();
+    if (fontVal) setFont(fontVal);
+    const sizeVal = (acc.resume_font_size || "").trim();
+    if (sizeVal) setFontSize(sizeVal);
+  };
 
   // V2: if the user leaves this tab while a clipboard watch is running, stop it.
   useEffect(() => {
@@ -952,7 +917,14 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   };
 
   // Route the Generate action to the Gemini API (V1) or ChatGPT browser (V2).
-  const runGenerate = (jdValue) => (isV2 ? previewV2(jdValue) : preview(jdValue));
+  // Starting a new resume clears the "taken" marker from the last one.
+  const runGenerate = (jdValue) => {
+    if (locationCopied) {
+      setLocationCopied(false);
+      api().setPref("gen_location_copied", "0");
+    }
+    return isV2 ? previewV2(jdValue) : preview(jdValue);
+  };
 
   const cancelV2 = async () => {
     await api().cancelChatgptClipboard();
@@ -1784,9 +1756,16 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       setTimeout(() => setCopied(false), 1500);
     } catch (_) {}
   };
+  // Flag the form as taken. Every Copy Location button routes through this, so
+  // the border appears whichever one was used.
+  const markLocationCopied = () => {
+    setLocationCopied(true);
+    api().setPref("gen_location_copied", "1");
+  };
   const copyLocation = () => {
     copyFolderToClipboard(savedPath);
     setView("generate");
+    markLocationCopied();
     toast("Folder path copied to clipboard.", "success");
   };
   // Copy one contact value; the modal stays open so several can be taken.
@@ -1806,6 +1785,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     toast("Folder path copied to clipboard.", "success");
     setShowSaved(false);
     setView("generate");
+    markLocationCopied();
   };
 
   const copy = () => navigator.clipboard.writeText(result);
@@ -1972,7 +1952,10 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         </div>
       </section>
 
-      <section className="card resume-form">
+      {/* The green border marks a resume whose location has been copied — i.e.
+          one already taken away to file an application. Cleared by Generate
+          Resume. */}
+      <section className={"card resume-form" + (locationCopied ? " location-copied" : "")}>
         <div className="resume-tabs">
           <button
             type="button"

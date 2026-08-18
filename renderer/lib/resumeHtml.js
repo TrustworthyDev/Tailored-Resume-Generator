@@ -400,9 +400,10 @@ main li{margin:2px 0;}
 .fm-role{font-size:10.5pt;color:${accent};font-weight:700;}
 .fm-org{font-weight:400;font-size:10.5pt;color:#111;}
 .fm-dates{font-style:italic;color:#444;font-size:9.5pt;}
-/* Education keeps its own weights — school, degree, then the period last — so
-   the experience treatment above never leaks into it. */
-.fm-edu-school{font-weight:700;font-size:10.5pt;color:#111;}
+/* Education keeps its own weights — the degree leads, then the school, then the
+   period last — so the experience treatment above never leaks into it. The
+   school line stays unweighted; only the degree carries bold terms. */
+.fm-edu-school{font-weight:400;font-size:10.5pt;color:#111;}
 .fm-edu-degree{font-size:10.5pt;color:#222;}
 .fm-edu-period{font-style:italic;color:#444;font-size:9.5pt;}
 a{color:${accent};}`;
@@ -896,13 +897,16 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
           );
         }
         // Formal style: the same centered three-line block as its experience
-        // entries — school, the degree, then the study period last.
+        // entries — the degree leads, then the school with its location, then the
+        // study period last. With no degree to lead, `primary` already falls back
+        // to the school name, so the school line is dropped to avoid repeating it.
         if (id === "formal") {
           const school = [uni, loc].filter(Boolean).map(escapeHtml).join(", ");
           return (
             `<div class="fm-head">` +
-            (school ? `<div class="fm-edu-school">${school}</div>` : "") +
             (degree ? `<div class="fm-edu-degree">${primary}</div>` : "") +
+            (school && degree ? `<div class="fm-edu-school">${school}</div>` : "") +
+            (!degree && school ? `<div class="fm-edu-degree">${school}</div>` : "") +
             (period ? `<div class="fm-edu-period">${escapeHtml(period)}</div>` : "") +
             `</div>`
           );

@@ -23,6 +23,8 @@ contextBridge.exposeInMainWorld("api", {
   getAccount: (id) => invoke("accounts:get", id),
   createAccount: (data) => invoke("accounts:create", data),
   saveAccount: (data) => invoke("accounts:save", data),
+  // Just the Set Resume choices, saved as they are picked.
+  saveAccountLook: (data) => invoke("accounts:saveLook", data),
   deleteAccount: (id) => invoke("accounts:delete", id),
   reorderAccounts: (ids) => invoke("accounts:reorder", ids),
 
@@ -120,6 +122,8 @@ contextBridge.exposeInMainWorld("api", {
   addApplication: (data) => invoke("app:add", data),
   listAllApplications: () => invoke("app:listAll"),
   applicationsByAccount: (accountId) => invoke("applications:byAccount", accountId),
+  // Latest generated resume text for one account (previewing a style choice).
+  lastResumeForAccount: (accountId) => invoke("applications:lastResume", accountId),
   allApplications: () => invoke("applications:all"),
   applicationCounts: () => invoke("applications:counts"),
   searchApplications: (query) => invoke("applications:search", query),

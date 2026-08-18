@@ -66,11 +66,14 @@ export default function AccountManagement() {
     setDragIndex(i);
   };
   const onDragEnd = () => {
+    if (dragIndex === null) return;
     setDragIndex(null);
-    // Persist the latest order.
-    setAccounts((arr) => {
-      api().reorderAccounts(arr.map((a) => a.id));
-      return arr;
+    // Persist the ranking, then render what the database actually stored — if a
+    // write ever fails, the list snaps back instead of showing an order that
+    // isn't saved.
+    const ids = accounts.map((a) => a.id);
+    api().reorderAccounts(ids).then((res) => {
+      if (res && res.accounts) setAccounts(res.accounts);
     });
   };
 
