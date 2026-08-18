@@ -332,6 +332,21 @@ function renumberWork(accountId) {
   );
 }
 
+// The "location copied" mark belongs to a single working session: it says the
+// resume on screen has already been taken away to file an application. A fresh
+// start of the app is a fresh session, so it never carries over.
+function clearLocationCopied() {
+  try {
+    db.run(
+      `INSERT INTO prefs (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      ["gen_location_copied", "0"]
+    );
+  } catch (e) {
+    console.log("[prefs] could not clear the copied mark:", (e && e.message) || e);
+  }
+}
+
 // One-off on startup: number the roles that predate the sort_order column.
 function backfillWorkOrder() {
   try {
@@ -2334,6 +2349,7 @@ app.whenReady().then(async () => {
     // Number any roles saved before ordering existed, so existing accounts read
     // newest-first straight away rather than only after their next save.
     backfillWorkOrder();
+    clearLocationCopied();
     // Settle the connection choice, then apply it before any API calls.
     seedConnectionMode();
     applyApiConnection();

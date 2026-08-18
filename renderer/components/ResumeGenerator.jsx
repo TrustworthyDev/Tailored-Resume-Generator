@@ -337,6 +337,14 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         const acc = await api().getAccount(Number(id));
         if (!cancelled) applyAccountLook(acc);
       }
+      // The ranking lives in one pref but each Generate tab keeps its own copy,
+      // so a reorder done on another tab would otherwise not show up here.
+      const orderPref = await api().getPref("style_order");
+      if (!cancelled && orderPref && orderPref.value) setStyles(rankStyles(orderPref.value));
+      // Same for the copied mark: it belongs to the saved resume, which all
+      // three Generate tabs share, and it is cleared when the app starts.
+      const copiedPref = await api().getPref("gen_location_copied");
+      if (!cancelled && copiedPref) setLocationCopied(copiedPref.value === "1");
     })();
     return () => { cancelled = true; };
   }, [active, isV2]);
@@ -466,8 +474,15 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     setStyleDragIndex(i);
   };
   const onStyleDragEnd = () => {
+    if (styleDragIndex === null) return;
     setStyleDragIndex(null);
-    setStyles((arr) => { api().setPref("style_order", arr.map((s) => s.id).join(",")); return arr; });
+    // Same shape as the accounts ranking: write the order, then re-read it and
+    // render that, so what is on screen is always what was actually stored.
+    const order = styles.map((s) => s.id).join(",");
+    api()
+      .setPref("style_order", order)
+      .then(() => api().getPref("style_order"))
+      .then((pref) => { if (pref && pref.value) setStyles(rankStyles(pref.value)); });
   };
 
   // Name and Content may share a colour on every style EXCEPT "cards", whose
@@ -1792,7 +1807,10 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
 
   return (
     <div>
-    <div className="resume-layout">
+    {/* The green outline marks a resume whose location has been copied — one
+        already taken away to file an application. It encloses BOTH panels, the
+        styles and the form, and the next Generate Resume clears it. */}
+    <div className={"resume-layout" + (locationCopied ? " location-copied" : "")}>
       <section className="card resume-styles">
         <div className="styles-head">
           <h2>Resume Styles</h2>
@@ -1952,10 +1970,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         </div>
       </section>
 
-      {/* The green border marks a resume whose location has been copied — i.e.
-          one already taken away to file an application. Cleared by Generate
-          Resume. */}
-      <section className={"card resume-form" + (locationCopied ? " location-copied" : "")}>
+      <section className="card resume-form">
         <div className="resume-tabs">
           <button
             type="button"
