@@ -308,6 +308,14 @@ function migrate() {
     ["resume_link", "TEXT"],
     ["cover_letter_link", "TEXT"],
     ["time_zone", "TEXT"],
+    // The look this account's resumes are generated with — template, the two
+    // colours, font family and size. Empty means "no preference", in which case
+    // the generator keeps whatever is selected there.
+    ["resume_style", "TEXT"],
+    ["resume_accent", "TEXT"],
+    ["resume_name_color", "TEXT"],
+    ["resume_font", "TEXT"],
+    ["resume_font_size", "TEXT"],
   ].forEach(([col, type]) => {
     if (!acctCols.some((c) => c.name === col)) {
       db.run(`ALTER TABLE accounts ADD COLUMN ${col} ${type}`);

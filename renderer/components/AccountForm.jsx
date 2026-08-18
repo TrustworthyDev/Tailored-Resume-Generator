@@ -1,8 +1,11 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { detectCountry, countryFlag } from "../lib/flags";
 import { friendlyError } from "../lib/errors";
 import { ageFromBirthDate } from "../lib/age";
+import { styleThumb } from "../lib/styleThumbs";
+import { buildResumeHtml } from "../lib/resumeHtml";
+import { STYLES, PRESET_COLORS, FONT_OPTIONS, SIZE_OPTIONS, rankStyles } from "../lib/resumeStyles";
 import Field from "./Field";
 
 const EMPTY_ROLE = {
@@ -13,6 +16,16 @@ const EMPTY_ROLE = {
 };
 
 const EMPTY_PROJECT = { title: "", link: "", description: "" };
+
+// The resume's on-screen page geometry: A4 at 96dpi, matching the `.page`
+// max-width the generated HTML lays itself out in. The preview renders at this
+// size and is then scaled down to fit, so what's on screen is the real page
+// proportions rather than a reflowed narrow copy.
+const PAGE_W = 794;
+const PAGE_H = 1123;
+// Below this the text is too small to judge a template by, so the pane scrolls
+// instead of shrinking further.
+const MIN_SCALE = 0.3;
 
 // One account = personal info + education + work history + projects + extras.
 // The form is organised into five tabs; a collapsible "View" panel below shows
@@ -26,6 +39,23 @@ export default function AccountForm({ accountId, onSaved }) {
   const [importing, setImporting] = useState(false);
   const [importError, setImportError] = useState("");
   const [tab, setTab] = useState("personal");
+  // The most recent resume generated for this account, so "Set Resume" previews
+  // a style against real content rather than a mock-up.
+  const [lastResume, setLastResume] = useState(null);
+  // Fit-to-view state for that preview: the whole resume is scaled down to sit
+  // inside the pane, rather than rendering full size and scrolling.
+  const stageRef = useRef(null);
+  const frameRef = useRef(null);
+  const [fit, setFit] = useState({ scale: 1, docH: PAGE_H });
+  // Templates in the order they are arranged in Generate Resume, so the two
+  // grids read the same way round.
+  const [orderedStyles, setOrderedStyles] = useState(STYLES);
+
+  useEffect(() => {
+    api().getPref("style_order").then((p) => {
+      if (p && p.value) setOrderedStyles(rankStyles(p.value));
+    });
+  }, []);
   // Which View sections are expanded. Personal is open by default.
   const [openViews, setOpenViews] = useState({ personal: true });
 
@@ -37,11 +67,95 @@ export default function AccountForm({ accountId, onSaved }) {
     api().listWorkHistory(accountId).then((rows) => setRoles(rows || []));
     api().listEducation(accountId).then((rows) => setEdu((rows && rows[0]) || {}));
     api().listProjects(accountId).then((rows) => setProjects(rows || []));
+    setLastResume(null);
+    api().lastResumeForAccount(accountId).then((r) => setLastResume(r || null));
   }, [accountId]);
+
+  // The resume as it would really look: the account's last generated content,
+  // rendered through the same builder the PDF uses, with whatever template,
+  // colours and font are currently selected on this tab. Re-renders as those
+  // change, so a choice can be judged against actual content.
+  const styleObj =
+    STYLES.find((s) => s.id === info.resume_style) ||
+    STYLES.find((s) => s.id === "modern") ||
+    STYLES[0];
+  // Scale so a whole PAGE fits the pane — the zoomed-out page view a PDF viewer
+  // gives you. Fitting the entire document was the first attempt and it does not
+  // work: a real resume here runs to about three A4 pages, which at this pane
+  // size lands around 0.23 scale — a column of unreadable grey. One page fitted,
+  // scrolling to the next, keeps the text legible and the proportions true.
+  const measure = useCallback((docH) => {
+    const el = stageRef.current;
+    if (!el) return;
+    const availW = el.clientWidth;
+    const availH = el.clientHeight;
+    if (!availW || !availH) return;
+    const h = Math.max(docH || PAGE_H, PAGE_H);
+    // Never magnify past 1:1 — a short resume should not be blown up.
+    const scale = Math.max(MIN_SCALE, Math.min(1, availW / PAGE_W, availH / PAGE_H));
+    setFit((f) => (f.scale === scale && f.docH === h ? f : { scale, docH: h }));
+  }, []);
+
+  // The iframe holds our own srcDoc, so its document is readable — ask it how
+  // tall the resume actually came out.
+  const onFrameLoad = useCallback(() => {
+    let h = PAGE_H;
+    try {
+      const d = frameRef.current && frameRef.current.contentDocument;
+      if (d && d.body) h = Math.max(d.body.scrollHeight, d.documentElement.scrollHeight, PAGE_H);
+    } catch (_) {}
+    measure(h);
+  }, [measure]);
+
+  useEffect(() => {
+    const el = stageRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => measure(fit.docH));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [measure, fit.docH, tab, lastResume]);
+
+  const previewHtml =
+    lastResume && lastResume.resume_content
+      ? buildResumeHtml(
+          lastResume.resume_content,
+          {
+            ...styleObj,
+            accent: info.resume_accent || styleObj.accent,
+            head: info.resume_accent || "",
+            nameColor: info.resume_name_color || "",
+            font: info.resume_font || "",
+            fontSize: info.resume_font_size || "",
+          },
+          info.title || "",
+          info,
+          edu && Object.keys(edu).length ? [edu] : []
+        )
+      : "";
 
   const setI = (k) => (v) => {
     setInfo((f) => ({ ...f, [k]: v }));
     setSaved(false);
+  };
+
+  // Set Resume choices save the instant they are clicked, rather than waiting
+  // for the Save button — which sits below a tall preview and is easy to miss,
+  // and which would also commit unfinished edits from the other tabs. Only the
+  // five look columns are written.
+  const setLook = (k) => (v) => {
+    // Computed outside the state updater: a click is a discrete event, and an
+    // updater can be invoked more than once, which would duplicate the write.
+    const next = { ...info, [k]: v };
+    setInfo(next);
+    if (!accountId) return;
+    api().saveAccountLook({
+      id: accountId,
+      resume_style: next.resume_style || "",
+      resume_accent: next.resume_accent || "",
+      resume_name_color: next.resume_name_color || "",
+      resume_font: next.resume_font || "",
+      resume_font_size: next.resume_font_size || "",
+    });
   };
 
   const setRole = (i, k) => (e) => {
@@ -170,6 +284,7 @@ export default function AccountForm({ accountId, onSaved }) {
     { id: "work", label: "Work History", count: roles.length },
     { id: "projects", label: "Projects", count: projects.length },
     { id: "additional", label: "Additional Info" },
+    { id: "setresume", label: "Set Resume" },
   ];
 
   const toggleView = (id) =>
@@ -378,6 +493,193 @@ export default function AccountForm({ accountId, onSaved }) {
                 value={info.additional_info || ""}
                 onChange={(e) => setI("additional_info")(e.target.value)} />
             </label>
+          )}
+
+          {/* The look this account's resumes are generated with. Picking the
+              account in Generate V1–V3 applies everything set here. */}
+          {tab === "setresume" && (
+            <div className="setresume-split">
+              {/* Left: every control — colours, font, then the templates. */}
+              <div className="setresume-pane setresume-controls">
+              <div className="color-section">
+                <span className="field-label">Name Color Picker</span>
+                <div className="swatch-row">
+                  <button
+                    type="button"
+                    className={"swatch swatch-default" + (!info.resume_name_color ? " active" : "")}
+                    onClick={() => setLook("resume_name_color")("")}
+                    title="Each template's own default name & title color"
+                  >
+                    Default
+                  </button>
+                  {PRESET_COLORS.map((c) => {
+                    const on = (info.resume_name_color || "").toLowerCase() === c.value;
+                    return (
+                      <button
+                        key={c.value}
+                        type="button"
+                        className={"swatch" + (on ? " active" : "")}
+                        style={{ background: c.value }}
+                        onClick={() => setLook("resume_name_color")(c.value)}
+                        title={c.name}
+                        aria-label={c.name}
+                      >
+                        {on ? "✓" : ""}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className={"swatch swatch-white" + ((info.resume_name_color || "").toLowerCase() === "#ffffff" ? " active" : "")}
+                    style={{ background: "#ffffff" }}
+                    onClick={() => setLook("resume_name_color")("#ffffff")}
+                    title="White"
+                    aria-label="White"
+                  >
+                    {(info.resume_name_color || "").toLowerCase() === "#ffffff" ? "✓" : ""}
+                  </button>
+                  <label className="swatch swatch-custom" title="Custom color">
+                    <input
+                      type="color"
+                      value={/^#[0-9a-fA-F]{6}$/.test(info.resume_name_color || "") ? info.resume_name_color : "#3366ff"}
+                      onChange={(e) => setLook("resume_name_color")(e.target.value)}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="color-section">
+                <span className="field-label">Content Color Picker</span>
+                <div className="swatch-row">
+                  <button
+                    type="button"
+                    className={"swatch swatch-default" + (!info.resume_accent ? " active" : "")}
+                    onClick={() => setLook("resume_accent")("")}
+                    title="Each template's own default content color"
+                  >
+                    Default
+                  </button>
+                  {PRESET_COLORS.map((c) => {
+                    const on = (info.resume_accent || "").toLowerCase() === c.value;
+                    return (
+                      <button
+                        key={c.value}
+                        type="button"
+                        className={"swatch" + (on ? " active" : "")}
+                        style={{ background: c.value }}
+                        onClick={() => setLook("resume_accent")(c.value)}
+                        title={c.name}
+                        aria-label={c.name}
+                      >
+                        {on ? "✓" : ""}
+                      </button>
+                    );
+                  })}
+                  <button
+                    type="button"
+                    className={"swatch swatch-white" + ((info.resume_accent || "").toLowerCase() === "#ffffff" ? " active" : "")}
+                    style={{ background: "#ffffff" }}
+                    onClick={() => setLook("resume_accent")("#ffffff")}
+                    title="White"
+                    aria-label="White"
+                  >
+                    {(info.resume_accent || "").toLowerCase() === "#ffffff" ? "✓" : ""}
+                  </button>
+                  <label className="swatch swatch-custom" title="Custom color">
+                    <input
+                      type="color"
+                      value={/^#[0-9a-fA-F]{6}$/.test(info.resume_accent || "") ? info.resume_accent : "#3366ff"}
+                      onChange={(e) => setLook("resume_accent")(e.target.value)}
+                    />
+                  </label>
+                </div>
+              </div>
+
+              <div className="font-section grid2">
+                <label className="field">
+                  <span className="field-label">Font</span>
+                  <select className="input" value={info.resume_font || ""}
+                    onChange={(e) => setLook("resume_font")(e.target.value)}>
+                    {FONT_OPTIONS.map((f) => (
+                      <option key={f.label} value={f.value}>{f.label}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="field">
+                  <span className="field-label">Size</span>
+                  <select className="input" value={info.resume_font_size || ""}
+                    onChange={(e) => setLook("resume_font_size")(e.target.value)}>
+                    {SIZE_OPTIONS.map((s) => (
+                      <option key={s || "default"} value={s}>{s ? `${s} pt` : "Default"}</option>
+                    ))}
+                  </select>
+                </label>
+              </div>
+
+              <span className="field-label">Resume Style</span>
+              <div className="style-grid">
+                  {orderedStyles.map((s) => (
+                    <button
+                      key={s.id}
+                      type="button"
+                      className={"style-cell" + (info.resume_style === s.id ? " active" : "")}
+                      onClick={() => setLook("resume_style")(info.resume_style === s.id ? "" : s.id)}
+                      title={info.resume_style === s.id ? `${s.label} — click to clear` : s.label}
+                    >
+                      <img alt={s.label} src={styleThumb({
+                        ...s,
+                        ...(info.resume_accent ? { accent: info.resume_accent, head: info.resume_accent } : {}),
+                        ...(info.resume_name_color ? { nameColor: info.resume_name_color } : {}),
+                      })} />
+                      {info.resume_style === s.id && <span className="style-check" aria-label="selected">✓</span>}
+                    </button>
+                  ))}
+              </div>
+              </div>
+
+              {/* Right: the account's own last generated resume, rendered with
+                  the selections on the left. */}
+              <div className="setresume-pane setresume-preview">
+                <span className="field-label">
+                  Resume Preview
+                  {lastResume && (lastResume.role || lastResume.company) ? (
+                    <span className="detect-flag">
+                      {[lastResume.role, lastResume.company].filter(Boolean).join(" — ")}
+                    </span>
+                  ) : null}
+                </span>
+                {previewHtml ? (
+                  // The page renders at its true size and is scaled to fit; the
+                  // sizer carries the scaled footprint, since a transform leaves
+                  // layout size untouched.
+                  <div className="setresume-stage" ref={stageRef}>
+                    <div
+                      className="setresume-sizer"
+                      style={{ width: PAGE_W * fit.scale, height: fit.docH * fit.scale }}
+                    >
+                      <iframe
+                        ref={frameRef}
+                        className="setresume-page"
+                        title="Resume preview"
+                        srcDoc={previewHtml}
+                        onLoad={onFrameLoad}
+                        scrolling="no"
+                        style={{
+                          width: PAGE_W,
+                          height: fit.docH,
+                          transform: `scale(${fit.scale})`,
+                        }}
+                      />
+                    </div>
+                  </div>
+                ) : (
+                  <div className="resume-viewer-empty muted">
+                    No resume has been generated for this account yet. Generate one and the
+                    last version appears here, styled with the choices on the left.
+                  </div>
+                )}
+              </div>
+            </div>
           )}
         </div>
 

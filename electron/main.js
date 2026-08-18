@@ -463,7 +463,8 @@ function registerIpc() {
       `UPDATE accounts SET name = ?, title = ?, email = ?, phone = ?, address = ?,
          country = ?, linkedin = ?, portfolio = ?, main_stack = ?, additional_info = ?,
          birth_date = ?, password = ?, recovery = ?, resume_link = ?,
-         cover_letter_link = ?, time_zone = ? WHERE id = ?`,
+         cover_letter_link = ?, time_zone = ?, resume_style = ?, resume_accent = ?,
+         resume_name_color = ?, resume_font = ?, resume_font_size = ? WHERE id = ?`,
       [
         d.name || "",
         d.title || "",
@@ -481,6 +482,32 @@ function registerIpc() {
         d.resume_link || "",
         d.cover_letter_link || "",
         d.time_zone || "",
+        // The saved resume look. Empty string = no preference for this account.
+        d.resume_style || "",
+        d.resume_accent || "",
+        d.resume_name_color || "",
+        d.resume_font || "",
+        d.resume_font_size || "",
+        d.id,
+      ]
+    );
+    return { ok: true };
+  });
+
+  // Save ONLY the resume look (Set Resume tab). Separate from accounts:save so a
+  // template or colour takes effect the moment it is clicked, without also
+  // writing whatever half-finished edits are sitting on the other tabs.
+  ipcMain.handle("accounts:saveLook", (_e, d) => {
+    if (!d || !d.id) return { ok: false, error: "no-account" };
+    db.run(
+      `UPDATE accounts SET resume_style = ?, resume_accent = ?, resume_name_color = ?,
+         resume_font = ?, resume_font_size = ? WHERE id = ?`,
+      [
+        d.resume_style || "",
+        d.resume_accent || "",
+        d.resume_name_color || "",
+        d.resume_font || "",
+        d.resume_font_size || "",
         d.id,
       ]
     );
@@ -549,6 +576,20 @@ function registerIpc() {
        WHERE ap.account_id = ? ORDER BY ap.id DESC`,
       [accountId]
     )
+  );
+
+  // The most recent resume actually generated for an account, used to preview a
+  // style/colour/font choice against real content on the "Set Resume" tab
+  // instead of a mock-up. Rows with no stored text are skipped, so an older
+  // application that does have content still gives something to show.
+  ipcMain.handle("applications:lastResume", (_e, accountId) =>
+    db.get(
+      `SELECT resume_content, role, company, applied_at
+         FROM applications
+        WHERE account_id = ? AND IFNULL(resume_content, '') <> ''
+        ORDER BY id DESC LIMIT 1`,
+      [accountId]
+    ) || null
   );
 
   // Every application across all accounts (with the owning account's name),

@@ -87,6 +87,12 @@ h1, h2, h3 { color: var(--text); }
   border-radius: 14px; padding: 22px 24px;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.25);
 }
+/* A generated resume whose folder path has been copied — it has been taken away
+   to file an application. Stays marked until the next Generate Resume. Uses the
+   theme's own success colour, so it reads correctly in light and dark. */
+.card.location-copied {
+  border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok), 0 1px 2px rgba(0, 0, 0, 0.25);
+}
 .stack { display: flex; flex-direction: column; gap: 20px; }
 .card-head {
   display: flex; align-items: center; justify-content: space-between;
@@ -782,6 +788,45 @@ select.input {
   to { opacity: 1; transform: translate(-50%, 0); }
 }
 .req { color: var(--danger); font-weight: 700; font-size: 11px; }
+
+/* Account → Set Resume: every control down the left (colours, font, then the
+   template thumbnails), and the account's real resume rendered on the right.
+   The left column is sized to the style grid — two thumbnails wide, as in the
+   generator — so the preview gets all the remaining width. */
+.setresume-split {
+  display: grid; grid-template-columns: 380px minmax(0, 1fr);
+  gap: 24px; align-items: start;
+}
+.setresume-pane { min-width: 0; }
+/* The grid brings its own top margin for the generator's layout; here it sits
+   directly under its label. */
+.setresume-pane .style-grid { margin-top: 8px; }
+/* The preview stands as tall as the controls beside it. The resume inside is
+   scaled to fit the box whole, so nothing scrolls unless it had to stop
+   shrinking (see MIN_SCALE). */
+.setresume-preview { display: flex; flex-direction: column; }
+.setresume-stage {
+  margin-top: 8px; height: 760px; overflow: auto;
+  display: flex; justify-content: center; align-items: flex-start;
+  border: 1px solid var(--border); border-radius: 10px;
+  background: var(--panel-2); padding: 10px;
+}
+/* Holds the scaled footprint — a transform does not change layout size, so
+   without this the stage would size itself to the unscaled page. */
+.setresume-sizer { position: relative; flex: 0 0 auto; }
+.setresume-page {
+  position: absolute; top: 0; left: 0;
+  transform-origin: top left;
+  border: 0; background: #fff; border-radius: 4px;
+  box-shadow: 0 2px 14px rgba(0, 0, 0, 0.28);
+}
+.setresume-preview .resume-viewer-empty { margin-top: 8px; height: 760px; }
+/* Too narrow to stand side by side — stack, preview last. */
+@media (max-width: 1100px) {
+  .setresume-split { grid-template-columns: minmax(0, 1fr); }
+  .setresume-stage,
+  .setresume-preview .resume-viewer-empty { height: 560px; }
+}
 
 /* Resume accent color swatches */
 .color-section { margin: 10px 0 6px; }
