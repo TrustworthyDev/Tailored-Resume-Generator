@@ -189,6 +189,14 @@ function migrate() {
     db.run("ALTER TABLE work_history ADD COLUMN account_id INTEGER");
   }
 
+  // Explicit position of each role within its account, newest job first. Written
+  // from the parsed dates whenever roles are saved, so every reader gets the
+  // same order without sorting for itself. Existing rows are numbered on the
+  // first run — see backfillWorkOrder() in main.js.
+  if (!cols.some((c) => c.name === "sort_order")) {
+    db.run("ALTER TABLE work_history ADD COLUMN sort_order INTEGER");
+  }
+
   // Ensure accounts has a sort_order column (for drag-and-drop ranking).
   const acctCols = all("PRAGMA table_info(accounts)");
   if (!acctCols.some((c) => c.name === "sort_order")) {
@@ -503,6 +511,23 @@ function run(sql, params = []) {
   persist();
 }
 
+// Several statements as ONE unit: read the file once, apply them all, write it
+// once. persist() rewrites the entire database — 8MB and growing — so a loop of
+// run() calls to renumber a list costs that once per row, and leaves the file in
+// a half-renumbered state in between. Takes [[sql, params], …].
+function runMany(statements) {
+  const list = (statements || []).filter(Boolean);
+  if (!list.length) return;
+  syncFromDisk();
+  list.forEach(([sql, params]) => {
+    const stmt = db.prepare(sql);
+    stmt.bind(params || []);
+    stmt.step();
+    stmt.free();
+  });
+  persist();
+}
+
 function insert(sql, params = []) {
   syncFromDisk();
   const stmt = db.prepare(sql);
@@ -807,6 +832,6 @@ function importSelected(filePath, selection = {}) {
 }
 
 module.exports = {
-  initDb, all, get, run, insert, getDbPath, importDb, scanFile, importSelected,
+  initDb, all, get, run, runMany, insert, getDbPath, importDb, scanFile, importSelected,
   exportApplicationsDb, importApplications,
 };
