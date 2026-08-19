@@ -89,7 +89,17 @@ h1, h2, h3 { color: var(--text); }
 }
 /* A generated resume whose folder path has been copied — it has been taken away
    to file an application. Stays marked until the next Generate Resume. Uses the
-   theme's own success colour, so it reads correctly in light and dark. */
+   theme's own success colour, so it reads correctly in light and dark.
+
+   Drawn as an outline around the whole generator — the Resume Styles panel as
+   well as the form. An outline rather than a border because it takes no space in
+   the layout, so nothing shifts when the mark appears; the offset sits inside
+   the page padding, so it is never clipped. */
+.resume-layout.location-copied {
+  outline: 2px solid var(--ok);
+  outline-offset: 10px;
+  border-radius: 14px;
+}
 .card.location-copied {
   border-color: var(--ok); box-shadow: 0 0 0 1px var(--ok), 0 1px 2px rgba(0, 0, 0, 0.25);
 }

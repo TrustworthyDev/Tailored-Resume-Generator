@@ -337,6 +337,14 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         const acc = await api().getAccount(Number(id));
         if (!cancelled) applyAccountLook(acc);
       }
+      // The ranking lives in one pref but each Generate tab keeps its own copy,
+      // so a reorder done on another tab would otherwise not show up here.
+      const orderPref = await api().getPref("style_order");
+      if (!cancelled && orderPref && orderPref.value) setStyles(rankStyles(orderPref.value));
+      // Same for the copied mark: it belongs to the saved resume, which all
+      // three Generate tabs share, and it is cleared when the app starts.
+      const copiedPref = await api().getPref("gen_location_copied");
+      if (!cancelled && copiedPref) setLocationCopied(copiedPref.value === "1");
     })();
     return () => { cancelled = true; };
   }, [active, isV2]);
@@ -466,8 +474,15 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     setStyleDragIndex(i);
   };
   const onStyleDragEnd = () => {
+    if (styleDragIndex === null) return;
     setStyleDragIndex(null);
-    setStyles((arr) => { api().setPref("style_order", arr.map((s) => s.id).join(",")); return arr; });
+    // Same shape as the accounts ranking: write the order, then re-read it and
+    // render that, so what is on screen is always what was actually stored.
+    const order = styles.map((s) => s.id).join(",");
+    api()
+      .setPref("style_order", order)
+      .then(() => api().getPref("style_order"))
+      .then((pref) => { if (pref && pref.value) setStyles(rankStyles(pref.value)); });
   };
 
   // Name and Content may share a colour on every style EXCEPT "cards", whose
@@ -1207,12 +1222,20 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const clickCopyButton = async (diag) => {
     const wv = webviewRef.current;
     const aim = diag && diag.aim;
-    if (!wv || !aim || !aim.x) return { attempted: false, reason: (diag && diag.button) === "NONE" ? "no-copy-button-found" : "no-coordinates" };
-    if (aim.covered) return { attempted: false, reason: "button-covered-by-" + (aim.topmost || "unknown") };
+    if (!wv) return { attempted: false, reason: "no-webview" };
+    if (!diag || diag.button === "NONE") return { attempted: false, reason: "no-copy-button-found" };
 
     const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+    const js = async (code, fallback) => {
+      try { return await wv.executeJavaScript(code, true); } catch (_) { return fallback; }
+    };
     const probe = async () => {
-      try { return JSON.parse(await wv.executeJavaScript("JSON.stringify(window.__copyProbe||{})", true)) || {}; }
+      try { return JSON.parse(await js("JSON.stringify(window.__copyProbe||{})", "{}")) || {}; }
+      catch (_) { return {}; }
+    };
+    // What the page captured as ChatGPT handed it to the clipboard API.
+    const captured = async () => {
+      try { return JSON.parse(await js("JSON.stringify(window.__copyHook||{})", "{}")) || {}; }
       catch (_) { return {}; }
     };
     const readClip = async () => {
@@ -1220,45 +1243,70 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     };
 
     const before = await probe();
+    const hookBefore = (await captured()).n || 0;
     const clipBefore = await readClip();
+
+    // 1. A real mouse click, but ONLY when aiming at a point is provably safe.
+    //    Three things have to hold: nothing covering the button, no dialog open,
+    //    and the button holding still. Each was measured to break it - an
+    //    overlay swallows the click, a collapsing sidebar moves the button 300px
+    //    sideways so the old point lands on something else, and with a dialog
+    //    open the point resolves INSIDE the dialog, where the click would press
+    //    whatever button is there. Missing a copy is recoverable; pressing an
+    //    unknown button in a modal is not.
     let sent = null;
-    try { sent = await api().chatSendClick({ id: wv.getWebContentsId(), x: aim.x, y: aim.y }); }
-    catch (e) { sent = { ok: false, error: (e && e.message) || String(e) }; }
-    await wait(600);
-
-    let after = await probe();
     let method = "trusted";
-    // The real click never reached the button — try dispatching one in the page,
-    // so the run still shows whether the handler responds to a synthetic event.
-    if ((after.seen || 0) <= (before.seen || 0)) {
-      try {
-        await wv.executeJavaScript(
-          "(() => { const b = window.__copyBtn; if(!b) return false;" +
-          " const o = {bubbles:true,cancelable:true,view:window};" +
-          " try{ b.dispatchEvent(new PointerEvent('pointerdown',o)); }catch(e){}" +
-          " b.dispatchEvent(new MouseEvent('mousedown',o));" +
-          " try{ b.dispatchEvent(new PointerEvent('pointerup',o)); }catch(e){}" +
-          " b.dispatchEvent(new MouseEvent('mouseup',o));" +
-          " try{ b.click(); }catch(e){}" +
-          " return true; })();",
-          true
-        );
-      } catch (_) {}
-      await wait(400);
-      after = await probe();
-      method = "synthetic-fallback";
+    const safeToAim = aim && aim.x && !aim.covered && !aim.modal && aim.steady !== false;
+    if (safeToAim) {
+      try { sent = await api().chatSendClick({ id: wv.getWebContentsId(), x: aim.x, y: aim.y }); }
+      catch (e) { sent = { ok: false, error: (e && e.message) || String(e) }; }
+      await wait(250);
+    } else {
+      method = !aim ? "no-aim"
+        : aim.modal ? "modal-open"
+        : aim.covered ? "covered-" + (aim.topmost || "unknown")
+        : "moving";
     }
-    const clipAfter = await readClip();
 
+    // 2. Nothing reached the button (covered, or the click did not register):
+    //    dispatch the events straight at the element. This is why a run no
+    //    longer gives up when an overlay is in the way.
+    let after = await probe();
+    if ((after.seen || 0) <= (before.seen || 0)) {
+      await js(
+        "(() => { const b = window.__copyBtn; if(!b) return false;" +
+        " try{ b.scrollIntoView({block:'center'}); }catch(e){}" +
+        " const o = {bubbles:true,cancelable:true,view:window};" +
+        " try{ b.dispatchEvent(new PointerEvent('pointerdown',o)); }catch(e){}" +
+        " b.dispatchEvent(new MouseEvent('mousedown',o));" +
+        " try{ b.dispatchEvent(new PointerEvent('pointerup',o)); }catch(e){}" +
+        " b.dispatchEvent(new MouseEvent('mouseup',o));" +
+        " try{ b.click(); }catch(e){}" +
+        " return true; })();",
+        false
+      );
+      await wait(200);
+      after = await probe();
+      method = method === "trusted" ? "dispatched" : method + "-dispatched";
+    }
+
+    // 3. The result comes from the page's own capture. The clipboard is read
+    //    only to report on it — never to decide whether the copy worked.
+    const hook = await captured();
+    const clipAfter = await readClip();
     return {
       attempted: true,
       method,
       sendOk: !!(sent && sent.ok),
-      sendError: sent && sent.ok ? "" : ((sent && sent.error) || "unknown"),
+      sendError: sent && !sent.ok ? (sent.error || "unknown") : "",
       delivered: (after.seen || 0) > (before.seen || 0),
       trusted: (after.trusted || 0) > (before.trusted || 0),
+      captured: (hook.n || 0) > hookBefore,
+      capturedVia: hook.via || "",
+      capturedChars: (hook.text || "").length,
       clipboardChanged: clipAfter !== clipBefore,
       clipboardHasReply: clipAfter.indexOf("request_id") > -1,
+      text: hook.text || "",
     };
   };
 
@@ -1334,6 +1382,30 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       "      if(b && isCopy(b)){ window.__copyProbe.seen++; if(e.isTrusted) window.__copyProbe.trusted++; window.__copyProbe.label = (b.getAttribute('aria-label')||'copy'); }" +
       "    }, true);" +
       "  }" +
+      // Take the text where ChatGPT hands it over, rather than reading it back
+      // off the system clipboard afterwards. Two things made that necessary:
+      // Chromium refuses navigator.clipboard.writeText() from a document that
+      // is not focused (this WebView is parked off-screen, and the app is often
+      // in the background), so the copy was rejected after a click that plainly
+      // landed; and the clipboard is one system-wide slot, so a second copy of
+      // the app can overwrite the reply between the click and the read. Wrapping
+      // the call records the string BEFORE the browser decides whether it is
+      // allowed to store it, which sidesteps both.
+      "  if(!window.__copyHook){" +
+      "    window.__copyHook = { text: '', n: 0, via: '' };" +
+      "    const keep = (t, via) => { const v = String(t == null ? '' : t); if(!v) return;" +
+      "      window.__copyHook.text = v; window.__copyHook.n++; window.__copyHook.via = via; };" +
+      "    try{ const c = navigator.clipboard;" +
+      "      if(c && c.writeText){ const o = c.writeText.bind(c); c.writeText = function(t){ keep(t,'writeText'); return o(t); }; }" +
+      "      if(c && c.write){ const ow = c.write.bind(c); c.write = function(items){" +
+      "        try{ (items||[]).forEach(it => { if(it && it.getType) it.getType('text/plain').then(b => b.text()).then(t => keep(t,'write')).catch(()=>{}); }); }catch(e){}" +
+      "        return ow(items); }; }" +
+      "    }catch(e){}" +
+      // The older route: an app that copies by writing into a copy event.
+      "    const onCopy = (e) => { try{ const t = e.clipboardData && e.clipboardData.getData('text/plain'); if(t) keep(t,'copy-event'); }catch(_){} };" +
+      "    document.addEventListener('copy', onCopy, true);" +
+      "    document.addEventListener('copy', onCopy, false);" +
+      "  }" +
       // How close a candidate button is to the block: first by how far up the tree
       // their common ancestor sits, then by distance in document order.
       "  const near = (hit, anchor, order) => {" +
@@ -1367,13 +1439,24 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       "  const aimAt = async (btn) => {" +
       "    if(!btn) return null;" +
       "    try{ btn.scrollIntoView({block:'center', inline:'nearest'}); }catch(e){}" +
-      "    await sleep(250);" +
+      "    await sleep(150);" +
+      // A dialog in the way is not just an obstacle: a click aimed at a point
+      // would land INSIDE it, on whatever button happens to be there. Measured -
+      // with a native <dialog> open, the point resolves to the dialog itself.
+      "    const modal = !!document.querySelector('[role=\"dialog\"],[aria-modal=\"true\"],dialog[open]');" +
+      "    const first = btn.getBoundingClientRect();" +
+      "    await sleep(180);" +
       "    const r = btn.getBoundingClientRect();" +
-      "    if(!r.width || !r.height) return { covered: true, reason: 'zero-size' };" +
+      // Collapsing the sidebar moves the button sideways; coordinates measured a
+      // moment earlier then land on something else. Only click a point that is
+      // holding still.
+      "    const steady = Math.abs(first.left - r.left) < 2 && Math.abs(first.top - r.top) < 2;" +
+      "    if(!r.width || !r.height) return { covered: true, steady: steady, modal: modal, reason: 'zero-size' };" +
       "    const x = Math.round(r.left + r.width/2), y = Math.round(r.top + r.height/2);" +
       "    const top = document.elementFromPoint(x, y);" +
       "    const covered = !(top && (top === btn || btn.contains(top) || (top.closest && top.closest('button,[role=\"button\"]') === btn)));" +
       "    return { x: x, y: y, w: Math.round(r.width), h: Math.round(r.height)," +
+      "      steady: steady, modal: modal," +
       "      inView: x > 0 && y > 0 && x < (window.innerWidth||0) && y < (window.innerHeight||0)," +
       // className on an SVG element is an SVGAnimatedString, not a string.
       "      covered: covered, topmost: top ? label(top) : 'none' };" +
@@ -1403,10 +1486,11 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       // of send. Nothing is decided until that goes away.
       "  const streaming = () => !!document.querySelector('button[data-testid=\"stop-button\"],button[aria-label*=\"Stop\"],button[aria-label*=\"stop\"]');" +
       "  const deadline = Date.now() + " + Math.max(5000, Number(budgetMs) || 0) + ";" +
-      // Six unchanged polls — 2.4s — before calling the reply settled. A reasoning
-      // model pauses mid-answer for well over a second, and the old 1.2s window
-      // treated those pauses as "finished".
-      "  const SETTLE = 6;" +
+      // Three unchanged polls - 1.2s - before calling the reply settled. This was
+      // six, to stop a reasoning model's mid-answer pause being read as
+      // "finished", but a premature click is now nearly free: the text just
+      // fails to parse and the next attempt follows a second later.
+      "  const SETTLE = 3;" +
       "  let idOnPage = false, lastChars = -1, settled = 0;" +
       "  while (Date.now() < deadline) {" +
       // Take the LAST block that yields a valid object: the prompt echoed above
@@ -1505,9 +1589,11 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     const wv = webviewRef.current;
     if (!wv || !reqId) return;
     const deadline = Date.now() + 15 * 60 * 1000;
-    // A generous ceiling, not a schedule: the backoff below spaces these out, so
-    // a slow answer cannot burn through them while it is still being written.
-    const MAX_CLICKS = 15;
+    // Clicking is now cheap and cannot misfire, so the ceiling is high and the
+    // spacing short. The old exponential backoff was measured over real runs at
+    // an average of 112 seconds of clicking per retried run, and one run spent
+    // 671 seconds before giving up.
+    const MAX_CLICKS = 40;
     let text = "";
     let diag = null;
     let clicks = 0;
@@ -1535,25 +1621,35 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         continue;
       }
       clicks++;
-      // The DOM can't give us the text — click ChatGPT's own Copy button and read
-      // back what it put on the clipboard.
+      // The DOM can't give us the text, so use ChatGPT's own Copy button - and
+      // take the text the page handed to the clipboard API rather than reading
+      // the system clipboard back, which can be refused (unfocused document) or
+      // overwritten by a second copy of this app.
+      let click = null;
       try {
-        const click = await clickCopyButton(diag);
-        if (diag) { diag.click = click; diag.attempt = clicks; }
+        click = await clickCopyButton(diag);
+        if (diag) { diag.click = { ...click, text: undefined }; diag.attempt = clicks; }
       } catch (e) {
         if (diag) diag.click = { attempted: false, reason: (e && e.message) || String(e) };
       }
-      let clip = "";
-      try { const r = await api().clipboardRead(); clip = (r && r.text) || ""; } catch (_) {}
-      const fromClip = extractReply(clip, reqId);
-      if (diag) diag.clipboardYieldedReply = !!fromClip;
+      let found = extractReply((click && click.text) || "", reqId);
+      let via = "copy-button";
+      // The hook missed - an unknown copy route - so fall back to the clipboard.
+      if (!found) {
+        let clip = "";
+        try { const r = await api().clipboardRead(); clip = (r && r.text) || ""; } catch (_) {}
+        found = extractReply(clip, reqId);
+        via = "clipboard";
+      }
+      if (diag) diag.clipboardYieldedReply = !!found;
       logCopyDiag(diag);
-      if (fromClip) { text = fromClip; diag = { ...diag, source: "copy-button" }; break; }
-      // That click produced nothing usable — usually because the answer is still
-      // being written. Back off before trying again (3s, 6s, 12s, 24s, 48s, then
-      // once a minute) instead of hammering the button and running out of tries
-      // long before a slow reply lands.
-      await new Promise((r) => setTimeout(r, Math.min(60000, 3000 * Math.pow(2, clicks - 1))));
+      if (found) { text = found; diag = { ...diag, source: via }; break; }
+      // Nothing usable - almost always because the answer is still being
+      // written. Try again quickly: 1.5s for the first few, then 3s, settling at
+      // 5s. Forty attempts on this schedule cover about three minutes, against
+      // the ten the old backoff spent on fifteen.
+      const pause = clicks <= 5 ? 1500 : clicks <= 10 ? 3000 : 5000;
+      await new Promise((r) => setTimeout(r, pause));
     }
 
     if (text && text.trim()) {
@@ -1564,9 +1660,15 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         try { diag.click = await clickCopyButton(diag); }
         catch (e) { diag.click = { attempted: false, reason: (e && e.message) || String(e) }; }
       }
-      // Whatever route produced it, put the canonical JSON on the clipboard from
-      // the main process — where neither the page's clipboard permission nor
-      // whether the WebView is focused can interfere — for the reply watcher.
+      // Hand the reply straight to the run waiting for it. The clipboard round
+      // trip below still happens, but it is no longer what the run depends on:
+      // with two copies of this app open, each one's reply can overwrite the
+      // other's in that single system-wide slot before the 600ms poll sees it.
+      // This delivery is matched on request_id, so the two can never cross.
+      try { await api().submitChatgptReply({ id: reqId, text }); } catch (_) {}
+      // Still put the canonical JSON on the clipboard, from the main process
+      // where neither the page's clipboard permission nor whether the WebView is
+      // focused can interfere - so Ctrl+V has it, and as a second route in.
       try { await api().clipboardWrite(text); } catch (_) {}
       // In-app only — the single system notification for a run is the one that
       // fires when the PDF itself is finished.
@@ -1792,7 +1894,10 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
 
   return (
     <div>
-    <div className="resume-layout">
+    {/* The green outline marks a resume whose location has been copied — one
+        already taken away to file an application. It encloses BOTH panels, the
+        styles and the form, and the next Generate Resume clears it. */}
+    <div className={"resume-layout" + (locationCopied ? " location-copied" : "")}>
       <section className="card resume-styles">
         <div className="styles-head">
           <h2>Resume Styles</h2>
@@ -1952,10 +2057,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         </div>
       </section>
 
-      {/* The green border marks a resume whose location has been copied — i.e.
-          one already taken away to file an application. Cleared by Generate
-          Resume. */}
-      <section className={"card resume-form" + (locationCopied ? " location-copied" : "")}>
+      <section className="card resume-form">
         <div className="resume-tabs">
           <button
             type="button"

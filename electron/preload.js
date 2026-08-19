@@ -106,7 +106,11 @@ contextBridge.exposeInMainWorld("api", {
   getChatgptHome: () => invoke("chatgpt:getHome"),
   clearChatgptHome: () => invoke("chatgpt:clearHome"),
   chatgptSignedIn: () => invoke("chatgpt:signedIn"),
-  awaitChatgptClipboard: (id, prompt, jobRef) => invoke("chatgpt:awaitClipboard", id, prompt, jobRef),
+  // One object: invoke() forwards a single payload, so prompt and jobRef used to
+  // arrive undefined - which silently skipped the job_ref check on every reply.
+  awaitChatgptClipboard: (id, prompt, jobRef) => invoke("chatgpt:awaitClipboard", { id, prompt, jobRef }),
+  // Hand a captured reply straight to the waiting run (no clipboard involved).
+  submitChatgptReply: (data) => invoke("chatgpt:submitReply", data),
   cancelChatgptClipboard: () => invoke("chatgpt:cancelClipboard"),
   importResumeFile: () => invoke("resume:importFile"),
   // One account as a Markdown record (export sends what's on screen).
@@ -130,7 +134,9 @@ contextBridge.exposeInMainWorld("api", {
   exportApplications: () => invoke("applications:export"),
   exportApplicationsDb: () => invoke("applications:exportDb"),
   importApplicationsDb: () => invoke("applications:importDb"),
-  findDuplicateApplication: (accountId, role, company) => invoke("applications:findDuplicate", accountId, role, company),
+  // Same single-payload rule: as three arguments, role and company arrived
+  // undefined and every job was reported as "not a duplicate".
+  findDuplicateApplication: (accountId, role, company) => invoke("applications:findDuplicate", { accountId, role, company }),
   openGptForApplication: (id) => invoke("application:openGpt", id),
   getApplicationJobContent: (id) => invoke("application:jobContent", id),
   openExternalLink: (url) => invoke("link:openExternal", url),

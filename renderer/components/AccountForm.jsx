@@ -51,11 +51,14 @@ export default function AccountForm({ accountId, onSaved }) {
   // grids read the same way round.
   const [orderedStyles, setOrderedStyles] = useState(STYLES);
 
+  // Re-read on every visit to the tab: the ranking is set in Generate Resume,
+  // and reading it once at mount would show a stale order after a reorder there.
   useEffect(() => {
+    if (tab !== "setresume") return;
     api().getPref("style_order").then((p) => {
       if (p && p.value) setOrderedStyles(rankStyles(p.value));
     });
-  }, []);
+  }, [tab]);
   // Which View sections are expanded. Personal is open by default.
   const [openViews, setOpenViews] = useState({ personal: true });
 

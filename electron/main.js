@@ -332,6 +332,21 @@ function renumberWork(accountId) {
   );
 }
 
+// The "location copied" mark belongs to a single working session: it says the
+// resume on screen has already been taken away to file an application. A fresh
+// start of the app is a fresh session, so it never carries over.
+function clearLocationCopied() {
+  try {
+    db.run(
+      `INSERT INTO prefs (key, value) VALUES (?, ?)
+       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      ["gen_location_copied", "0"]
+    );
+  } catch (e) {
+    console.log("[prefs] could not clear the copied mark:", (e && e.message) || e);
+  }
+}
+
 // One-off on startup: number the roles that predate the sort_order column.
 function backfillWorkOrder() {
   try {
@@ -702,9 +717,10 @@ function registerIpc() {
 
   // Does an application already exist for this account + company + role? Used to
   // confirm before generating another resume for the same company and job title.
-  ipcMain.handle("applications:findDuplicate", (_e, accountId, role, company) => {
-    const r = (role || "").trim();
-    const c = (company || "").trim();
+  ipcMain.handle("applications:findDuplicate", (_e, d) => {
+    const accountId = d && d.accountId;
+    const r = ((d && d.role) || "").trim();
+    const c = ((d && d.company) || "").trim();
     if (!accountId || !r || !c) return { exists: false };
     // Match on the dedicated index columns (match_company / match_role — the
     // Gemini JD extraction). Fall back to the display columns so applications
@@ -2125,15 +2141,19 @@ function registerIpc() {
   // job description, then parse it into the same { text, jobRole, … } shape as
   // V1. Only a verified reply resolves ok — so the app never builds the final
   // resume from stale or mismatched clipboard content.
-  ipcMain.handle("chatgpt:awaitClipboard", (_e, id, promptText, jobRef) => {
-    const promptTrim = String(promptText || "").trim();
+  ipcMain.handle("chatgpt:awaitClipboard", (_e, d) => {
+    const id = d && d.id;
+    const jobRef = d && d.jobRef;
+    const promptTrim = String((d && d.prompt) || "").trim();
     const startedAt = Date.now();
     const TIMEOUT_MS = 15 * 60 * 1000;
 
     return new Promise((resolve) => {
       let last = "";
       let sawOther = false; // a valid reply, but for a different request
-      const self = {};
+      // `id` and `jobRef` are kept on the watcher so a reply handed straight to
+      // chatgpt:submitReply can be matched to it without the clipboard.
+      const self = { id: String(id || ""), jobRef };
       const finish = (result) => {
         clearInterval(timer);
         clipWatches.delete(self);
@@ -2184,6 +2204,31 @@ function registerIpc() {
       self.resolve = (r) => finish(r);
       clipWatches.add(self);
     });
+  });
+
+  // Deliver the reply straight to the run that is waiting for it.
+  //
+  // The clipboard handshake still works and still runs, but it cannot be relied
+  // on alone: it is one system-wide slot, so with two copies of this app open
+  // each one's reply can overwrite the other's inside the 600ms polling window.
+  // The renderer captures the text in the page itself, so hand it over in
+  // process - matched on request_id, which is what keeps two apps apart.
+  ipcMain.handle("chatgpt:submitReply", (_e, d) => {
+    const id = String((d && d.id) || "");
+    const text = String((d && d.text) || "");
+    if (!id || !text) return { ok: false, reason: "empty" };
+    const watcher = [...clipWatches].find((w) => w.id === id);
+    if (!watcher) return { ok: false, reason: "no-watcher" };
+    const res = parseResumeJson(text, { id, jobRef: watcher.jobRef });
+    if (!res.ok) return { ok: false, reason: res.reason || "not-a-reply" };
+    try {
+      if (chatWin && !chatWin.isDestroyed()) {
+        const u = chatWin.webContents.getURL() || "";
+        if (/^https?:\/\//i.test(u)) res.gptUrl = u;
+      }
+    } catch (_) {}
+    watcher.resolve(res);
+    return { ok: true };
   });
 
   // Stop waiting for the clipboard reply (user cancelled / left the tab).
@@ -2334,6 +2379,7 @@ app.whenReady().then(async () => {
     // Number any roles saved before ordering existed, so existing accounts read
     // newest-first straight away rather than only after their next save.
     backfillWorkOrder();
+    clearLocationCopied();
     // Settle the connection choice, then apply it before any API calls.
     seedConnectionMode();
     applyApiConnection();
