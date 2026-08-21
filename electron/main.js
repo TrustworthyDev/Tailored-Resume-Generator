@@ -332,15 +332,15 @@ function renumberWork(accountId) {
   );
 }
 
-// The "location copied" mark belongs to a single working session: it says the
-// resume on screen has already been taken away to file an application. A fresh
-// start of the app is a fresh session, so it never carries over.
+// The border mark - a job extracted, or its resume already taken away to file -
+// belongs to a single working session. A fresh start of the app is a fresh
+// session, so no mark ever carries over into it.
 function clearLocationCopied() {
   try {
     db.run(
       `INSERT INTO prefs (key, value) VALUES (?, ?)
        ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-      ["gen_location_copied", "0"]
+      ["gen_mark_state", ""]
     );
   } catch (e) {
     console.log("[prefs] could not clear the copied mark:", (e && e.message) || e);

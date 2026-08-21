@@ -97,11 +97,18 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const [autoOpenPdf, setAutoOpenPdf] = useState(false); // open the saved PDF in the system viewer
   const [prefsReady, setPrefsReady] = useState(false); // toggles render after load
   const [copied, setCopied] = useState(false);
-  // Marks the generated resume as "taken" — set by any Copy Location button, so
-  // the form carries a green border until the next Generate Resume clears it.
-  // Persisted, since copying the folder is usually followed by leaving the app
-  // to file the application.
-  const [locationCopied, setLocationCopied] = useState(false);
+  // Where this job stands, drawn as a border around the whole generator:
+  //   ""          nothing extracted yet (how every fresh start begins)
+  //   "extracted" a job post came in and is not filed yet - blue, and it stays
+  //               blue while its resume is generated
+  //   "copied"    its folder path has been taken away to file it - green
+  // Persisted so it survives switching tabs, and cleared when the app starts:
+  // the mark describes the job being worked on right now, not one from days ago.
+  const [mark, setMark] = useState("");
+  const setMarkState = (v) => {
+    setMark(v);
+    api().setPref("gen_mark_state", v || "");
+  };
   const [acctInfo, setAcctInfo] = useState(null); // contact info for the live viewer
   const [eduRows, setEduRows] = useState([]); // structured education for the resume
   const [view, setView] = useState("generate"); // "generate" | "preview" sub-tab
@@ -276,9 +283,9 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       const autoOpenPref = await api().getPref("auto_open_pdf");
       if (autoOpenPref && autoOpenPref.value != null) setAutoOpenPdf(autoOpenPref.value === "1");
 
-      // Whether the last generated resume has already had its location copied.
-      const copiedPref = await api().getPref("gen_location_copied");
-      if (copiedPref && copiedPref.value != null) setLocationCopied(copiedPref.value === "1");
+      // Where the job stood when this tab was last open.
+      const markPref = await api().getPref("gen_mark_state");
+      if (markPref && markPref.value) setMark(markPref.value);
 
       // The last target job, so "View info" survives a restart — and the resume
       // text that went with it, so the style/colour/font controls can re-render
@@ -341,10 +348,10 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       // so a reorder done on another tab would otherwise not show up here.
       const orderPref = await api().getPref("style_order");
       if (!cancelled && orderPref && orderPref.value) setStyles(rankStyles(orderPref.value));
-      // Same for the copied mark: it belongs to the saved resume, which all
-      // three Generate tabs share, and it is cleared when the app starts.
-      const copiedPref = await api().getPref("gen_location_copied");
-      if (!cancelled && copiedPref) setLocationCopied(copiedPref.value === "1");
+      // Same for the mark: it belongs to the job in hand, which all three
+      // Generate tabs share, and it is cleared when the app starts.
+      const markPref = await api().getPref("gen_mark_state");
+      if (!cancelled && markPref) setMark(markPref.value || "");
     })();
     return () => { cancelled = true; };
   }, [active, isV2]);
@@ -758,6 +765,8 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         source: res.source || "", usedRaw: !!res.usedRaw,
       };
       setJobMeta(meta);
+      // The posting is in: mark the generator blue until it is generated.
+      setMarkState("extracted");
       jobMetaRef.current = meta;
       api().setPref("gen_v3_meta", JSON.stringify(meta));
       // Fill the Job Description with the details AND the description, so what
@@ -932,14 +941,11 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   };
 
   // Route the Generate action to the Gemini API (V1) or ChatGPT browser (V2).
-  // Starting a new resume clears the "taken" marker from the last one.
-  const runGenerate = (jdValue) => {
-    if (locationCopied) {
-      setLocationCopied(false);
-      api().setPref("gen_location_copied", "0");
-    }
-    return isV2 ? previewV2(jdValue) : preview(jdValue);
-  };
+  // Generating deliberately leaves the mark alone. Blue means "a job came in and
+  // has not been filed yet", which is still true while its resume is being
+  // produced - that is the whole point of it: at a glance, this is the new job
+  // just extracted. Only Copy Resume Path moves it on, to green.
+  const runGenerate = (jdValue) => (isV2 ? previewV2(jdValue) : preview(jdValue));
 
   const cancelV2 = async () => {
     await api().cancelChatgptClipboard();
@@ -1254,17 +1260,45 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     //    open the point resolves INSIDE the dialog, where the click would press
     //    whatever button is there. Missing a copy is recoverable; pressing an
     //    unknown button in a modal is not.
+    // Re-measure in the page right now. The aim above was taken during the scan
+    // and has since crossed several IPC calls; scrolling the ChatGPT page in
+    // that gap moves the button up or down and leaves those coordinates
+    // pointing at whatever took its place. Two readings 120ms apart also catch
+    // a page that is still moving, in which case no point is worth clicking.
+    const REAIM =
+      "(async () => { const b = window.__copyBtn;" +
+      " if(!b || !b.isConnected) return JSON.stringify({ ok: false, why: 'button-gone' });" +
+      " const modal = !!document.querySelector('[role=\"dialog\"],[aria-modal=\"true\"],dialog[open]');" +
+      " const a = b.getBoundingClientRect();" +
+      " await new Promise(r => setTimeout(r, 120));" +
+      " const c = b.getBoundingClientRect();" +
+      " const steady = Math.abs(a.left - c.left) < 2 && Math.abs(a.top - c.top) < 2;" +
+      " const x = Math.round(c.left + c.width/2), y = Math.round(c.top + c.height/2);" +
+      " const t = document.elementFromPoint(x, y);" +
+      " const covered = !(t && (t === b || b.contains(t) || (t.closest && t.closest('button,[role=\"button\"]') === b)));" +
+      " const inView = x > 0 && y > 0 && x < (window.innerWidth||0) && y < (window.innerHeight||0);" +
+      " return JSON.stringify({ ok: true, x: x, y: y, steady: steady, covered: covered, modal: modal, inView: inView," +
+      "   moved: Math.round(Math.abs(a.top - c.top)) });" +
+      "})();";
+    let fresh = null;
+    try { fresh = JSON.parse(await js(REAIM, '{"ok":false}')); } catch (_) { fresh = null; }
+
     let sent = null;
     let method = "trusted";
-    const safeToAim = aim && aim.x && !aim.covered && !aim.modal && aim.steady !== false;
+    // Everything is judged on the fresh reading, and the click uses ITS point -
+    // never the stale one.
+    const target = fresh && fresh.ok ? fresh : null;
+    const safeToAim = !!(target && target.x && !target.covered && !target.modal && target.steady && target.inView);
     if (safeToAim) {
-      try { sent = await api().chatSendClick({ id: wv.getWebContentsId(), x: aim.x, y: aim.y }); }
+      try { sent = await api().chatSendClick({ id: wv.getWebContentsId(), x: target.x, y: target.y }); }
       catch (e) { sent = { ok: false, error: (e && e.message) || String(e) }; }
       await wait(250);
     } else {
-      method = !aim ? "no-aim"
-        : aim.modal ? "modal-open"
-        : aim.covered ? "covered-" + (aim.topmost || "unknown")
+      method = !target ? ((fresh && fresh.why) || "no-aim")
+        : target.modal ? "modal-open"
+        : target.covered ? "covered-" + ((aim && aim.topmost) || "unknown")
+        : !target.steady ? "scrolling"
+        : !target.inView ? "out-of-view"
         : "moving";
     }
 
@@ -1301,6 +1335,8 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       sendError: sent && !sent.ok ? (sent.error || "unknown") : "",
       delivered: (after.seen || 0) > (before.seen || 0),
       trusted: (after.trusted || 0) > (before.trusted || 0),
+      // How far the button had moved between the scan's aim and the click.
+      movedPx: fresh && fresh.ok ? fresh.moved : null,
       captured: (hook.n || 0) > hookBefore,
       capturedVia: hook.via || "",
       capturedChars: (hook.text || "").length,
@@ -1858,17 +1894,14 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       setTimeout(() => setCopied(false), 1500);
     } catch (_) {}
   };
-  // Flag the form as taken. Every Copy Location button routes through this, so
+  // Flag the form as taken. Every Copy Resume Path button routes through this, so
   // the border appears whichever one was used.
-  const markLocationCopied = () => {
-    setLocationCopied(true);
-    api().setPref("gen_location_copied", "1");
-  };
+  const markLocationCopied = () => setMarkState("copied");
   const copyLocation = () => {
     copyFolderToClipboard(savedPath);
     setView("generate");
     markLocationCopied();
-    toast("Folder path copied to clipboard.", "success");
+    toast("Resume path copied to clipboard.", "success");
   };
   // Copy one contact value; the modal stays open so several can be taken.
   const copyField = async (field, value) => {
@@ -1884,7 +1917,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   // Generate Resume, ready for the next job.
   const copySavedLocation = () => {
     copyFolderToClipboard(savedPath);
-    toast("Folder path copied to clipboard.", "success");
+    toast("Resume path copied to clipboard.", "success");
     setShowSaved(false);
     setView("generate");
     markLocationCopied();
@@ -1894,10 +1927,10 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
 
   return (
     <div>
-    {/* The green outline marks a resume whose location has been copied — one
-        already taken away to file an application. It encloses BOTH panels, the
-        styles and the form, and the next Generate Resume clears it. */}
-    <div className={"resume-layout" + (locationCopied ? " location-copied" : "")}>
+    {/* The outline around both panels says where this job stands: blue from the
+        moment a posting is extracted - through generating it - until its folder
+        is copied, which turns it green. A fresh start of the app clears it. */}
+    <div className={"resume-layout" + (mark === "copied" ? " location-copied" : mark === "extracted" ? " job-extracted" : "")}>
       <section className="card resume-styles">
         <div className="styles-head">
           <h2>Resume Styles</h2>
@@ -2428,8 +2461,8 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
               Open File
             </button>
             {savedPath && (
-              <button className="btn" onClick={copyLocation} title="Copy the folder path to the clipboard">
-                {copied ? "Copied ✓" : "Copy Location"}
+              <button className="btn" onClick={copyLocation} title="Copy the folder holding this resume to the clipboard">
+                {copied ? "Copied ✓" : "Copy Resume Path"}
               </button>
             )}
           </div>
@@ -2582,7 +2615,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
             <button className="btn" onClick={openFolder} disabled={!savedPath}>Open Folder</button>
             <button className="btn" onClick={openFile} disabled={!savedPath}>Open File</button>
             <button className="btn" onClick={copySavedLocation} disabled={!savedPath}>
-              {copied ? "Copied ✓" : "Copy Location"}
+              {copied ? "Copied ✓" : "Copy Resume Path"}
             </button>
             <button className="btn primary" onClick={() => setShowSaved(false)}>Close</button>
           </div>
@@ -2648,7 +2681,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
               disabled={!savedPath}
               title={savedPath || "Generate a resume first"}
             >
-              Copy Location
+              Copy Resume Path
             </button>
             <button className="btn primary" onClick={() => setShowInfo(false)}>Close</button>
           </div>
