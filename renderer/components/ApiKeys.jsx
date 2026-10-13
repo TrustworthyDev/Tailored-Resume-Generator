@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { useDbChanged } from "../lib/useDbChanged";
 import ConfirmModal from "./ConfirmModal";
 import { MODEL_OPTIONS, PROVIDERS, providerLabel, defaultModel, modelLabel } from "../lib/aiModels";
 
@@ -33,6 +34,7 @@ export default function ApiKeys({ kind = "v1" }) {
   };
 
   useEffect(() => { load(); /* reload when switching V1/V2 tab */ }, [kind]);
+  useDbChanged(load); // another app saved to the shared database
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
   // Changing the provider switches the model list to that provider's default.

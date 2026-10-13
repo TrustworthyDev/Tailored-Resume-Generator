@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { useDbChanged } from "../lib/useDbChanged";
 import { countryFlag } from "../lib/flags";
 import AccountForm from "./AccountForm";
 import ConfirmModal from "./ConfirmModal";
@@ -23,6 +24,13 @@ export default function AccountManagement() {
   };
 
   useEffect(() => { load(false); }, []);
+
+  // Another app saved to the shared database: re-read the list, keeping the
+  // open account unless it was deleted there.
+  useDbChanged(async () => {
+    const rows = await load();
+    if (rows.length && !rows.some((a) => a.id === selectedId)) setSelectedId(rows[0].id);
+  });
 
   const addAccount = async () => {
     const res = await api().createAccount({ name: "New Account" });

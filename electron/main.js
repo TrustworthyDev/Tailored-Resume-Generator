@@ -5,28 +5,83 @@ const db = require("./db");
 const {
   generateResume, generateCoverLetter, parseResumeFile, setProxy, checkProxy,
   buildPromptJson, parseResumeJson, refineV2Prompt, extractJdTarget, extractJobPost,
+  RETIRED_GEMINI_MODELS,
 } = require("./ai");
 const license = require("./license");
 const accountMd = require("./accountMd");
 const { sortRoles } = require("./workOrder");
+const execFileAsync = require("util").promisify(require("child_process").execFile);
 
 const isDev = !!process.env.ELECTRON_DEV;
 
-// Give the UNPACKED build its own userData (database + ChatGPT session), separate
-// from the INSTALLED app, so testing the unpacked exe never touches real data.
-// electron-builder puts the unpacked exe in a "win-unpacked" folder; the NSIS
-// install goes elsewhere. This MUST run before any userData path is read
-// (crash logging, DB init), i.e. here at module load.
+// ---- Data profile (what makes several copies of the app able to run at once) --
+//
+// A profile is one userData folder: the database, the signed-in ChatGPT session,
+// the prefs and the logs. Two processes CANNOT share one — a Chromium profile
+// directory takes process-wide locks (the second copy loses the ChatGPT login),
+// and an app's own database is saved without the lock a shared one uses. (The
+// database alone CAN be shared between profiles: see "Shared database" below.)
+//
+// So each simultaneous copy needs its own: pass --profile=<name> (or set
+// RGENERATOR_PROFILE). Builds that are meant to coexist with an install take a
+// default name of their own, because otherwise they resolve to the SAME
+// %APPDATA%\RGenerator as the installed app: the unpacked exe lives in a
+// "win-unpacked" folder, and the portable exe unpacks into a temp folder, where
+// electron-builder hands it PORTABLE_EXECUTABLE_DIR.
+//
+// MUST run before any userData path is read (crash logging, DB init), i.e. here
+// at module load.
+const PROFILE_ROOT = "RGenerator Profiles";
+
+// --profile=Two, --profile:Two, --profile Two, or RGENERATOR_PROFILE=Two.
+function readProfileArg() {
+  const args = process.argv.slice(1).map((a) => String(a));
+  for (const a of args) {
+    const m = /^--profile[=:](.+)$/i.exec(a);
+    if (m) return m[1];
+  }
+  const flag = args.findIndex((a) => /^--profile$/i.test(a));
+  if (flag > -1 && args[flag + 1] && !args[flag + 1].startsWith("-")) return args[flag + 1];
+  return process.env.RGENERATOR_PROFILE || "";
+}
+
+// A folder name Windows will accept, whatever was typed on the command line.
+function safeProfileName(raw) {
+  return String(raw || "").replace(/[^A-Za-z0-9 _-]/g, "").replace(/\s+/g, " ").trim().slice(0, 40);
+}
+
+let profileName = ""; // "" = the default profile (the installed app's own data)
+// The profile shown in the window title and sidebar: only one the user named
+// with --profile. The automatic "Unpacked" / "Portable" data folders stay unlabelled.
+let shownProfile = "";
 let isUnpackedBuild = false;
 try {
   const exeDir = path.basename(path.dirname(process.execPath)).toLowerCase();
   isUnpackedBuild = app.isPackaged && exeDir === "win-unpacked";
-  if (isUnpackedBuild) {
-    const devData = path.join(app.getPath("appData"), "RGenerator (Unpacked)");
-    fs.mkdirSync(devData, { recursive: true });
-    app.setPath("userData", devData);
+  const isPortableBuild = app.isPackaged && !!process.env.PORTABLE_EXECUTABLE_DIR;
+  const named = safeProfileName(readProfileArg());
+  profileName = named || (isUnpackedBuild ? "Unpacked" : isPortableBuild ? "Portable" : "");
+  shownProfile = named;
+  if (profileName) {
+    // The unpacked build keeps the folder it has always used, so an existing
+    // unpacked database and ChatGPT login are not orphaned by this change.
+    const dir =
+      !named && isUnpackedBuild
+        ? path.join(app.getPath("appData"), "RGenerator (Unpacked)")
+        : path.join(app.getPath("appData"), PROFILE_ROOT, profileName);
+    fs.mkdirSync(dir, { recursive: true });
+    app.setPath("userData", dir);
   }
 } catch (_) {}
+
+// One process per profile. Electron's lock is scoped to the userData folder, so
+// copies running different profiles are unaffected — but a second copy pointed at
+// a profile already in use is exactly the case that corrupts it, and that one
+// hands its window over to the instance that owns the profile instead.
+const gotProfileLock = app.requestSingleInstanceLock();
+if (!gotProfileLock) {
+  app.quit();
+}
 
 // Write startup/runtime failures to a log next to the app so packaged builds
 // are diagnosable (GUI binaries don't print to a console).
@@ -50,11 +105,10 @@ process.on("uncaughtException", (e) => logCrash("uncaughtException", e));
 //   chat_conn_mode = "proxy"  → chat_proxy_id, falling back to the active proxy
 // Returns the proxy row to use, or null for a direct connection.
 function resolveConnection() {
-  const modeRow = db.get("SELECT value FROM prefs WHERE key = 'chat_conn_mode'");
-  const mode = modeRow && modeRow.value ? String(modeRow.value) : "direct";
+  const mode = getPref("chat_conn_mode") || "direct";
   if (mode !== "proxy") return null;
-  const idRow = db.get("SELECT value FROM prefs WHERE key = 'chat_proxy_id'");
-  const pid = idRow && idRow.value ? Number(idRow.value) : null;
+  const proxyId = getPref("chat_proxy_id");
+  const pid = proxyId ? Number(proxyId) : null;
   let row = pid
     ? db.get("SELECT name, url, port, username, password FROM proxies WHERE id = ?", [pid])
     : null;
@@ -83,14 +137,9 @@ function applyApiConnection() {
 // followed whichever proxy was active. Seed the mode from that so an existing
 // setup keeps behaving the same instead of silently switching to direct.
 function seedConnectionMode() {
-  const row = db.get("SELECT value FROM prefs WHERE key = 'chat_conn_mode'");
-  if (row && row.value) return;
+  if (getPref("chat_conn_mode")) return;
   const active = db.get("SELECT id FROM proxies WHERE is_active = 1 LIMIT 1");
-  db.run(
-    `INSERT INTO prefs (key, value) VALUES ('chat_conn_mode', ?)
-     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-    [active ? "proxy" : "direct"]
-  );
+  setPref("chat_conn_mode", active ? "proxy" : "direct");
 }
 process.on("unhandledRejection", (e) => logCrash("unhandledRejection", e));
 let mainWindow = null;
@@ -98,6 +147,342 @@ let mainWindow = null;
 // The app's database file, inside whatever userData folder the product name
 // resolves to. Kept in step with db.js.
 const DB_FILE = "rgenerator.sqlite";
+
+// Every IPC handler's synchronous part runs as one database transaction. With a
+// database shared between apps, a read followed by a write that depends on it
+// (the next sort position, then the insert) can't have another app's save land
+// in between, and the handler's writes reach the file in one save. Work after
+// an `await` runs outside it, each statement saving on its own.
+function handle(channel, fn) {
+  ipcMain.handle(channel, (...args) => db.transaction(() => fn(...args)));
+}
+
+// ---- Per-app settings ----------------------------------------------------------
+// Settings that belong to this copy of the app rather than to the data: the
+// network route and ChatGPT page that go with this app's own ChatGPT login, and
+// whatever the generator is working on right now. They live in a small JSON
+// file in this app's data folder, so apps sharing one database don't overwrite
+// each other's drafts — and typing in the generator no longer rewrites the
+// whole database on every keystroke. Everything else stays in the database.
+const LOCAL_PREFS_FILE = "local-prefs.json";
+const LOCAL_PREF_KEYS = new Set([
+  "chat_conn_mode", "chat_proxy_id", "chatgpt_home_url",
+  "selected_account_id",
+  "gen_jd", "gen_v3_jd", "gen_result", "gen_v3_result", "gen_v3_meta",
+  "gen_job_link", "gen_job_company", "gen_job_role", "gen_job_country", "gen_extra_info",
+  "gen_saved_path", "gen_saved_at", "gen_mark_state",
+]);
+
+// { prefs: {key: value}, sharedFolder: "C:\\RGenerator Shared", movedFromDatabase: true }
+let localPrefs = {};
+
+const localPrefsPath = () => path.join(app.getPath("userData"), LOCAL_PREFS_FILE);
+
+function loadLocalPrefs() {
+  try {
+    localPrefs = JSON.parse(fs.readFileSync(localPrefsPath(), "utf8")) || {};
+  } catch (_) {
+    localPrefs = {};
+  }
+  if (!localPrefs.prefs || typeof localPrefs.prefs !== "object") localPrefs.prefs = {};
+}
+
+function saveLocalPrefs() {
+  const file = localPrefsPath();
+  const text = JSON.stringify(localPrefs, null, 2);
+  try {
+    fs.writeFileSync(file + ".tmp", text);
+    fs.renameSync(file + ".tmp", file);
+  } catch (_) {
+    try { fs.writeFileSync(file, text); } catch (e) { logCrash("saveLocalPrefs", e); }
+  }
+}
+
+function getPref(key) {
+  if (LOCAL_PREF_KEYS.has(key)) {
+    const v = localPrefs.prefs[key];
+    return v == null ? null : String(v);
+  }
+  const row = db.get("SELECT value FROM prefs WHERE key = ?", [key]);
+  return row ? row.value : null;
+}
+
+function setPref(key, value) {
+  const v = value == null ? null : String(value);
+  if (LOCAL_PREF_KEYS.has(key)) {
+    localPrefs.prefs[key] = v;
+    saveLocalPrefs();
+    return;
+  }
+  db.run(
+    `INSERT INTO prefs (key, value) VALUES (?, ?)
+     ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+    [key, v]
+  );
+}
+
+function deletePref(key) {
+  if (LOCAL_PREF_KEYS.has(key)) {
+    delete localPrefs.prefs[key];
+    saveLocalPrefs();
+    return;
+  }
+  db.run("DELETE FROM prefs WHERE key = ?", [key]);
+}
+
+// Imports leave per-app settings out: in the database nothing would read them.
+function withoutLocalPrefs(groups) {
+  return groups
+    .map((g) => (g.id === "prefs" ? { ...g, items: g.items.filter((it) => !LOCAL_PREF_KEYS.has(it.id)) } : g))
+    .filter((g) => g.items.length);
+}
+
+// First start after per-app settings existed: bring this app's values across
+// from its own database, so a draft or a chosen connection isn't lost.
+function moveLocalPrefsOutOfDatabase() {
+  if (localPrefs.movedFromDatabase) return;
+  // Only ever from this app's own database: a shared one holds another app's.
+  if (!sharedFolder()) {
+    try {
+      db.all("SELECT key, value FROM prefs").forEach((r) => {
+        if (LOCAL_PREF_KEYS.has(r.key) && localPrefs.prefs[r.key] == null) {
+          localPrefs.prefs[r.key] = r.value;
+        }
+      });
+    } catch (e) {
+      logCrash("moveLocalPrefsOutOfDatabase", e);
+    }
+  }
+  localPrefs.movedFromDatabase = true;
+  saveLocalPrefs();
+}
+
+// ---- Shared database -------------------------------------------------------------
+// Several apps on this PC (the installed app, the unpacked exe, profiles) can use
+// one database kept in a folder outside all of them, as two files:
+//   settings.sqlite — accounts, API keys, prompts, proxies, settings
+//   history.sqlite  — application history and saved job posts
+// Each app stores the folder in its own local-prefs.json; no folder = the app's
+// own one-file database, as before. The ChatGPT login and per-app settings always
+// stay in the app's own folder.
+const SHARED_SETTINGS_FILE = "settings.sqlite";
+const SHARED_HISTORY_FILE = "history.sqlite";
+const ownDbPath = () => path.join(app.getPath("userData"), DB_FILE);
+const sharedFolder = () => localPrefs.sharedFolder || "";
+const sharedFiles = (folder) => ({
+  settings: path.join(folder, SHARED_SETTINGS_FILE),
+  history: path.join(folder, SHARED_HISTORY_FILE),
+});
+
+// The previous version shared ONE file. Where a folder still holds one (named in
+// legacyFile, else rgenerator.sqlite), it's split into the two on first open.
+function legacySharedFile(folder, legacyFile) {
+  if (fs.existsSync(sharedFiles(folder).settings)) return null;
+  const file = legacyFile || path.join(folder, DB_FILE);
+  return fs.existsSync(file) ? file : null;
+}
+
+// Open the shared database in folder. seedFrom: a one-file database to start it
+// from (sharing this app's own). A legacy one-file shared database is converted
+// and then renamed, so apps still on the old version ask for the database
+// instead of writing to a copy nobody reads any more.
+async function openShared(folder, { seedFrom, legacyFile } = {}) {
+  const files = sharedFiles(folder);
+  const legacy = seedFrom ? null : legacySharedFile(folder, legacyFile);
+  await db.initDb(app.getPath("userData"), {
+    filePath: files.settings,
+    historyPath: files.history,
+    shared: true,
+    watch: true,
+    seedFrom: seedFrom || legacy || undefined,
+  });
+  if (legacy && fs.existsSync(legacy)) {
+    try { fs.renameSync(legacy, legacy + ".before-split"); } catch (e) { logCrash("openShared", e); }
+  }
+}
+
+// ---- Which apps are connected to the shared folder ----
+// Each app keeps a small file in <shared folder>\connected-apps, rewritten every
+// few seconds while it runs and removed when it quits or stops sharing. An app
+// whose file hasn't been rewritten lately (it crashed) no longer counts.
+const PRESENCE_DIR = "connected-apps";
+const PRESENCE_EVERY_MS = 5000;
+const PRESENCE_FRESH_MS = 15000;
+const presenceName = () => profileName || "Installed app";
+let presence = null; // { file, timer } while this app is connected
+
+function writePresence() {
+  if (!presence) return;
+  try {
+    fs.mkdirSync(path.dirname(presence.file), { recursive: true });
+    fs.writeFileSync(presence.file, JSON.stringify({ name: presenceName(), pid: process.pid, seen: Date.now() }));
+  } catch (_) {} // the folder is unreachable right now; the next beat retries
+}
+
+// Start, move or stop this app's presence to match the folder it now uses.
+function updatePresence() {
+  const folder = sharedFolder();
+  const file = folder ? path.join(folder, PRESENCE_DIR, `${presenceName().replace(/[^\w -]/g, "")}-${process.pid}.json`) : null;
+  if (presence && presence.file === file) return;
+  if (presence) {
+    clearInterval(presence.timer);
+    try { fs.unlinkSync(presence.file); } catch (_) {}
+    presence = null;
+  }
+  if (!file) return;
+  presence = { file, timer: setInterval(writePresence, PRESENCE_EVERY_MS) };
+  writePresence();
+}
+
+// The apps connected to this app's shared folder right now, this one included.
+function connectedApps() {
+  const folder = sharedFolder();
+  if (!folder) return [];
+  const dir = path.join(folder, PRESENCE_DIR);
+  let names = [];
+  try { names = fs.readdirSync(dir).filter((n) => n.endsWith(".json")); } catch (_) {}
+  const out = [];
+  names.forEach((n) => {
+    try {
+      const info = JSON.parse(fs.readFileSync(path.join(dir, n), "utf8"));
+      if (Date.now() - info.seen > PRESENCE_FRESH_MS) {
+        if (Date.now() - info.seen > 10 * PRESENCE_FRESH_MS) fs.unlinkSync(path.join(dir, n)); // long gone
+        return;
+      }
+      out.push({ name: info.name, self: info.pid === process.pid && presence && path.basename(presence.file) === n });
+    } catch (_) {}
+  });
+  return out.sort((a, b) => (b.self - a.self) || a.name.localeCompare(b.name));
+}
+
+// Open the database at startup: the shared one when this app uses one, else its
+// own. A shared database that's missing or unreadable is never replaced with an
+// empty one — the user decides. Returns false when they chose to quit.
+async function openDatabase() {
+  // The previous version stored the shared FILE; its folder is the shared folder.
+  const legacyFile = localPrefs.sharedDatabase || "";
+  if (legacyFile && !localPrefs.sharedFolder) localPrefs.sharedFolder = path.dirname(legacyFile);
+  for (;;) {
+    const folder = sharedFolder();
+    if (!folder) {
+      await db.initDb(app.getPath("userData"));
+      return true;
+    }
+    let problem;
+    if (!fs.existsSync(sharedFiles(folder).settings) && !legacySharedFile(folder, legacyFile)) {
+      problem = "The shared database was not found. Its folder may have been renamed or moved, or the drive isn't connected.";
+    } else {
+      try {
+        await openShared(folder, { legacyFile });
+        if (localPrefs.sharedDatabase) {
+          delete localPrefs.sharedDatabase;
+          saveLocalPrefs();
+        }
+        return true;
+      } catch (e) {
+        logCrash("openDatabase", e);
+        problem = `The shared database could not be opened: ${(e && e.message) || e}`;
+      }
+    }
+    const choice = dialog.showMessageBoxSync({
+      type: "warning",
+      title: "Shared database",
+      message: problem,
+      detail: folder,
+      buttons: ["Find the Folder…", "Use This App's Own Database", "Quit"],
+      defaultId: 0,
+      cancelId: 2,
+      noLink: true,
+    });
+    if (choice === 0) {
+      const picked = dialog.showOpenDialogSync({
+        title: "Find the shared database folder",
+        defaultPath: folder,
+        properties: ["openDirectory"],
+      });
+      if (picked && picked[0]) {
+        localPrefs.sharedFolder = picked[0];
+        saveLocalPrefs();
+      }
+    } else if (choice === 1) {
+      delete localPrefs.sharedFolder;
+      delete localPrefs.sharedDatabase;
+      saveLocalPrefs();
+    } else {
+      return false;
+    }
+  }
+}
+
+// SQLite's file locking can't be trusted over a network, and sync clients
+// (OneDrive and the like) hold, restore or duplicate files behind the app's
+// back. Returns a reason to refuse, a reason to warn, or neither.
+async function checkSharedLocation(file) {
+  const full = path.resolve(file);
+  if (full.startsWith("\\\\")) {
+    return { refuse: "That folder is on a network share. A shared database must be on this PC's own drive, or it can be damaged." };
+  }
+  try {
+    const drive = full.slice(0, 1);
+    const { stdout } = await execFileAsync(
+      "powershell.exe",
+      ["-NoProfile", "-Command", `[System.IO.DriveInfo]::new('${drive}').DriveType`],
+      { encoding: "utf8", timeout: 8000, windowsHide: true }
+    );
+    const type = stdout.trim();
+    if (type === "Network") {
+      return { refuse: `Drive ${drive}: is a network drive. A shared database must be on this PC's own drive, or it can be damaged.` };
+    }
+  } catch (_) {} // can't tell — let it through
+  const lower = full.toLowerCase();
+  const syncRoots = [process.env.OneDrive, process.env.OneDriveConsumer, process.env.OneDriveCommercial]
+    .filter(Boolean)
+    .map((p) => path.resolve(p).toLowerCase() + path.sep);
+  if (syncRoots.some((root) => lower.startsWith(root)) || /\\(onedrive[^\\]*|dropbox|google drive|icloud ?drive)\\/i.test(full)) {
+    return { warn: "That folder is synced to the cloud (OneDrive, Dropbox or Google Drive). The sync app can lock the file, bring back an older copy or make conflict copies. A local folder such as C:\\RGenerator Shared is safer." };
+  }
+  return {};
+}
+
+// Show checkSharedLocation's verdict. Returns true when it's fine to go ahead.
+async function confirmSharedLocation(file) {
+  const verdict = await checkSharedLocation(file);
+  if (verdict.refuse) {
+    await dialog.showMessageBox(mainWindow, { type: "error", title: "Shared database", message: verdict.refuse, detail: file, buttons: ["OK"], noLink: true });
+    return false;
+  }
+  if (verdict.warn) {
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: "warning", title: "Shared database", message: verdict.warn, detail: file,
+      buttons: ["Choose Another Folder", "Use It Anyway"], defaultId: 0, cancelId: 0, noLink: true,
+    });
+    return response === 1;
+  }
+  return true;
+}
+
+// Re-read what was taken from the old database, and show the new one.
+function afterDatabaseSwitch(message) {
+  updatePresence();
+  upgradeRetiredModels(); // the new file may come from an older copy of the app
+  apiConnKey = null;      // proxies differ between databases
+  applyApiConnection();
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.once("did-finish-load", () => {
+      setTimeout(() => notify("Database", message), 1000); // once the page listens again
+    });
+    mainWindow.webContents.reload();
+  }
+}
+
+// Tell the window another app saved to the shared database, so open screens
+// re-read their lists.
+function watchSharedDatabase() {
+  db.onExternalChange(() => {
+    applyApiConnection(); // a proxy edited in the other app
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send("db:changed");
+  });
+}
 
 // Every name this app has shipped under, newest first. Renaming changes the
 // userData folder, so a rename would otherwise look like a fresh install with
@@ -263,7 +648,9 @@ function createWindow() {
     minWidth: 900,
     minHeight: 640,
     center: true,
-    title: "RGenerator",
+    // A named profile in the title is how two or three copies on one desktop are
+    // told apart — in the taskbar, and in Alt-Tab.
+    title: shownProfile ? `RGenerator — ${shownProfile}` : "RGenerator",
     // Match the app's dark theme so there's no white flash before the UI paints.
     backgroundColor: "#0c0e13",
     webPreferences: {
@@ -337,11 +724,7 @@ function renumberWork(accountId) {
 // session, so no mark ever carries over into it.
 function clearLocationCopied() {
   try {
-    db.run(
-      `INSERT INTO prefs (key, value) VALUES (?, ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-      ["gen_mark_state", ""]
-    );
+    setPref("gen_mark_state", "");
   } catch (e) {
     console.log("[prefs] could not clear the copied mark:", (e && e.message) || e);
   }
@@ -360,9 +743,25 @@ function backfillWorkOrder() {
   }
 }
 
+// Point saved Gemini keys at a live model when Google has retired theirs, so the
+// API Keys list shows (and edits) the model that's actually called.
+function upgradeRetiredModels() {
+  try {
+    const stale = db.all("SELECT id, model FROM api_keys WHERE provider = 'gemini'")
+      .filter((r) => RETIRED_GEMINI_MODELS[(r.model || "").trim()]);
+    db.runMany(stale.map((r) => [
+      "UPDATE api_keys SET model = ? WHERE id = ?",
+      [RETIRED_GEMINI_MODELS[r.model.trim()], r.id],
+    ]));
+    if (stale.length) console.log(`[keys] upgraded ${stale.length} key(s) off retired Gemini models`);
+  } catch (e) {
+    console.log("[keys] could not upgrade retired models:", (e && e.message) || e);
+  }
+}
+
 function registerIpc() {
   // License / activation (machine-locked)
-  ipcMain.handle("license:status", () => {
+  handle("license:status", () => {
     const row = db.get("SELECT value FROM prefs WHERE key = 'license_key'");
     const stored = row && row.value;
     const activated = !!stored && license.validate(stored);
@@ -374,7 +773,7 @@ function registerIpc() {
     };
   });
 
-  ipcMain.handle("license:activate", (_e, key) => {
+  handle("license:activate", (_e, key) => {
     if (license.validate(key)) {
       db.run(
         `INSERT INTO prefs (key, value) VALUES ('license_key', ?)
@@ -389,7 +788,7 @@ function registerIpc() {
   // API keys (multiple; one active key PER KIND is used). Kinds: 'v1' = direct
   // resume generation (Gemini/OpenAI/Anthropic), 'v2' = a Gemini key that
   // refines the ChatGPT prompt. Pass a kind to list only that group.
-  ipcMain.handle("apikeys:list", (_e, kind) => {
+  handle("apikeys:list", (_e, kind) => {
     const k = kind === "v1" || kind === "v2" ? kind : null;
     return k
       ? db.all(
@@ -402,14 +801,14 @@ function registerIpc() {
   });
 
   // Persist a new API-key ranking from drag-and-drop (array of ids in order).
-  ipcMain.handle("apikeys:reorder", (_e, ids) => {
+  handle("apikeys:reorder", (_e, ids) => {
     (ids || []).forEach((id, i) => {
       db.run("UPDATE api_keys SET sort_order = ? WHERE id = ?", [i, id]);
     });
     return { ok: true };
   });
 
-  ipcMain.handle("apikeys:add", (_e, d) => {
+  handle("apikeys:add", (_e, d) => {
     const name = (d.name || "").trim();
     const key = (d.api_key || "").trim();
     const kind = d.kind === "v2" ? "v2" : "v1";
@@ -429,7 +828,7 @@ function registerIpc() {
     return { ok: true, id };
   });
 
-  ipcMain.handle("apikeys:update", (_e, d) => {
+  handle("apikeys:update", (_e, d) => {
     const name = (d.name || "").trim();
     const key = (d.api_key || "").trim();
     const row = db.get("SELECT kind FROM api_keys WHERE id = ?", [d.id]);
@@ -444,7 +843,7 @@ function registerIpc() {
     return { ok: true };
   });
 
-  ipcMain.handle("apikeys:delete", (_e, id) => {
+  handle("apikeys:delete", (_e, id) => {
     const wasActive = db.get("SELECT is_active, kind FROM api_keys WHERE id = ?", [id]);
     db.run("DELETE FROM api_keys WHERE id = ?", [id]);
     // If we removed the active key, promote the most recent remaining one OF THE
@@ -459,7 +858,7 @@ function registerIpc() {
     return { ok: true };
   });
 
-  ipcMain.handle("apikeys:setActive", (_e, id) => {
+  handle("apikeys:setActive", (_e, id) => {
     // Active is per-kind: clear only this key's group, then activate it.
     const row = db.get("SELECT kind FROM api_keys WHERE id = ?", [id]);
     const kind = (row && row.kind) || "v1";
@@ -469,17 +868,17 @@ function registerIpc() {
   });
 
   // Accounts (each account = one person with personal info + many work histories)
-  ipcMain.handle("accounts:list", () =>
+  handle("accounts:list", () =>
     db.all(
       "SELECT id, name, title, country, main_stack FROM accounts ORDER BY sort_order ASC, id ASC"
     )
   );
 
-  ipcMain.handle("accounts:get", (_e, id) =>
+  handle("accounts:get", (_e, id) =>
     db.get("SELECT * FROM accounts WHERE id = ?", [id])
   );
 
-  ipcMain.handle("accounts:create", (_e, d) => {
+  handle("accounts:create", (_e, d) => {
     const maxRow = db.get("SELECT COALESCE(MAX(sort_order), 0) AS m FROM accounts");
     const nextOrder = (maxRow ? maxRow.m : 0) + 1;
     const id = db.insert(
@@ -506,7 +905,7 @@ function registerIpc() {
   // As separate run() calls this rewrote the whole 8MB file once per account and
   // left the ranking half-applied in between — so two quick drags could
   // interleave and land a mix of the old and new order.
-  ipcMain.handle("accounts:reorder", (_e, ids) => {
+  handle("accounts:reorder", (_e, ids) => {
     const list = (ids || []).filter((id) => id != null);
     if (!list.length) return { ok: false, error: "no-ids" };
     db.runMany(list.map((id, i) => ["UPDATE accounts SET sort_order = ? WHERE id = ?", [i, id]]));
@@ -515,7 +914,7 @@ function registerIpc() {
     return { ok: true, accounts: db.all("SELECT id, name, title, country, main_stack FROM accounts ORDER BY sort_order ASC, id ASC") };
   });
 
-  ipcMain.handle("accounts:save", (_e, d) => {
+  handle("accounts:save", (_e, d) => {
     db.run(
       `UPDATE accounts SET name = ?, title = ?, email = ?, phone = ?, address = ?,
          country = ?, linkedin = ?, portfolio = ?, main_stack = ?, additional_info = ?,
@@ -554,7 +953,7 @@ function registerIpc() {
   // Save ONLY the resume look (Set Resume tab). Separate from accounts:save so a
   // template or colour takes effect the moment it is clicked, without also
   // writing whatever half-finished edits are sitting on the other tabs.
-  ipcMain.handle("accounts:saveLook", (_e, d) => {
+  handle("accounts:saveLook", (_e, d) => {
     if (!d || !d.id) return { ok: false, error: "no-account" };
     db.run(
       `UPDATE accounts SET resume_style = ?, resume_accent = ?, resume_name_color = ?,
@@ -571,7 +970,7 @@ function registerIpc() {
     return { ok: true };
   });
 
-  ipcMain.handle("accounts:delete", (_e, id) => {
+  handle("accounts:delete", (_e, id) => {
     db.run("DELETE FROM work_history WHERE account_id = ?", [id]);
     db.run("DELETE FROM education WHERE account_id = ?", [id]);
     db.run("DELETE FROM projects WHERE account_id = ?", [id]);
@@ -581,14 +980,14 @@ function registerIpc() {
   });
 
   // Projects (scoped to an account)
-  ipcMain.handle("projects:list", (_e, accountId) =>
+  handle("projects:list", (_e, accountId) =>
     db.all(
       "SELECT * FROM projects WHERE account_id = ? ORDER BY id ASC",
       [accountId]
     )
   );
 
-  ipcMain.handle("projects:replaceAll", (_e, d) => {
+  handle("projects:replaceAll", (_e, d) => {
     const accountId = d.accountId;
     db.run("DELETE FROM projects WHERE account_id = ?", [accountId]);
     (d.rows || []).forEach((r) => {
@@ -607,7 +1006,7 @@ function registerIpc() {
   });
 
   // Per-account application counts + total.
-  ipcMain.handle("applications:counts", () => {
+  handle("applications:counts", () => {
     const rows = db.all(
       "SELECT account_id, COUNT(*) AS c FROM applications GROUP BY account_id"
     );
@@ -621,7 +1020,7 @@ function registerIpc() {
   });
 
   // Application history for one account (most recent first).
-  ipcMain.handle("applications:byAccount", (_e, accountId) =>
+  handle("applications:byAccount", (_e, accountId) =>
     db.all(
       `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
               ap.gpt_url, (CASE WHEN IFNULL(ap.gpt_url,'') <> '' THEN 1 ELSE 0 END) AS has_gpt,
@@ -639,7 +1038,7 @@ function registerIpc() {
   // style/colour/font choice against real content on the "Set Resume" tab
   // instead of a mock-up. Rows with no stored text are skipped, so an older
   // application that does have content still gives something to show.
-  ipcMain.handle("applications:lastResume", (_e, accountId) =>
+  handle("applications:lastResume", (_e, accountId) =>
     db.get(
       `SELECT resume_content, role, company, applied_at
          FROM applications
@@ -651,7 +1050,7 @@ function registerIpc() {
 
   // Every application across all accounts (with the owning account's name),
   // most recent first — feeds the "All Applications" tab.
-  ipcMain.handle("applications:all", () =>
+  handle("applications:all", () =>
     db.all(
       `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
               ap.gpt_url, (CASE WHEN IFNULL(ap.gpt_url,'') <> '' THEN 1 ELSE 0 END) AS has_gpt,
@@ -665,7 +1064,7 @@ function registerIpc() {
   );
 
   // Search applications by account name, role, or company.
-  ipcMain.handle("applications:search", (_e, query) => {
+  handle("applications:search", (_e, query) => {
     const like = `%${(query || "").trim().toLowerCase()}%`;
     return db.all(
       `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
@@ -687,7 +1086,7 @@ function registerIpc() {
   // Everything recorded about one application's target job — powers the
   // history's "View Job Content" modal. Kept out of the list queries so the
   // (potentially large) description is only loaded when it's actually opened.
-  ipcMain.handle("application:jobContent", (_e, id) => {
+  handle("application:jobContent", (_e, id) => {
     const row = db.get(
       `SELECT ap.*, ac.name AS account_name, ac.main_stack AS account_stack,
               ac.country AS account_country
@@ -717,7 +1116,7 @@ function registerIpc() {
 
   // Does an application already exist for this account + company + role? Used to
   // confirm before generating another resume for the same company and job title.
-  ipcMain.handle("applications:findDuplicate", (_e, d) => {
+  handle("applications:findDuplicate", (_e, d) => {
     const accountId = d && d.accountId;
     const r = ((d && d.role) || "").trim();
     const c = ((d && d.company) || "").trim();
@@ -737,7 +1136,7 @@ function registerIpc() {
   });
 
   // Export the whole application history to a CSV file the user picks.
-  ipcMain.handle("applications:export", async () => {
+  handle("applications:export", async () => {
     try {
       const rows = db.all(
         `SELECT ap.applied_at, ac.name AS account_name, ac.main_stack AS account_stack,
@@ -784,7 +1183,7 @@ function registerIpc() {
   // Export the application history as its own .sqlite file — every column of
   // every entry, independent of the Settings → Database backup (which carries
   // API keys, proxies, prompts and personal data as well).
-  ipcMain.handle("applications:exportDb", async () => {
+  handle("applications:exportDb", async () => {
     try {
       const { bytes, count } = db.exportApplicationsDb();
       if (!count) return { ok: false, error: "No applications to export." };
@@ -806,7 +1205,7 @@ function registerIpc() {
 
   // Merge an exported history back in. Entries already present are skipped, so
   // importing the same file twice is harmless.
-  ipcMain.handle("applications:importDb", async () => {
+  handle("applications:importDb", async () => {
     try {
       const res = await dialog.showOpenDialog(mainWindow, {
         title: "Import application history",
@@ -822,7 +1221,7 @@ function registerIpc() {
 
   // One account as a Markdown record. The renderer sends what's on screen, so
   // unsaved edits export too.
-  ipcMain.handle("account:exportMd", async (_e, d) => {
+  handle("account:exportMd", async (_e, d) => {
     try {
       const info = (d && d.personal) || {};
       const name = String(info.name || "account").replace(/[<>:"/\\|?*\x00-\x1f]+/g, " ").trim();
@@ -841,7 +1240,7 @@ function registerIpc() {
   });
 
   // Read a Markdown record into the form — same shape the PDF import returns.
-  ipcMain.handle("account:importMd", async () => {
+  handle("account:importMd", async () => {
     try {
       const res = await dialog.showOpenDialog(mainWindow, {
         title: "Import account",
@@ -861,14 +1260,14 @@ function registerIpc() {
   });
 
   // Education (scoped to an account)
-  ipcMain.handle("education:list", (_e, accountId) =>
+  handle("education:list", (_e, accountId) =>
     db.all(
       "SELECT * FROM education WHERE account_id = ? ORDER BY id DESC",
       [accountId]
     )
   );
 
-  ipcMain.handle("education:replaceAll", (_e, d) => {
+  handle("education:replaceAll", (_e, d) => {
     const accountId = d.accountId;
     db.run("DELETE FROM education WHERE account_id = ?", [accountId]);
     (d.rows || []).forEach((r) => {
@@ -895,9 +1294,9 @@ function registerIpc() {
   });
 
   // Work history (scoped to an account), newest job first — see workOrder.js.
-  ipcMain.handle("work:list", (_e, accountId) => db.all(WORK_BY_ACCOUNT, [accountId]));
+  handle("work:list", (_e, accountId) => db.all(WORK_BY_ACCOUNT, [accountId]));
 
-  ipcMain.handle("work:add", (_e, d) => {
+  handle("work:add", (_e, d) => {
     const id = db.insert(
       `INSERT INTO work_history (account_id, role_name, company_name, location, work_duration, created_at)
        VALUES (?, ?, ?, ?, ?, ?)`,
@@ -915,7 +1314,7 @@ function registerIpc() {
     return { id };
   });
 
-  ipcMain.handle("work:update", (_e, d) => {
+  handle("work:update", (_e, d) => {
     db.run(
       `UPDATE work_history SET role_name = ?, company_name = ?, location = ?, work_duration = ?
        WHERE id = ?`,
@@ -933,14 +1332,14 @@ function registerIpc() {
     return { ok: true };
   });
 
-  ipcMain.handle("work:delete", (_e, id) => {
+  handle("work:delete", (_e, id) => {
     db.run("DELETE FROM work_history WHERE id = ?", [id]);
     return { ok: true };
   });
 
   // Replace all work history for an account in one shot (used by the single
   // "Save" action on the account form).
-  ipcMain.handle("work:replaceAll", (_e, d) => {
+  handle("work:replaceAll", (_e, d) => {
     const accountId = d.accountId;
     db.run("DELETE FROM work_history WHERE account_id = ?", [accountId]);
     // Stored newest job first, whatever order they were typed in.
@@ -969,13 +1368,13 @@ function registerIpc() {
   });
 
   // Instructions (multiple named prompts; one active is used for generation)
-  ipcMain.handle("instructions:list", () =>
+  handle("instructions:list", () =>
     db.all(
       "SELECT id, name, body, is_active FROM instructions ORDER BY sort_order ASC, id ASC"
     )
   );
 
-  ipcMain.handle("instructions:add", (_e, d) => {
+  handle("instructions:add", (_e, d) => {
     const existing = db.get("SELECT COUNT(*) AS c FROM instructions");
     const active = existing && existing.c > 0 ? 0 : 1;
     const maxRow = db.get("SELECT COALESCE(MAX(sort_order), 0) AS m FROM instructions");
@@ -987,14 +1386,14 @@ function registerIpc() {
     return { ok: true, id };
   });
 
-  ipcMain.handle("instructions:reorder", (_e, ids) => {
+  handle("instructions:reorder", (_e, ids) => {
     (ids || []).forEach((id, i) => {
       db.run("UPDATE instructions SET sort_order = ? WHERE id = ?", [i, id]);
     });
     return { ok: true };
   });
 
-  ipcMain.handle("instructions:update", (_e, d) => {
+  handle("instructions:update", (_e, d) => {
     db.run("UPDATE instructions SET name = ?, body = ? WHERE id = ?", [
       (d.name || "Untitled").trim(),
       d.body || "",
@@ -1003,7 +1402,7 @@ function registerIpc() {
     return { ok: true };
   });
 
-  ipcMain.handle("instructions:delete", (_e, id) => {
+  handle("instructions:delete", (_e, id) => {
     const wasActive = db.get("SELECT is_active FROM instructions WHERE id = ?", [id]);
     db.run("DELETE FROM instructions WHERE id = ?", [id]);
     if (wasActive && wasActive.is_active) {
@@ -1013,19 +1412,19 @@ function registerIpc() {
     return { ok: true };
   });
 
-  ipcMain.handle("instructions:setActive", (_e, id) => {
+  handle("instructions:setActive", (_e, id) => {
     db.run("UPDATE instructions SET is_active = 0");
     db.run("UPDATE instructions SET is_active = 1 WHERE id = ?", [id]);
     return { ok: true };
   });
 
   // Download location (where generated resume PDFs are saved)
-  ipcMain.handle("location:get", () => {
+  handle("location:get", () => {
     const row = db.get("SELECT value FROM prefs WHERE key = 'download_location'");
     return { path: (row && row.value) || app.getPath("downloads") };
   });
 
-  ipcMain.handle("location:choose", async () => {
+  handle("location:choose", async () => {
     const res = await dialog.showOpenDialog(mainWindow, {
       title: "Choose download folder",
       properties: ["openDirectory", "createDirectory"],
@@ -1040,15 +1439,16 @@ function registerIpc() {
     return { path: dir };
   });
 
-  ipcMain.handle("location:open", async () => {
+  handle("location:open", async () => {
     const row = db.get("SELECT value FROM prefs WHERE key = 'download_location'");
     const dir = (row && row.value) || app.getPath("downloads");
     const err = await shell.openPath(dir);
     return { ok: !err, error: err || undefined };
   });
 
-  // Export the whole SQLite database to a user-chosen .sqlite file.
-  ipcMain.handle("db:export", async () => {
+  // Export the whole SQLite database to a user-chosen .sqlite file — settings
+  // and history together, even when they're shared as two files.
+  handle("db:export", async () => {
     try {
       const res = await dialog.showSaveDialog(mainWindow, {
         title: "Export database",
@@ -1056,18 +1456,55 @@ function registerIpc() {
         filters: [{ name: "SQLite Database", extensions: ["sqlite"] }],
       });
       if (res.canceled || !res.filePath) return { canceled: true };
-      const src = db.getDbPath();
-      if (!src || !fs.existsSync(src)) return { ok: false, error: "No database file found." };
-      fs.copyFileSync(src, res.filePath);
+      fs.writeFileSync(res.filePath, db.exportAll());
       return { ok: true, path: res.filePath };
     } catch (e) {
       return { ok: false, error: (e && e.message) || String(e) };
     }
   });
 
+  // Export the database as its two files — settings.sqlite and history.sqlite —
+  // into a folder the user picks: a backup copy. Nothing switches over to them;
+  // to have apps work on two files together, share a folder instead.
+  handle("db:exportTwo", async () => {
+    try {
+      const res = await dialog.showOpenDialog(mainWindow, {
+        title: "Export settings.sqlite and history.sqlite to…",
+        properties: ["openDirectory", "createDirectory"],
+      });
+      if (res.canceled || !res.filePaths.length) return { canceled: true };
+      const folder = res.filePaths[0];
+      if (sharedFolder() && path.resolve(folder).toLowerCase() === path.resolve(sharedFolder()).toLowerCase()) {
+        return { ok: false, error: "That's the shared folder the apps are using right now. Pick another folder for the copy." };
+      }
+      const files = sharedFiles(folder);
+      if (fs.existsSync(files.settings) || fs.existsSync(files.history)) {
+        const { response } = await dialog.showMessageBox(mainWindow, {
+          type: "question",
+          title: "Export 2 files",
+          message: "That folder already has settings.sqlite or history.sqlite. Replace them?",
+          detail: folder,
+          buttons: ["Replace", "Cancel"],
+          defaultId: 1,
+          cancelId: 1,
+          noLink: true,
+        });
+        if (response !== 0) return { canceled: true };
+      }
+      const { settings, history } = db.exportTwoFiles();
+      fs.writeFileSync(files.settings, settings);
+      fs.writeFileSync(files.history, history);
+      return { ok: true, folder, settings: files.settings, history: files.history };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
+  handle("db:connectedApps", () => connectedApps());
+
   // Inspect a .sqlite file (chosen by the user) and return its importable
   // contents grouped by type, so the renderer can let the user pick items.
-  ipcMain.handle("db:scan", async () => {
+  handle("db:scan", async () => {
     try {
       const res = await dialog.showOpenDialog(mainWindow, {
         title: "Choose a database to import from",
@@ -1076,14 +1513,14 @@ function registerIpc() {
       });
       if (res.canceled || !res.filePaths.length) return { canceled: true };
       const filePath = res.filePaths[0];
-      return { ok: true, filePath, groups: db.scanFile(filePath) };
+      return { ok: true, filePath, groups: withoutLocalPrefs(db.scanFile(filePath)) };
     } catch (e) {
       return { ok: false, error: (e && e.message) || String(e) };
     }
   });
 
   // Merge only the selected items from a previously-scanned .sqlite file.
-  ipcMain.handle("db:importSelected", async (_e, payload) => {
+  handle("db:importSelected", async (_e, payload) => {
     try {
       const filePath = payload && payload.filePath;
       const selection = (payload && payload.selection) || {};
@@ -1097,7 +1534,7 @@ function registerIpc() {
 
   // Import a .sqlite file, replacing the current database, then reload the UI so
   // every view re-reads the imported data. The local license is preserved.
-  ipcMain.handle("db:import", async () => {
+  handle("db:import", async () => {
     try {
       const res = await dialog.showOpenDialog(mainWindow, {
         title: "Import database",
@@ -1114,27 +1551,186 @@ function registerIpc() {
     }
   });
 
+  // ---- Shared database (Settings → Database) ----
+
+  handle("db:location", () => ({
+    shared: !!sharedFolder(),
+    folder: sharedFolder(),
+    path: db.getDbPath(),
+    historyPath: db.getHistoryPath(),
+    ownPath: ownDbPath(),
+    ownExists: fs.existsSync(ownDbPath()),
+  }));
+
+  const samePath = (a, b) => path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+  const OWN_FOLDER_ERROR = "That is this app's own data folder. Pick a separate folder, such as C:\\RGenerator Shared.";
+  const JOIN_DETAIL = "This app's own data stays in its folder as a backup. You can merge any of it in afterwards from Settings → Database.";
+
+  // What a folder holds: "current" (settings.sqlite), "legacy" (the previous
+  // version's one shared file), "empty", or "invalid" (files this app can't use).
+  function folderState(folder) {
+    const files = sharedFiles(folder);
+    if (fs.existsSync(files.settings)) return db.looksLikeAppDb(files.settings) ? "current" : "invalid";
+    if (fs.existsSync(files.history)) return "invalid"; // history without its settings
+    const legacy = legacySharedFile(folder);
+    if (legacy) return db.looksLikeAppDb(legacy) ? "legacy" : "invalid";
+    return "empty";
+  }
+
+  async function switchToShared(folder, opts) {
+    await openShared(folder, opts);
+    localPrefs.sharedFolder = folder;
+    delete localPrefs.sharedDatabase;
+    saveLocalPrefs();
+    afterDatabaseSwitch("This app now uses the shared database.");
+    return { ok: true, folder };
+  }
+
+  // Start sharing: copy this app's database into a folder the user picks, as
+  // settings.sqlite + history.sqlite, and switch to it. A folder that already
+  // holds a shared database is offered for joining.
+  handle("db:share", async () => {
+    if (sharedFolder()) return { ok: false, error: "This app already uses a shared database." };
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: "Choose a folder for the shared database",
+      properties: ["openDirectory", "createDirectory"],
+    });
+    if (res.canceled || !res.filePaths.length) return { canceled: true };
+    const folder = res.filePaths[0];
+    if (samePath(folder, app.getPath("userData"))) return { ok: false, error: OWN_FOLDER_ERROR };
+    if (!(await confirmSharedLocation(sharedFiles(folder).settings))) return { canceled: true };
+    try {
+      const state = folderState(folder);
+      if (state === "invalid") return { ok: false, error: "That folder has database files RGenerator can't use. Pick another folder." };
+      if (state !== "empty") {
+        const { response } = await dialog.showMessageBox(mainWindow, {
+          type: "question",
+          title: "Shared database",
+          message: "This folder already has a shared database. Use it?",
+          detail: `${folder}\n\n${JOIN_DETAIL}`,
+          buttons: ["Use It", "Cancel"],
+          defaultId: 0,
+          cancelId: 1,
+          noLink: true,
+        });
+        if (response !== 0) return { canceled: true };
+        return await switchToShared(folder);
+      }
+      return await switchToShared(folder, { seedFrom: db.getDbPath() });
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
+  // Join a shared database another app already set up: pick its folder.
+  handle("db:useShared", async () => {
+    const res = await dialog.showOpenDialog(mainWindow, {
+      title: "Choose the shared database folder",
+      properties: ["openDirectory"],
+    });
+    if (res.canceled || !res.filePaths.length) return { canceled: true };
+    const folder = res.filePaths[0];
+    if (samePath(folder, app.getPath("userData"))) return { ok: false, error: OWN_FOLDER_ERROR };
+    if (sharedFolder() && samePath(folder, sharedFolder())) return { ok: true, folder };
+    const state = folderState(folder);
+    if (state === "empty") return { ok: false, error: "There's no shared database in that folder. To create one there, use Export to Shared Folder (2 Files)… instead." };
+    if (state === "invalid") return { ok: false, error: "That folder has database files RGenerator can't use." };
+    if (!(await confirmSharedLocation(sharedFiles(folder).settings))) return { canceled: true };
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: "question",
+      title: "Shared database",
+      message: "Switch to the shared database?",
+      detail: `${folder}\n\n${JOIN_DETAIL}`,
+      buttons: ["Switch", "Cancel"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (response !== 0) return { canceled: true };
+    try {
+      return await switchToShared(folder);
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
+  // Stop sharing: copy the shared database — settings and history — into this
+  // app's own one-file database and use that. The app's previous own database is
+  // kept, renamed, as a backup. Other apps keep using the shared folder.
+  handle("db:stopSharing", async () => {
+    if (!sharedFolder()) return { ok: false, error: "This app doesn't use a shared database." };
+    const { response } = await dialog.showMessageBox(mainWindow, {
+      type: "question",
+      title: "Stop sharing",
+      message: "Stop using the shared database?",
+      detail: "This app copies the shared settings and history into its own folder and uses that copy from now on. Other apps keep using the shared folder. This app's previous own database is kept as a backup.",
+      buttons: ["Stop Sharing", "Cancel"],
+      defaultId: 0,
+      cancelId: 1,
+      noLink: true,
+    });
+    if (response !== 0) return { canceled: true };
+    try {
+      const own = ownDbPath();
+      const copy = db.exportAll();
+      if (fs.existsSync(own)) {
+        const stamp = new Date().toISOString().replace(/[:T]/g, "-").slice(0, 19);
+        fs.renameSync(own, own.replace(/\.sqlite$/, `.before-unshare-${stamp}.sqlite`));
+      }
+      fs.writeFileSync(own, copy);
+      db.openAt(own);
+      delete localPrefs.sharedFolder;
+      saveLocalPrefs();
+      afterDatabaseSwitch("This app now uses its own database again.");
+      return { ok: true, path: own };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
+  // While sharing: list what this app's own database holds, for the same
+  // pick-and-import panel as "Import selected data".
+  handle("db:scanOwn", () => {
+    const own = ownDbPath();
+    if (!sharedFolder()) return { ok: false, error: "This app isn't using a shared database." };
+    if (!fs.existsSync(own)) return { ok: false, error: "This app has no database of its own to merge." };
+    try {
+      return { ok: true, filePath: own, groups: withoutLocalPrefs(db.scanFile(own)) };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    }
+  });
+
+  // While sharing: merge this app's own application history in. Entries the
+  // shared database already has are skipped.
+  handle("db:mergeOwnHistory", () => {
+    const own = ownDbPath();
+    if (!sharedFolder()) return { ok: false, error: "This app isn't using a shared database." };
+    if (!fs.existsSync(own)) return { ok: false, error: "This app has no database of its own to merge." };
+    return db.importApplications(own);
+  });
+
   // Proxies (multiple; one active). Which one actually gets used — if any — is
   // decided by the connection mode, so every change re-resolves it.
   function applyActiveProxy() {
     applyApiConnection();
   }
 
-  ipcMain.handle("proxy:list", () =>
+  handle("proxy:list", () =>
     db.all(
       "SELECT id, name, url, port, username, password, is_active FROM proxies ORDER BY id DESC"
     )
   );
 
   // Currently active proxy (for the resume-build gating/badge).
-  ipcMain.handle("proxy:active", () => {
+  handle("proxy:active", () => {
     const row = db.get(
       "SELECT id, name, url, port FROM proxies WHERE is_active = 1 LIMIT 1"
     );
     return { enabled: !!row, proxy: row || null };
   });
 
-  ipcMain.handle("proxy:add", (_e, d) => {
+  handle("proxy:add", (_e, d) => {
     if (!d || !(d.url || "").trim()) return { ok: false, error: "Proxy URL is required." };
     const existing = db.get("SELECT COUNT(*) AS c FROM proxies WHERE is_active = 1");
     const active = existing && existing.c > 0 ? 0 : 1; // first proxy becomes active
@@ -1155,20 +1751,20 @@ function registerIpc() {
     return { ok: true, id };
   });
 
-  ipcMain.handle("proxy:setActive", (_e, id) => {
+  handle("proxy:setActive", (_e, id) => {
     db.run("UPDATE proxies SET is_active = 0");
     db.run("UPDATE proxies SET is_active = 1 WHERE id = ?", [id]);
     applyActiveProxy();
     return { ok: true };
   });
 
-  ipcMain.handle("proxy:disable", () => {
+  handle("proxy:disable", () => {
     db.run("UPDATE proxies SET is_active = 0");
     applyApiConnection();
     return { ok: true };
   });
 
-  ipcMain.handle("proxy:delete", (_e, id) => {
+  handle("proxy:delete", (_e, id) => {
     const wasActive = db.get("SELECT is_active FROM proxies WHERE id = ?", [id]);
     db.run("DELETE FROM proxies WHERE id = ?", [id]);
     if (wasActive && wasActive.is_active) applyApiConnection(); // dropped active
@@ -1176,20 +1772,13 @@ function registerIpc() {
   });
 
   // Test any proxy config without saving it.
-  ipcMain.handle("proxy:check", async (_e, d) => checkProxy(d));
+  handle("proxy:check", async (_e, d) => checkProxy(d));
 
   // Preferences (persist UI selections across restarts)
-  ipcMain.handle("prefs:get", (_e, key) => {
-    const row = db.get("SELECT value FROM prefs WHERE key = ?", [key]);
-    return { value: row ? row.value : null };
-  });
+  handle("prefs:get", (_e, key) => ({ value: getPref(key) }));
 
-  ipcMain.handle("prefs:set", (_e, d) => {
-    db.run(
-      `INSERT INTO prefs (key, value) VALUES (?, ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-      [d.key, d.value == null ? null : String(d.value)]
-    );
+  handle("prefs:set", (_e, d) => {
+    setPref(d.key, d.value);
     // Switching Local IP ⇄ Proxy takes effect immediately for the API requests
     // (the browser session re-applies it the next time a window opens).
     if (d && (d.key === "chat_conn_mode" || d.key === "chat_proxy_id")) {
@@ -1200,9 +1789,8 @@ function registerIpc() {
 
   // What the whole app is currently using to reach the network. Drives the
   // generator's badge and its pre-flight check.
-  ipcMain.handle("connection:status", () => {
-    const modeRow = db.get("SELECT value FROM prefs WHERE key = 'chat_conn_mode'");
-    const mode = modeRow && modeRow.value ? String(modeRow.value) : "direct";
+  handle("connection:status", () => {
+    const mode = getPref("chat_conn_mode") || "direct";
     const conn = resolveConnection();
     return {
       mode,
@@ -1227,13 +1815,13 @@ function registerIpc() {
   }
 
   // Preview the styled resume in its own window.
-  ipcMain.handle("resume:preview", async (_e, html) => {
+  handle("resume:preview", async (_e, html) => {
     await htmlWindow(html, true);
     return { ok: true };
   });
 
   // Render the styled resume to a PDF and save it to the chosen location.
-  ipcMain.handle("resume:exportPdf", async (_e, d) => {
+  handle("resume:exportPdf", async (_e, d) => {
     const row = db.get("SELECT value FROM prefs WHERE key = 'download_location'");
     const dir = (row && row.value) || app.getPath("downloads");
     let win;
@@ -1422,7 +2010,7 @@ function registerIpc() {
   });
 
   // Reveal a saved resume PDF in the OS file manager (folder opens, file selected).
-  ipcMain.handle("pdf:reveal", (_e, filePath) => {
+  handle("pdf:reveal", (_e, filePath) => {
     if (!filePath) return { ok: false, error: "No file to open." };
     if (!fs.existsSync(filePath)) return { ok: false, error: "The file no longer exists." };
     shell.showItemInFolder(filePath);
@@ -1430,7 +2018,7 @@ function registerIpc() {
   });
 
   // Open a saved resume PDF directly in the OS default PDF viewer.
-  ipcMain.handle("pdf:open", async (_e, filePath) => {
+  handle("pdf:open", async (_e, filePath) => {
     if (!filePath) return { ok: false, error: "No file to open." };
     if (!fs.existsSync(filePath)) return { ok: false, error: "The file no longer exists." };
     const err = await shell.openPath(filePath);
@@ -1439,7 +2027,7 @@ function registerIpc() {
 
   // Read a saved PDF's bytes (base64) so the renderer can show it inline in the
   // built-in PDF viewer (real, paginated A4 pages) via a blob URL.
-  ipcMain.handle("pdf:read", (_e, filePath) => {
+  handle("pdf:read", (_e, filePath) => {
     try {
       if (!filePath || !fs.existsSync(filePath)) return { ok: false };
       return { ok: true, base64: fs.readFileSync(filePath).toString("base64") };
@@ -1449,7 +2037,7 @@ function registerIpc() {
   });
 
   // Resume generation
-  ipcMain.handle("resume:generate", async (_e, payload) => {
+  handle("resume:generate", async (_e, payload) => {
     const keyRow =
       db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' AND is_active = 1 LIMIT 1") ||
       db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' ORDER BY id DESC LIMIT 1");
@@ -1541,9 +2129,7 @@ function registerIpc() {
   // The URL the embedded browser opens at — a user-saved ChatGPT "Project Home",
   // or the default ChatGPT site when none is saved.
   function chatHomeUrl() {
-    const row = db.get("SELECT value FROM prefs WHERE key = 'chatgpt_home_url'");
-    const v = row && row.value ? String(row.value).trim() : "";
-    return v || CHAT_HOME_DEFAULT;
+    return String(getPref("chatgpt_home_url") || "").trim() || CHAT_HOME_DEFAULT;
   }
 
   // Route the embedded ChatGPT browser per the V2 connection choice:
@@ -1584,7 +2170,7 @@ function registerIpc() {
   // pages work), scrape its text + any schema.org JobPosting JSON-LD, then have
   // Gemini extract the structured posting. Uses the same session/proxy/UA as the
   // embedded ChatGPT browser.
-  ipcMain.handle("jd:fromLink", async (_e, url) => {
+  handle("jd:fromLink", async (_e, url) => {
     const link = String(url || "").trim();
     if (!/^https?:\/\//i.test(link)) {
       return { ok: false, error: "Enter a valid job-post link starting with http(s)://" };
@@ -1775,7 +2361,7 @@ function registerIpc() {
   // request_id and a job_ref (job-description fingerprint) so the reply can be
   // verified as belonging to THIS request and THIS job description. If a V2
   // (Gemini) key is active, the prompt is refined by Gemini before copying.
-  ipcMain.handle("chatgpt:buildPrompt", async (_e, payload) => {
+  handle("chatgpt:buildPrompt", async (_e, payload) => {
     const accountId = payload && payload.accountId;
     const personal = accountId ? db.get("SELECT * FROM accounts WHERE id = ?", [accountId]) : null;
     if (!personal) throw new Error("Select an account to build a resume for.");
@@ -1830,15 +2416,25 @@ function registerIpc() {
     // can silently fail on focus/permission), so the prompt is guaranteed to be
     // on the clipboard by the time the renderer gets this reply. The reply
     // watcher ignores a clipboard value equal to the prompt, so this is safe.
+    //
+    // Not under a profile, though: the clipboard is a single system-wide slot, so
+    // copies running side by side would overwrite each other's prompt seconds
+    // apart and a manual Ctrl+V would paste whichever finished last. The prompt
+    // reaches ChatGPT through trusted input, not the clipboard, so nothing in the
+    // run depends on this — and "Copy prompt" in the ChatGPT tab puts THIS
+    // instance's prompt there on demand.
     let copied = false;
-    try { clipboard.writeText(prompt); copied = true; } catch (_) {}
-    return { id, prompt, copied, jobRef, refined, target };
+    const clipboardSkipped = !!profileName;
+    if (!clipboardSkipped) {
+      try { clipboard.writeText(prompt); copied = true; } catch (_) {}
+    }
+    return { id, prompt, copied, clipboardSkipped, jobRef, refined, target };
   });
 
   // Prepare the persistent ChatGPT session for the embedded <webview> tab:
   // set the UA and apply the current browser-connection proxy, then return what
   // the renderer needs to configure and load the webview.
-  ipcMain.handle("chatgpt:sessionInfo", async () => {
+  handle("chatgpt:sessionInfo", async () => {
     try { session.fromPartition(CHAT_PARTITION).setUserAgent(CHAT_UA); } catch (_) {}
     try { await applyChatProxy(); } catch (_) {}
     return { ua: CHAT_UA, partition: CHAT_PARTITION, homeUrl: chatHomeUrl(), proxied: chatProxyKey && chatProxyKey !== "direct" };
@@ -1846,7 +2442,7 @@ function registerIpc() {
 
   // Fallback for the embedded webview: drop the proxy and use the local IP
   // (ChatGPT/Cloudflare frequently blocks proxy IPs). The renderer reloads after.
-  ipcMain.handle("chatgpt:sessionDirect", async () => {
+  handle("chatgpt:sessionDirect", async () => {
     try { await session.fromPartition(CHAT_PARTITION).setProxy({ mode: "direct" }); } catch (_) {}
     chatProxyKey = "direct";
     chatProxyAuth = null;
@@ -1855,14 +2451,14 @@ function registerIpc() {
 
   // Write text to the system clipboard from the renderer (used to reliably place
   // the auto-captured ChatGPT reply JSON on the clipboard for the reply watcher).
-  ipcMain.handle("clipboard:write", (_e, text) => {
+  handle("clipboard:write", (_e, text) => {
     try { clipboard.writeText(String(text == null ? "" : text)); return { ok: true }; }
     catch (e) { return { ok: false, error: (e && e.message) || String(e) }; }
   });
 
   // Read the clipboard back, so the copy step can tell whether ChatGPT's own
   // Copy button actually put anything there (compare before/after the click).
-  ipcMain.handle("clipboard:read", () => {
+  handle("clipboard:read", () => {
     try { return { ok: true, text: clipboard.readText() || "" }; }
     catch (e) { return { ok: false, text: "", error: (e && e.message) || String(e) }; }
   });
@@ -1879,7 +2475,7 @@ function registerIpc() {
   // Coordinates are CSS pixels in the guest's own viewport (what
   // getBoundingClientRect returns there), NOT screen coordinates — the WebView
   // can stay parked off-screen and still receive this.
-  ipcMain.handle("chat:sendClick", (_e, d) => {
+  handle("chat:sendClick", (_e, d) => {
     try {
       const wc = webContents.fromId(Number(d && d.id));
       if (!wc || wc.isDestroyed()) return { ok: false, error: "no-webcontents" };
@@ -1901,7 +2497,16 @@ function registerIpc() {
   // brings the app window to the front.
   // Append one line describing what the copy step actually saw in the page, so
   // the DOM can be inspected after a real run instead of guessed at.
-  ipcMain.handle("log:copyDiag", (_e, line) => {
+  // Which profile this window is running, so the UI can label itself and the
+  // generator can tell whether it is sharing the desktop with other copies.
+  handle("app:profile", () => ({
+    profile: shownProfile,
+    dir: app.getPath("userData"),
+    multi: !!profileName,
+    sharedDatabase: sharedFolder(),
+  }));
+
+  handle("log:copyDiag", (_e, line) => {
     try {
       fs.appendFileSync(
         path.join(app.getPath("userData"), "copy-diag.log"),
@@ -1911,7 +2516,7 @@ function registerIpc() {
     return { ok: true };
   });
 
-  ipcMain.handle("notify:resumeDone", (_e, d) => {
+  handle("notify:resumeDone", (_e, d) => {
     try {
       const account = ((d && d.account) || "").trim();
       const role = ((d && d.role) || "").trim();
@@ -1943,7 +2548,7 @@ function registerIpc() {
 
   // Open (or focus) the embedded, session-persistent ChatGPT browser (window).
   // Still used by the Application history "Open GPT".
-  ipcMain.handle("chatgpt:open", (_e, opts) => openChatWindow(opts));
+  handle("chatgpt:open", (_e, opts) => openChatWindow(opts));
 
   async function openChatWindow(opts) {
     const fresh = !!(opts && opts.fresh);
@@ -2061,7 +2666,7 @@ function registerIpc() {
   // From the Application history: reopen the exact ChatGPT conversation where
   // this resume was generated (it already contains the app's prompt + the resume
   // result), so the user can continue asking follow-up questions in that thread.
-  ipcMain.handle("application:openGpt", async (_e, id) => {
+  handle("application:openGpt", async (_e, id) => {
     const ap = db.get("SELECT gpt_url FROM applications WHERE id = ?", [id]);
     if (!ap) return { ok: false, error: "Application not found." };
     const url = (ap.gpt_url || "").trim();
@@ -2074,7 +2679,7 @@ function registerIpc() {
 
   // Save the current embedded-browser page (or an explicit URL) as the ChatGPT
   // "Project Home" the browser opens at from now on.
-  ipcMain.handle("chatgpt:saveHome", (_e, url) => {
+  handle("chatgpt:saveHome", (_e, url) => {
     let target = String(url || "").trim();
     if (!target && chatWin && !chatWin.isDestroyed()) {
       try { target = chatWin.webContents.getURL() || ""; } catch (_) {}
@@ -2083,39 +2688,28 @@ function registerIpc() {
     if (!/^https?:\/\//i.test(target)) {
       return { ok: false, error: "Open the ChatGPT page you want (e.g. your Project) first, then save it as Project Home." };
     }
-    db.run(
-      `INSERT INTO prefs (key, value) VALUES ('chatgpt_home_url', ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-      [target]
-    );
+    setPref("chatgpt_home_url", target);
     return { ok: true, url: target };
   });
 
   // Current saved Project Home ("" = the default ChatGPT site).
-  ipcMain.handle("chatgpt:getHome", () => {
-    const row = db.get("SELECT value FROM prefs WHERE key = 'chatgpt_home_url'");
-    return { url: row && row.value ? row.value : "", default: CHAT_HOME_DEFAULT };
-  });
+  handle("chatgpt:getHome", () => ({ url: getPref("chatgpt_home_url") || "", default: CHAT_HOME_DEFAULT }));
 
   // Clear the saved Project Home (revert to the default ChatGPT site).
-  ipcMain.handle("chatgpt:clearHome", () => {
-    db.run("DELETE FROM prefs WHERE key = 'chatgpt_home_url'");
+  handle("chatgpt:clearHome", () => {
+    deletePref("chatgpt_home_url");
     return { ok: true };
   });
 
   // Called from the in-browser "Save as Project Home" button: save the URL the
   // embedded browser is currently showing.
-  ipcMain.handle("chatgpt:saveHomeFromBrowser", () => {
+  handle("chatgpt:saveHomeFromBrowser", () => {
     if (!chatWin || chatWin.isDestroyed()) return { ok: false };
     let url = "";
     try { url = chatWin.webContents.getURL() || ""; } catch (_) {}
     url = url.trim();
     if (!/^https?:\/\//i.test(url)) return { ok: false };
-    db.run(
-      `INSERT INTO prefs (key, value) VALUES ('chatgpt_home_url', ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-      [url]
-    );
+    setPref("chatgpt_home_url", url);
     notify("Project Home saved", url);
     // Let the app update its displayed Project Home value.
     if (mainWindow && mainWindow.webContents && !mainWindow.webContents.isDestroyed()) {
@@ -2125,7 +2719,7 @@ function registerIpc() {
   });
 
   // Is the user already signed in (so V2 won't make them log in again)?
-  ipcMain.handle("chatgpt:signedIn", async () => {
+  handle("chatgpt:signedIn", async () => {
     try {
       const ses = session.fromPartition(CHAT_PARTITION);
       const cookies = await ses.cookies.get({ domain: "chatgpt.com" });
@@ -2141,7 +2735,7 @@ function registerIpc() {
   // job description, then parse it into the same { text, jobRole, … } shape as
   // V1. Only a verified reply resolves ok — so the app never builds the final
   // resume from stale or mismatched clipboard content.
-  ipcMain.handle("chatgpt:awaitClipboard", (_e, d) => {
+  handle("chatgpt:awaitClipboard", (_e, d) => {
     const id = d && d.id;
     const jobRef = d && d.jobRef;
     const promptTrim = String((d && d.prompt) || "").trim();
@@ -2213,7 +2807,7 @@ function registerIpc() {
   // each one's reply can overwrite the other's inside the 600ms polling window.
   // The renderer captures the text in the page itself, so hand it over in
   // process - matched on request_id, which is what keeps two apps apart.
-  ipcMain.handle("chatgpt:submitReply", (_e, d) => {
+  handle("chatgpt:submitReply", (_e, d) => {
     const id = String((d && d.id) || "");
     const text = String((d && d.text) || "");
     if (!id || !text) return { ok: false, reason: "empty" };
@@ -2232,14 +2826,14 @@ function registerIpc() {
   });
 
   // Stop waiting for the clipboard reply (user cancelled / left the tab).
-  ipcMain.handle("chatgpt:cancelClipboard", () => {
+  handle("chatgpt:cancelClipboard", () => {
     [...clipWatches].forEach((w) => w.resolve({ ok: false, canceled: true }));
     clipWatches.clear();
     return { ok: true };
   });
 
   // Cover letter generation (same account data, addressed to the JD's company).
-  ipcMain.handle("coverletter:generate", async (_e, payload) => {
+  handle("coverletter:generate", async (_e, payload) => {
     const keyRow =
       db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' AND is_active = 1 LIMIT 1") ||
       db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' ORDER BY id DESC LIMIT 1");
@@ -2282,7 +2876,7 @@ function registerIpc() {
   });
 
   // Pick a resume PDF and parse it into structured account fields (active key).
-  ipcMain.handle("resume:importFile", async () => {
+  handle("resume:importFile", async () => {
     const res = await dialog.showOpenDialog(mainWindow, {
       title: "Select a resume PDF",
       properties: ["openFile"],
@@ -2313,7 +2907,7 @@ function registerIpc() {
   });
 
   // Applications
-  ipcMain.handle("app:add", (_e, d) => {
+  handle("app:add", (_e, d) => {
     const company = (d.company || "").trim();
     const position = (d.position || "").trim();
     if (!company || !position) {
@@ -2343,18 +2937,18 @@ function registerIpc() {
     return { ok: true };
   });
 
-  ipcMain.handle("app:listAll", () =>
+  handle("app:listAll", () =>
     db.all("SELECT * FROM applications ORDER BY id DESC")
   );
 
-  ipcMain.handle("app:delete", (_e, id) => {
+  handle("app:delete", (_e, id) => {
     db.run("DELETE FROM applications WHERE id = ?", [id]);
     return { ok: true };
   });
 
   // Open an arbitrary http(s) link in the user's default browser (used by the
   // "Open Link" button on an application to reopen the original job post).
-  ipcMain.handle("link:openExternal", async (_e, url) => {
+  handle("link:openExternal", async (_e, url) => {
     const u = String(url || "").trim();
     if (!/^https?:\/\//i.test(u)) return { ok: false, error: "No valid link saved for this application." };
     try { await shell.openExternal(u); return { ok: true }; }
@@ -2362,26 +2956,53 @@ function registerIpc() {
   });
 
   // Wipe ALL application history across every account.
-  ipcMain.handle("app:resetAll", () => {
+  handle("app:resetAll", () => {
     db.run("DELETE FROM applications");
     return { ok: true };
   });
 
 }
 
+// Someone launched this profile again. Bring the copy that owns it forward
+// rather than letting a second process open its database.
+if (gotProfileLock) {
+  app.on("second-instance", () => {
+    try {
+      if (!mainWindow || mainWindow.isDestroyed()) return;
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.show();
+      mainWindow.focus();
+    } catch (_) {}
+  });
+}
+
 app.whenReady().then(async () => {
+  if (!gotProfileLock) return; // another copy already owns this profile
   try {
     // Attribute Windows toast notifications to this app (and use its icon).
-    try { app.setAppUserModelId("com.rgenerator.app"); } catch (_) {}
-    // The unpacked build is a separate sandbox — don't pull in legacy data.
-    if (!isUnpackedBuild) migrateLegacyData();
-    await db.initDb(app.getPath("userData"));
-    // Number any roles saved before ordering existed, so existing accounts read
-    // newest-first straight away rather than only after their next save.
-    backfillWorkOrder();
-    clearLocationCopied();
-    // Settle the connection choice, then apply it before any API calls.
-    seedConnectionMode();
+    // Each profile is its own app as far as Windows is concerned, so their
+    // notifications and taskbar entries don't merge.
+    try { app.setAppUserModelId("com.rgenerator.app" + (profileName ? "." + profileName.replace(/\s+/g, "-") : "")); } catch (_) {}
+    // A profile is a separate sandbox — don't pull in another install's data.
+    if (!profileName) migrateLegacyData();
+    loadLocalPrefs();
+    if (!(await openDatabase())) {
+      app.quit();
+      return;
+    }
+    // Startup housekeeping, saved in one write rather than one per step.
+    db.transaction(() => {
+      moveLocalPrefsOutOfDatabase();
+      // Number any roles saved before ordering existed, so existing accounts read
+      // newest-first straight away rather than only after their next save.
+      backfillWorkOrder();
+      upgradeRetiredModels();
+      clearLocationCopied();
+      // Settle the connection choice, then apply it before any API calls.
+      seedConnectionMode();
+    });
+    watchSharedDatabase();
+    updatePresence();
     applyApiConnection();
     registerIpc();
     createWindow();
@@ -2393,6 +3014,11 @@ app.whenReady().then(async () => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
   });
+});
+
+// Leave the shared folder's list of connected apps.
+app.on("will-quit", () => {
+  if (presence) try { fs.unlinkSync(presence.file); } catch (_) {}
 });
 
 app.on("window-all-closed", () => {

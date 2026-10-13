@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
+import { useDbChanged } from "../lib/useDbChanged";
 import { buildResumeHtml, buildCoverLetterHtml } from "../lib/resumeHtml";
 import { styleThumb } from "../lib/styleThumbs";
 import { STYLES, PRESET_COLORS, FONT_OPTIONS, SIZE_OPTIONS, hasSavedLook, rankStyles } from "../lib/resumeStyles";
@@ -12,6 +13,242 @@ import ConfirmModal from "./ConfirmModal";
 
 // Shown when the user tweaks a style/colour/font but hasn't generated a resume.
 const NO_CONTENT_MSG = "There is no resume content yet. Please generate a resume first.";
+
+// ---- ChatGPT composer helpers (injected into the ChatGPT page) ---------------
+//
+// ChatGPT's message box is a plain <textarea> until someone types markdown or
+// pastes rich text into it by hand; from then on a Lexical rich editor takes
+// over and the textarea stays in the form, hidden, and is no longer what gets
+// sent. Writing to that hidden textarea is what left the visible box empty. So
+// the box is resolved per form: the rich editor whenever the form marks it
+// active, the textarea only while it is actually on screen.
+//
+// Nothing here pastes. ChatGPT turns long PASTED text into a "Pasted text"
+// file; text inserted as typing, or set through the editor, stays the message.
+//
+// Page-side source shared by every composer script; expects `sleep` in scope.
+// findComposer() returns { el, kind, form } for the box to use.
+const COMPOSER_JS =
+  "  const isShown = (el) => { if (!el || !el.isConnected) return false;" +
+  "    const r = el.getBoundingClientRect(); if (r.width < 2 || r.height < 2) return false;" +
+  "    const cs = getComputedStyle(el); return cs.visibility !== 'hidden' && cs.display !== 'none' && Number(cs.opacity) > 0.05; };" +
+  "  const textOf = (el) => (el ? (el.tagName === 'TEXTAREA' ? el.value : el.textContent) : '') || '';" +
+  "  const squash = (s) => String(s || '').replace(/\\s+/g, '');" +
+  "  const onChatPath = () => /\\/c\\/[^/]+/.test(location.pathname || '');" +
+  // A form mid-navigation is inert and about to be replaced.
+  "  const usableForm = (f) => !!f && f.isConnected && !f.closest('[inert]') && !f.hasAttribute('data-saved-conversation-navigation-pending');" +
+  "  const editorIn = (f) => {" +
+  "    const lex = f.querySelector('[data-octane-lexical-root][contenteditable=\"true\"]');" +
+  "    if (lex && f.hasAttribute('data-octane-lexical-active')) return { el: lex, kind: 'lexical' };" +
+  "    const ta = f.querySelector('textarea[data-mobile-composer-prompt],textarea[name=\"prompt\"]');" +
+  "    if (ta && isShown(ta)) return { el: ta, kind: 'textarea' };" +
+  "    if (lex && isShown(lex)) return { el: lex, kind: 'lexical' };" +
+  "    const ce = Array.from(f.querySelectorAll('[contenteditable=\"true\"]')).find(isShown);" +
+  "    if (ce) return { el: ce, kind: ce.__lexicalEditor ? 'lexical' : 'rich' };" +
+  "    const any = Array.from(f.querySelectorAll('textarea')).find(isShown);" +
+  "    return any ? { el: any, kind: 'textarea' } : null;" +
+  "  };" +
+  // Older ChatGPT layouts, for accounts that are still served one.
+  "  const legacyComposer = () => {" +
+  "    for (const sel of ['#prompt-textarea', 'div.ProseMirror[contenteditable=\"true\"]', 'main [contenteditable=\"true\"]', 'form textarea']) {" +
+  "      const el = Array.from(document.querySelectorAll(sel)).find(isShown);" +
+  "      if (el) return { el: el, kind: el.tagName === 'TEXTAREA' ? 'textarea' : (el.__lexicalEditor ? 'lexical' : 'rich'), form: el.closest('form') };" +
+  "    }" +
+  "    return null;" +
+  "  };" +
+  // Right after a new chat is started, the previous chat's form can still be on
+  // the page for a moment. Writing into it would send the prompt into that old
+  // conversation, so the form matching the page (new chat vs. an open chat) is
+  // preferred, and any other only accepted once `late`.
+  "  const composerNow = (late) => {" +
+  "    const forms = Array.from(document.querySelectorAll('form[data-mobile-composer]')).filter(usableForm);" +
+  "    const chat = onChatPath();" +
+  "    const preferred = forms.filter(f => chat ? !f.hasAttribute('data-landing') : f.hasAttribute('data-landing'));" +
+  "    for (const f of (late ? preferred.concat(forms) : preferred)) { const e = editorIn(f); if (e) { e.form = f; return e; } }" +
+  "    if (!document.querySelector('form[data-mobile-composer]')) return legacyComposer();" +
+  "    return null;" +
+  "  };" +
+  "  const findComposer = async (maxMs) => {" +
+  "    const t0 = Date.now();" +
+  "    for (;;) { const c = composerNow(Date.now() - t0 > 3000); if (c) return c;" +
+  "      if (Date.now() - t0 > maxMs) return null; await sleep(200); }" +
+  "  };" +
+  "  const setNative = (el, v) => {" +
+  "    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set.call(el, v);" +
+  "    el.dispatchEvent(new Event('input', { bubbles: true }));" +
+  "  };" +
+  "  const placeCaret = (el, all) => { const s = getSelection(); s.removeAllRanges();" +
+  "    const r = document.createRange(); r.selectNodeContents(el); if (!all) r.collapse(false); s.addRange(r); };" +
+  // One paragraph, lines split by line breaks: valid for Lexical's rich-text
+  // and plain-text setups alike.
+  "  const lexicalState = (t) => { const kids = [];" +
+  "    String(t).replace(/\\r\\n?/g, '\\n').split('\\n').forEach((line, i) => {" +
+  "      if (i) kids.push({ type: 'linebreak', version: 1 });" +
+  "      if (line) kids.push({ type: 'text', version: 1, detail: 0, format: 0, mode: 'normal', style: '', text: line }); });" +
+  "    return JSON.stringify({ root: { type: 'root', version: 1, direction: null, format: '', indent: 0," +
+  "      children: [{ type: 'paragraph', version: 1, direction: null, format: '', indent: 0, children: kids }] } }); };" +
+  "  const setLexical = (el, t) => { const ed = el.__lexicalEditor; if (!ed) return false;" +
+  "    ed.setEditorState(ed.parseEditorState(lexicalState(t))); return true; };" +
+  "  const clearComposer = async (c) => {" +
+  "    const el = c.el;" +
+  "    if (!squash(textOf(el))) return;" +
+  "    if (c.kind === 'textarea') { setNative(el, ''); return; }" +
+  "    el.focus(); placeCaret(el, true);" +
+  "    try { document.execCommand('delete', false, null); } catch (e) {}" +
+  "    await sleep(40);" +
+  "    if (!squash(textOf(el))) return;" +
+  "    if (el.__lexicalEditor) { try { setLexical(el, ''); } catch (e) {} }" +
+  "    else { el.innerHTML = ''; el.dispatchEvent(new Event('input', { bubbles: true })); }" +
+  "    await sleep(40);" +
+  "  };" +
+  // One insertion, and nothing dispatched after it: Lexical already turns the
+  // insertion into its own update, and an extra synthetic input event makes it
+  // apply the text a second time. If the text still didn't land, Lexical's
+  // state is set directly, which needs neither focus nor a selection.
+  "  const fillComposer = async (c, t) => {" +
+  "    const el = c.el;" +
+  "    if (c.kind === 'textarea') { el.focus(); setNative(el, t); try { el.setSelectionRange(t.length, t.length); } catch (e) {} return 'value'; }" +
+  "    el.focus(); placeCaret(el, false); await sleep(60);" +
+  "    try { document.execCommand('insertText', false, t); } catch (e) {}" +
+  "    await sleep(150);" +
+  "    if (squash(textOf(el)) === squash(t)) return 'typed';" +
+  "    if (el.__lexicalEditor) { try { setLexical(el, t); } catch (e) {} await sleep(150);" +
+  "      if (squash(textOf(el)) === squash(t)) return 'editor-state'; }" +
+  "    return 'mismatch';" +
+  "  };" +
+  // Files attached to this message: ChatGPT's own hidden fields, plus any
+  // "Pasted text" chip on screen.
+  "  const attachmentsOf = (c) => { const f = c.form; if (!f) return 0; let n = 0;" +
+  "    f.querySelectorAll('input[name=\"fileAttachments\"],input[name=\"imageAttachments\"]').forEach(i => {" +
+  "      try { const v = JSON.parse(i.value || '[]'); n += Array.isArray(v) ? v.length : 0; } catch (e) { if (i.value) n++; } });" +
+  "    f.querySelectorAll('*').forEach(x => { if (!x.children.length && x !== c.el && !c.el.contains(x) && /^\\s*pasted text\\s*$/i.test(x.textContent || '')) n++; });" +
+  "    return n; };" +
+  "  const dropNewAttachments = async (c, base) => {" +
+  "    for (let i = 0; i < 6 && attachmentsOf(c) > base; i++) {" +
+  "      const btns = Array.from(c.form.querySelectorAll('button,[role=\"button\"]')).filter(b => !c.el.contains(b) && /^(remove|delete)\\b/i.test((b.getAttribute('aria-label') || '').trim()));" +
+  "      if (!btns.length) break;" +
+  "      try { btns[btns.length - 1].click(); } catch (e) {}" +
+  "      await sleep(200);" +
+  "    }" +
+  "    return attachmentsOf(c) <= base;" +
+  "  };" +
+  "  const stopShown = () => !!document.querySelector('[data-composer-submit][data-stop-generating],button[data-testid=\"stop-button\"]');" +
+  // The enabled Send button of the composer's own form — never the Stop button
+  // (that would cancel a reply) or the logged-out sign-in button.
+  "  const findSubmit = (c) => {" +
+  "    const f = c.form || (c.el && c.el.closest('form'));" +
+  "    const ok = (b) => !!b && b.isConnected && !b.disabled && b.getAttribute('aria-disabled') !== 'true'" +
+  "      && !b.hasAttribute('data-stop-generating') && !b.hasAttribute('data-mobile-auth-entry-action') && !/stop/i.test(b.getAttribute('aria-label') || '');" +
+  "    let b = f ? Array.from(f.querySelectorAll('button[data-composer-submit]')).find(ok) : null;" +
+  "    if (!b) b = Array.from(document.querySelectorAll('button[data-testid=\"send-button\"],#composer-submit-button,button[data-testid=\"composer-send-button\"]')).find(ok);" +
+  "    if (!b && f) b = Array.from(f.querySelectorAll('button[type=\"submit\"]')).find(ok)" +
+  "      || Array.from(f.querySelectorAll('button')).find(x => ok(x) && /send/i.test((x.getAttribute('aria-label') || '') + ' ' + (x.getAttribute('data-testid') || '')));" +
+  "    return b || null;" +
+  "  };" +
+  // Sent = ChatGPT is answering, the new chat moved to its own URL, or the box
+  // it was typed into emptied.
+  "  const wasSent = (c) => {" +
+  "    if (!c) return true;" +
+  "    if (!c.stopBefore && stopShown()) return true;" +
+  "    const path = location.pathname || '';" +
+  "    if (path !== c.path && onChatPath() && !/\\/c\\/[^/]+/.test(c.path || '')) return true;" +
+  "    if (!c.el.isConnected) return onChatPath();" +
+  "    return !squash(textOf(c.el));" +
+  "  };" +
+  // Pointer then mouse, then ONE native click(): dispatching a synthetic
+  // 'click' as well would send twice.
+  "  const realClick = (el) => { const o = { bubbles: true, cancelable: true, view: window };" +
+  "    try { el.dispatchEvent(new PointerEvent('pointerdown', o)); } catch (e) {}" +
+  "    el.dispatchEvent(new MouseEvent('mousedown', o));" +
+  "    try { el.dispatchEvent(new PointerEvent('pointerup', o)); } catch (e) {}" +
+  "    el.dispatchEvent(new MouseEvent('mouseup', o));" +
+  "    try { el.click(); } catch (e) { el.dispatchEvent(new MouseEvent('click', o)); } };";
+
+// Find the message box, empty it, put the prompt in, and check that exactly the
+// prompt is there with no file attached. Leaves the box in window.__rgComposer
+// for the scripts below. Returns a JSON report; `ok` false carries `why`.
+const composerFillJs = (text) =>
+  "(async () => {" +
+  "  const sleep = (ms) => new Promise(r => setTimeout(r, ms));" +
+  COMPOSER_JS +
+  "  const text = " + JSON.stringify(String(text)) + ";" +
+  "  const want = squash(text);" +
+  "  window.__rgComposer = null;" +
+  "  let c = await findComposer(12000);" +
+  "  if (!c) return JSON.stringify({ ok: false, why: 'no-composer', path: location.pathname });" +
+  "  const out = { kind: c.kind, lexicalActive: !!(c.form && c.form.hasAttribute('data-octane-lexical-active'))," +
+  "    landing: !!(c.form && c.form.hasAttribute('data-landing')), chars: text.length };" +
+  "  const base = attachmentsOf(c);" +
+  "  let method = '';" +
+  "  for (let attempt = 1; attempt <= 3; attempt++) {" +
+  "    out.attempts = attempt;" +
+  "    const now = composerNow(true);" +
+  "    if (now && now.el !== c.el) { await clearComposer(c); c = now; out.kind = c.kind; out.swapped = (out.swapped || 0) + 1; }" +
+  "    await clearComposer(c);" +
+  "    method = await fillComposer(c, text);" +
+  "    await sleep(250);" +
+  "    const after = composerNow(true);" +
+  "    if (after && after.el !== c.el) { out.swapped = (out.swapped || 0) + 1; await clearComposer(c); c = after; out.kind = c.kind; continue; }" +
+  "    if (attachmentsOf(c) > base) {" +
+  "      out.converted = (out.converted || 0) + 1;" +
+  "      if (!(await dropNewAttachments(c, base))) return JSON.stringify(Object.assign(out, { ok: false, why: 'converted-to-file' }));" +
+  "      continue;" +
+  "    }" +
+  "    if (squash(textOf(c.el)) === want) {" +
+  "      c.path = location.pathname || ''; c.stopBefore = stopShown(); window.__rgComposer = c;" +
+  "      return JSON.stringify(Object.assign(out, { ok: true, method: method, got: textOf(c.el).length }));" +
+  "    }" +
+  "  }" +
+  "  const got = squash(textOf(c.el)); let d = 0;" +
+  "  while (d < got.length && d < want.length && got[d] === want[d]) d++;" +
+  "  return JSON.stringify(Object.assign(out, { ok: false, why: 'verify-mismatch', method: method, got: got.length, want: want.length, at: d," +
+  "    wantAt: want.slice(Math.max(0, d - 30), d + 30), gotAt: got.slice(Math.max(0, d - 30), d + 30) }));" +
+  "})();";
+
+// Where the Send button is, and whether a real click at that point would reach
+// it: on screen, holding still, nothing on top of it, no dialog open.
+const COMPOSER_AIM_JS =
+  "(async () => {" +
+  "  const sleep = (ms) => new Promise(r => setTimeout(r, ms));" +
+  COMPOSER_JS +
+  "  const c = window.__rgComposer;" +
+  "  if (!c || !c.el.isConnected) return JSON.stringify({ ok: false, why: 'no-composer' });" +
+  "  let b = null;" +
+  "  for (let i = 0; i < 25 && !b; i++) { b = findSubmit(c); if (!b) await sleep(200); }" +
+  "  if (!b) return JSON.stringify({ ok: false, why: stopShown() ? 'generating' : 'no-send-button' });" +
+  "  try { b.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}" +
+  "  await sleep(120);" +
+  "  const modal = Array.from(document.querySelectorAll('[role=\"dialog\"],[aria-modal=\"true\"],dialog[open]')).some(isShown);" +
+  "  const a = b.getBoundingClientRect(); await sleep(120); const r = b.getBoundingClientRect();" +
+  "  const steady = Math.abs(a.left - r.left) < 2 && Math.abs(a.top - r.top) < 2;" +
+  "  const x = Math.round(r.left + r.width / 2), y = Math.round(r.top + r.height / 2);" +
+  "  const hit = document.elementFromPoint(x, y);" +
+  "  const covered = !(hit && (hit === b || b.contains(hit)));" +
+  "  const inView = x > 0 && y > 0 && x < (window.innerWidth || 0) && y < (window.innerHeight || 0);" +
+  "  return JSON.stringify({ ok: true, x: x, y: y, steady: steady, modal: modal, covered: covered, inView: inView });" +
+  "})();";
+
+const COMPOSER_SENT_JS =
+  "(() => { const sleep = (ms) => new Promise(r => setTimeout(r, ms));" + COMPOSER_JS +
+  "  return wasSent(window.__rgComposer); })();";
+
+// In-page fallbacks for when the real click didn't send. Both refuse to act on
+// an emptied box, so a slow send is never sent a second time.
+const COMPOSER_CLICK_JS =
+  "(() => { const sleep = (ms) => new Promise(r => setTimeout(r, ms));" + COMPOSER_JS +
+  "  const c = window.__rgComposer; if (!c) return 'no-composer';" +
+  "  if (wasSent(c)) return 'already-sent';" +
+  "  const b = findSubmit(c); if (!b) return stopShown() ? 'generating' : 'no-send-button';" +
+  "  realClick(b); return 'clicked'; })();";
+
+const COMPOSER_ENTER_JS =
+  "(() => { const sleep = (ms) => new Promise(r => setTimeout(r, ms));" + COMPOSER_JS +
+  "  const c = window.__rgComposer; if (!c) return 'no-composer';" +
+  "  if (wasSent(c)) return 'already-sent';" +
+  "  c.el.focus();" +
+  "  const o = { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true };" +
+  "  ['keydown', 'keypress', 'keyup'].forEach(t => c.el.dispatchEvent(new KeyboardEvent(t, o)));" +
+  "  return 'pressed'; })();";
 
 // `active` = this generator's tab is the one on screen. V2 stays mounted for the
 // whole session (its ChatGPT WebView pre-warms in the background), so it uses
@@ -126,6 +363,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const [showInfo, setShowInfo] = useState(false); // "View info" modal (account + target job)
   const [showSaved, setShowSaved] = useState(false); // post-generation modal with the file actions
   const [copiedField, setCopiedField] = useState(""); // which contact field was just copied
+  const [promptCopied, setPromptCopied] = useState(false); // V2: "Copy prompt" acknowledgement
   const [dupConfirm, setDupConfirm] = useState(null); // { role, company } when confirming a duplicate
   const dupResolveRef = useRef(null); // resolves the duplicate-confirm promise
   const [chatUa, setChatUa] = useState(""); // V2: user-agent for the embedded ChatGPT webview
@@ -135,6 +373,10 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   const lastPromptRef = useRef(""); // V2: last prompt, for auto-send / manual re-send
   const lastReqIdRef = useRef(""); // V2: last request_id, for auto-copying the reply
   const autoSentIdRef = useRef(""); // V2: request_id already auto-sent (single-fire guard)
+  const sendingRef = useRef(false); // V2: a prompt is being typed/sent right now
+  const sentPromptRef = useRef(""); // V2: the last prompt that actually went out
+  const [sending, setSending] = useState(false); // V2: same, for the Send prompt button
+  const replyWatchRef = useRef(new Set()); // V2: request_ids whose reply is being watched for
   const pastedRef = useRef(false);
   const busyRef = useRef(false); // guards overlapping PDF renders
 
@@ -308,33 +550,43 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     })();
   }, []);
 
+  // Re-fetch the accounts, keys and prompts, keeping the current selection when
+  // it's still valid and repairing it when it isn't (e.g. the item was deleted).
+  // Returns false when stale() says the result is no longer wanted.
+  const refreshLists = async (stale = () => false) => {
+    const [accs, ks, instrs] = await Promise.all([
+      api().listAccounts(),
+      api().listApiKeys(isV2 ? "v2" : "v1"),
+      api().listInstructions(),
+    ]);
+    if (stale()) return false;
+    const keep = (list, cur, pickActive) => {
+      if ((list || []).some((x) => String(x.id) === String(cur))) return cur;
+      const act = pickActive ? (list || []).find((x) => x.is_active) : null;
+      if (act) return String(act.id);
+      return list && list.length ? String(list[0].id) : "";
+    };
+    setAccounts(accs || []);
+    setAccountId((cur) => keep(accs, cur, false));
+    setKeys(ks || []);
+    setKeyId((cur) => keep(ks, cur, true));
+    setPrompts(instrs || []);
+    setPromptId((cur) => keep(instrs, cur, true));
+    return true;
+  };
+
+  // Another app saved to the shared database.
+  useDbChanged(() => refreshLists());
+
   // The lists above load once on mount, but V2 never unmounts (it stays alive so
   // its ChatGPT WebView keeps pre-warming). Without this, a prompt/account/key
   // added on another tab wouldn't show up here until an app restart. Re-fetch
-  // whenever this tab is opened, keeping the current selection when it's still
-  // valid and repairing it when it isn't (e.g. the item was deleted).
+  // whenever this tab is opened.
   useEffect(() => {
     if (!active) return;
     let cancelled = false;
     (async () => {
-      const [accs, ks, instrs] = await Promise.all([
-        api().listAccounts(),
-        api().listApiKeys(isV2 ? "v2" : "v1"),
-        api().listInstructions(),
-      ]);
-      if (cancelled) return;
-      const keep = (list, cur, pickActive) => {
-        if ((list || []).some((x) => String(x.id) === String(cur))) return cur;
-        const act = pickActive ? (list || []).find((x) => x.is_active) : null;
-        if (act) return String(act.id);
-        return list && list.length ? String(list[0].id) : "";
-      };
-      setAccounts(accs || []);
-      setAccountId((cur) => keep(accs, cur, false));
-      setKeys(ks || []);
-      setKeyId((cur) => keep(ks, cur, true));
-      setPrompts(instrs || []);
-      setPromptId((cur) => keep(instrs, cur, true));
+      if (!(await refreshLists(() => cancelled))) return;
       // Re-read the selected account's saved look. Without this, a template
       // chosen on that account's Set Resume tab would not show up here until the
       // account was re-selected — the account-change effect never fires when the
@@ -838,7 +1090,7 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       // build. reuse:true starts a fresh chat inside the already-loaded tab
       // (no full SPA reload) when possible, falling back to a full load.
       const openPromise = openChatTab({ reuse: true });
-      const { id, prompt, copied, jobRef, target } = await api().chatgptBuildPrompt({
+      const { id, prompt, copied, clipboardSkipped, jobRef, target } = await api().chatgptBuildPrompt({
         accountId: Number(accountId),
         jobDescription: useJd,
         style,
@@ -860,9 +1112,11 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       }
       // The JSON prompt is copied natively in the main process (more reliable
       // than navigator.clipboard here); fall back to the renderer copy if that
-      // fails.
+      // fails. Under a profile the main process deliberately leaves the clipboard
+      // alone — copies running side by side would overwrite each other's prompt —
+      // so don't quietly put it there from here either.
       let onClipboard = !!copied;
-      if (!onClipboard) {
+      if (!onClipboard && !clipboardSkipped) {
         try { await navigator.clipboard.writeText(prompt); onClipboard = true; } catch (_) {}
       }
       // The tab was already opened + loading in parallel above. Auto-send the
@@ -877,10 +1131,10 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       autoSendOnLoad(prompt, id, !!(opened && opened.reused), chatLabel);
       setV2Waiting(true);
       toast(
-        onClipboard
+        onClipboard || clipboardSkipped
           ? "Sending your prompt to ChatGPT automatically… then copy the whole reply."
-          : "Couldn't copy the prompt automatically — copy it manually from the preview, then paste into ChatGPT.",
-        onClipboard ? "info" : "warning"
+          : "Sending your prompt to ChatGPT automatically… (it wasn't put on the clipboard). Then copy the whole reply.",
+        onClipboard || clipboardSkipped ? "info" : "warning"
       );
       // Wait for the verified reply on the clipboard before building anything —
       // the resume is never generated until the matching content is copied back.
@@ -1031,96 +1285,101 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     return { reused: false };
   };
 
-  // Inject the prompt into ChatGPT's composer, wait for the Send button to enable,
-  // then click it — so the user doesn't have to paste + send by hand. Returns a
-  // short status string; falls back silently (the prompt is still on the clipboard
-  // and in the box) if ChatGPT's DOM has changed.
+  // Put THIS instance's prompt on the clipboard, on demand. Under a profile the
+  // app no longer writes it there by itself, because several copies would take
+  // turns overwriting one another and a manual paste would produce whichever
+  // finished last. Nothing in a run needs this — it is for pasting by hand.
+  const copyPromptToClipboard = async () => {
+    const prompt = lastPromptRef.current;
+    if (!prompt) return;
+    let ok = false;
+    try { const r = await api().clipboardWrite(prompt); ok = !!(r && r.ok); } catch (_) {}
+    if (!ok) { try { await navigator.clipboard.writeText(prompt); ok = true; } catch (_) {} }
+    if (ok) {
+      setPromptCopied(true);
+      setTimeout(() => setPromptCopied(false), 1500);
+    } else {
+      toast("Couldn't reach the clipboard.", "warning");
+    }
+  };
+
+  const toastSendFailure = (result) => {
+    if (result === "sent" || result === "busy") return;
+    const msg =
+      result === "converted-to-file"
+        ? "ChatGPT attached the prompt as a file instead of text, so it wasn't sent. Remove the attachment in the ChatGPT tab, then press Send prompt."
+        : result === "no-composer"
+          ? "Couldn't find ChatGPT's message box. Make sure the ChatGPT tab shows a chat, then press Send prompt."
+          : result === "generating"
+            ? "ChatGPT is still answering in this chat. Wait for it to finish, then press Send prompt."
+            : "Couldn't send the prompt to ChatGPT. Press Send prompt in the ChatGPT tab to try again.";
+    toast(msg, "warning");
+  };
+
+  // Type the prompt into ChatGPT's message box as text and send it. One send at
+  // a time: a second press while one is running gets "busy" instead of typing
+  // over it. Every run leaves one line in copy-diag.log saying what it found
+  // and how it ended.
   const autoSend = async (promptText) => {
     const wv = webviewRef.current;
     if (!wv || !promptText) return "no-webview";
-    const js =
-      "(async () => {" +
-      "  const text = " + JSON.stringify(String(promptText)) + ";" +
-      "  const sleep = (ms) => new Promise(r => setTimeout(r, ms));" +
-      "  const findEditor = () => document.querySelector('#prompt-textarea')" +
-      "    || document.querySelector('div.ProseMirror[contenteditable=\"true\"]')" +
-      "    || document.querySelector('main [contenteditable=\"true\"]')" +
-      "    || document.querySelector('form textarea');" +
-      "  const hasText = (el) => el && ((el.tagName==='TEXTAREA' ? el.value : el.textContent) || '').trim().length > 0;" +
-      "  const findSend = () => {" +
-      "    const direct = document.querySelector('button[data-testid=\"send-button\"],#composer-submit-button,button[data-testid=\"composer-send-button\"],button[aria-label=\"Send prompt\"]');" +
-      "    if (direct && !direct.disabled && direct.getAttribute('aria-disabled')!=='true') return direct;" +
-      "    const btns = Array.from(document.querySelectorAll('button'));" +
-      "    return btns.find(b => { const t=((b.getAttribute('data-testid')||'')+' '+(b.getAttribute('aria-label')||'')+' '+(b.id||'')).toLowerCase(); return /send/.test(t) && !b.disabled && b.getAttribute('aria-disabled')!=='true'; }) || null;" +
-      "  };" +
-      // Fire the click EXACTLY ONCE. The pointer/mouse down+up prime ChatGPT's
-      // button state; then a single native click() sends. (Dispatching a synthetic
-      // 'click' AND calling el.click() would double-send.)
-      "  const realClick = (el) => { const o={bubbles:true,cancelable:true,view:window};" +
-      "    try{ el.dispatchEvent(new PointerEvent('pointerdown',o)); }catch(e){}" +
-      "    el.dispatchEvent(new MouseEvent('mousedown',o));" +
-      "    try{ el.dispatchEvent(new PointerEvent('pointerup',o)); }catch(e){}" +
-      "    el.dispatchEvent(new MouseEvent('mouseup',o));" +
-      "    try{ el.click(); }catch(e){ el.dispatchEvent(new MouseEvent('click',o)); } };" +
-      "  const pressEnter = (el) => { el.focus(); ['keydown','keypress','keyup'].forEach(type => el.dispatchEvent(new KeyboardEvent(type,{key:'Enter',code:'Enter',keyCode:13,which:13,bubbles:true,cancelable:true}))); };" +
-      "  let editor = null;" +
-      "  for (let i=0;i<60;i++){ editor = findEditor(); if (editor) break; await sleep(200); }" +
-      "  if (!editor) return 'no-editor';" +
-      "  editor.focus();" +
-      "  const editorText = () => (editor.tagName==='TEXTAREA' ? editor.value : editor.textContent) || '';" +
-      // Wipe whatever is already in the box. ChatGPT's ProseMirror editor won't
-      // reliably replace a selection on insert, so any leftover characters break
-      // the paste — clear it to empty FIRST, then insert the fresh prompt.
-      "  const clearEditor = () => {" +
-      "    editor.focus();" +
-      "    if (editor.tagName === 'TEXTAREA') {" +
-      "      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;" +
-      "      setter.call(editor, '');" +
-      "      editor.dispatchEvent(new Event('input',{bubbles:true}));" +
-      "    } else {" +
-      "      const sel = window.getSelection(); sel.removeAllRanges();" +
-      "      const range = document.createRange(); range.selectNodeContents(editor); sel.addRange(range);" +
-      "      try { document.execCommand('selectAll', false, null); } catch(e){}" +
-      "      try { document.execCommand('delete', false, null); } catch(e){}" +
-      "      if (editorText().trim().length) { editor.innerHTML=''; }" +
-      "      editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'deleteContentBackward'}));" +
-      "    }" +
-      "  };" +
-      "  const insertText = () => {" +
-      "    editor.focus();" +
-      "    if (editor.tagName === 'TEXTAREA') {" +
-      "      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype,'value').set;" +
-      "      setter.call(editor, text);" +
-      "      editor.dispatchEvent(new Event('input',{bubbles:true}));" +
-      "    } else {" +
-      "      const sel = window.getSelection(); sel.removeAllRanges();" +
-      "      const range = document.createRange(); range.selectNodeContents(editor); range.collapse(false); sel.addRange(range);" +
-      "      document.execCommand('insertText', false, text);" +
-      "      editor.dispatchEvent(new InputEvent('input',{bubbles:true,inputType:'insertText',data:text}));" +
-      "    }" +
-      "  };" +
-      // Clear → insert, and verify the box now holds exactly the prompt (ignoring
-      // whitespace the editor may reflow). Retry a few times if it didn't take.
-      "  try {" +
-      "    const want = text.replace(/\\s+/g,'');" +
-      "    for (let attempt=0; attempt<3; attempt++) {" +
-      "      clearEditor(); await sleep(40);" +
-      "      insertText(); await sleep(60);" +
-      "      if (editorText().replace(/\\s+/g,'') === want) break;" +
-      "    }" +
-      "  } catch(e){ return 'insert-error'; }" +
-      "  let btn = null;" +
-      "  for (let i=0;i<60;i++){ btn = findSend(); if (btn) break; await sleep(200); }" +
-      // Send ONCE, then wait up to ~3s to confirm it actually went (the composer
-      // clears on send). Only escalate to a fallback if it clearly did NOT send,
-      // so a single generation never produces two messages / two chats.
-      "  const waitSent = async () => { for(let i=0;i<15;i++){ if(!hasText(editor)) return true; await sleep(200); } return !hasText(editor); };" +
-      "  if (btn) { realClick(btn); if (await waitSent()) return 'sent'; }" +
-      "  pressEnter(editor); if (await waitSent()) return 'sent';" +
-      "  if (btn) { realClick(btn); if (await waitSent()) return 'sent'; }" +
-      "  return hasText(editor) ? 'not-sent' : 'sent';" +
-      "})();";
-    try { return await wv.executeJavaScript(js, true); } catch (_) { return "error"; }
+    if (sendingRef.current) return "busy";
+    sendingRef.current = true;
+    setSending(true);
+    const started = Date.now();
+    const diag = { step: "auto-send", chars: String(promptText).length };
+    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+    const run = async (code, fallback) => {
+      try { return await wv.executeJavaScript(code, true); } catch (_) { return fallback; }
+    };
+    const parse = (s) => { try { return JSON.parse(s) || {}; } catch (_) { return {}; } };
+    const sent = async () => {
+      for (let i = 0; i < 15; i++) {
+        if (await run(COMPOSER_SENT_JS, false)) return true;
+        await sleep(200);
+      }
+      return false;
+    };
+    const finish = (result, sentBy) => {
+      diag.result = result;
+      if (sentBy) diag.sentBy = sentBy;
+      if (result === "sent") sentPromptRef.current = String(promptText);
+      return result;
+    };
+    try {
+      const fill = parse(await run(composerFillJs(promptText), "{}"));
+      diag.fill = fill;
+      if (!fill.ok) return finish(fill.why || "fill-failed");
+
+      // A real click first: it is what a person does, so ChatGPT treats it as one.
+      const aim = parse(await run(COMPOSER_AIM_JS, "{}"));
+      diag.aim = aim;
+      if (!aim.ok && aim.why === "generating") {
+        return (await run(COMPOSER_SENT_JS, false)) ? finish("sent", "late") : finish("generating");
+      }
+      if (aim.ok && !aim.modal && !aim.covered && aim.steady && aim.inView) {
+        let wcId = 0;
+        try { wcId = wv.getWebContentsId(); } catch (_) {}
+        let click = null;
+        if (wcId) { try { click = await api().chatSendClick({ id: wcId, x: aim.x, y: aim.y }); } catch (_) {} }
+        diag.trustedClick = !!(click && click.ok);
+        if (diag.trustedClick && (await sent())) return finish("sent", "trusted-click");
+      }
+      // Each fallback first checks the message hasn't already gone, so a slow
+      // send is never sent twice.
+      for (const [name, code] of [["click", COMPOSER_CLICK_JS], ["enter", COMPOSER_ENTER_JS], ["click-again", COMPOSER_CLICK_JS]]) {
+        const r = await run(code, "error");
+        diag[name] = r;
+        if (r === "already-sent") return finish("sent", "late");
+        if (await sent()) return finish("sent", name);
+      }
+      return finish("not-sent");
+    } finally {
+      diag.ms = Date.now() - started;
+      logCopyDiag(diag);
+      sendingRef.current = false;
+      setSending(false);
+    }
   };
 
   // Rename the current ChatGPT conversation to "Company - Job Title" using
@@ -1521,14 +1780,52 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       // Still writing? While a reply streams, ChatGPT shows a stop control in place
       // of send. Nothing is decided until that goes away.
       "  const streaming = () => !!document.querySelector('button[data-testid=\"stop-button\"],button[aria-label*=\"Stop\"],button[aria-label*=\"stop\"]');" +
+      // --- The reply, read from ChatGPT's own API ------------------------------
+      // The route that needs neither the DOM nor the clipboard. It gets the whole
+      // message, which the page cannot give — CodeMirror keeps only the lines
+      // scrolled into view, so a long block is never there in one piece — and it
+      // takes nothing from the system clipboard, the single slot that copies of the
+      // app running side by side overwrite for each other.
+      //
+      // Same-origin fetch inside the ChatGPT tab, with the session token the page
+      // itself uses — the pattern the chat rename already relies on. A reply that
+      // is still streaming simply won't parse yet, so nothing extra is needed to
+      // tell "finished" from "in progress".
+      "  const convId = () => { const m = location.pathname.match(/\\/c\\/([^/?#]+)/); return m ? m[1] : ''; };" +
+      "  let tok = '';" +
+      "  const token = async () => { if(tok) return tok;" +
+      "    try{ const s = await fetch('/api/auth/session',{credentials:'include'}).then(r => r.json()); tok = (s && s.accessToken) || ''; }catch(e){}" +
+      "    return tok; };" +
+      "  const fromApi = async () => {" +
+      "    const id = convId(); if(!id) return null;" +
+      "    const t = await token(); if(!t) return null;" +
+      "    let j = null;" +
+      "    try{ j = await fetch('/backend-api/conversation/' + id, { credentials:'include', headers: { Authorization: 'Bearer ' + t } })" +
+      "      .then(r => r.ok ? r.json() : null); }catch(e){ return null; }" +
+      "    if(!j || !j.mapping) return null;" +
+      "    let hit = null;" +
+      "    for(const k in j.mapping){" +
+      "      const m = j.mapping[k] && j.mapping[k].message;" +
+      "      if(!m || !m.author || m.author.role !== 'assistant') continue;" +
+      "      const c = m.content || {};" +
+      "      let t2 = '';" +
+      "      if(Array.isArray(c.parts)) t2 = c.parts.filter(p => typeof p === 'string').join('\\n');" +
+      "      else if(typeof c.text === 'string') t2 = c.text;" +
+      "      if(!t2) continue;" +
+      "      const cand = findJson(t2);" +
+      "      if(cand) hit = cand;" +
+      "    }" +
+      "    return hit;" +
+      "  };" +
       "  const deadline = Date.now() + " + Math.max(5000, Number(budgetMs) || 0) + ";" +
       // Three unchanged polls - 1.2s - before calling the reply settled. This was
       // six, to stop a reasoning model's mid-answer pause being read as
       // "finished", but a premature click is now nearly free: the text just
       // fails to parse and the next attempt follows a second later.
       "  const SETTLE = 3;" +
-      "  let idOnPage = false, lastChars = -1, settled = 0;" +
+      "  let idOnPage = false, lastChars = -1, settled = 0, turn = 0;" +
       "  while (Date.now() < deadline) {" +
+      "    turn++;" +
       // Take the LAST block that yields a valid object: the prompt echoed above
       // carries the same id, and it comes first in document order.
       "    let text = null, from = '';" +
@@ -1542,6 +1839,15 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
       "    if(text){" +
       "      const d = await addButton(facts()); d.source = from; d.chars = text.length;" +
       "      return JSON.stringify({ text: text, diag: d });" +
+      "    }" +
+      // Not in the DOM (or not whole) — ask the API. Every fifth poll, so this is
+      // about one request every two seconds rather than one per 400ms.
+      "    if(turn % 5 === 1){" +
+      "      const viaApi = await fromApi();" +
+      "      if(viaApi){" +
+      "        const d = facts(); d.source = 'backend-api'; d.chars = viaApi.length; d.button = 'SKIPPED';" +
+      "        return JSON.stringify({ text: viaApi, diag: d });" +
+      "      }" +
       "    }" +
       // The REPLY is on the page, has stopped changing, and still will not parse.
       // That is the CodeMirror case: only the lines currently scrolled into view
@@ -1621,7 +1927,16 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
   // driven through the browser and can refuse. So: scan; if the text won't
   // assemble, click Copy for real and read the clipboard back; repeat with the
   // time that's left.
+  // One watcher per request: pressing Send prompt again while the first one is
+  // still waiting must not start a second, which would click Copy and deliver
+  // the same reply twice.
   const autoCopyReply = async (reqId) => {
+    if (!reqId || replyWatchRef.current.has(reqId)) return;
+    replyWatchRef.current.add(reqId);
+    try { await watchForReply(reqId); } finally { replyWatchRef.current.delete(reqId); }
+  };
+
+  const watchForReply = async (reqId) => {
     const wv = webviewRef.current;
     if (!wv || !reqId) return;
     const deadline = Date.now() + 15 * 60 * 1000;
@@ -1691,8 +2006,10 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
     if (text && text.trim()) {
       // The DOM gave up the text without needing the button. Click it anyway —
       // it is what marks the reply as taken in the ChatGPT tab, and the recorded
-      // outcome is how we know the click works at all on the live page.
-      if (!clicks && diag) {
+      // outcome is how we know the click works at all on the live page. Skipped
+      // when the API supplied the reply: there is no copy to mark, and a click
+      // that nothing depends on is one more thing to go wrong.
+      if (!clicks && diag && diag.source !== "backend-api") {
         try { diag.click = await clickCopyButton(diag); }
         catch (e) { diag.click = { attempted: false, reason: (e && e.message) || String(e) }; }
       }
@@ -1742,11 +2059,16 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
         // Select the high-reasoning model BEFORE the prompt goes in — switching
         // afterwards would not affect a message already sent. Best-effort: if the
         // picker can't be driven, send anyway on whatever model is selected.
-        try { await setReasoningHigh(); } catch (_) {}
-        const r = await autoSend(promptText);
-        if (r !== "sent") {
-          toast("Couldn't auto-send — paste the prompt (Ctrl+V) in the ChatGPT tab and send it.", "warning");
+        // Send prompt may have been pressed during the settle delay. Let that
+        // run finish, and don't send again if it got the prompt out — that
+        // would put the same prompt in the chat twice.
+        for (let i = 0; i < 360 && sendingRef.current; i++) await new Promise((res) => setTimeout(res, 250));
+        let r = "sent";
+        if (sentPromptRef.current !== promptText) {
+          try { await setReasoningHigh(); } catch (_) {}
+          r = await autoSend(promptText);
         }
+        if (r !== "sent") toastSendFailure(r);
         // Set the chat's name right after the message is sent (the conversation
         // now exists) so it shows as the original name before ChatGPT auto-titles.
         if (chatLabel) { try { renameChat(chatLabel); } catch (_) {} }
@@ -2436,8 +2758,8 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
             <div className="v2-wait-text">
               <strong>Waiting for your ChatGPT reply…</strong>
               <span className="muted small">
-                In the ChatGPT tab: paste the prompt (Ctrl+V), send it, then
-                select &amp; copy the entire reply. This page detects it automatically.
+                The prompt is typed into ChatGPT as text and sent. If it didn't go out,
+                press Send prompt in the ChatGPT tab. The reply is detected automatically.
               </span>
             </div>
             <button className="btn small" onClick={cancelV2}>Cancel</button>
@@ -2500,16 +2822,29 @@ export default function ResumeGenerator({ variant = "v1", active = true }) {
           >
             <div className="chat-embed-bar">
               <span className="muted small">
-                Paste the prompt (Ctrl+V), send it, then select &amp; copy the whole reply — the app detects it automatically.
+                The prompt is sent and the reply read back automatically. Use Copy prompt only to paste one by hand.
               </span>
               <span className="resume-tabs-spacer" />
               <button
                 className="btn small"
-                onClick={async () => { await autoSend(lastPromptRef.current); autoCopyReply(lastReqIdRef.current); }}
-                disabled={!lastPromptRef.current}
+                onClick={async () => {
+                  const r = await autoSend(lastPromptRef.current);
+                  if (r === "busy") return;
+                  if (r !== "sent") toastSendFailure(r);
+                  autoCopyReply(lastReqIdRef.current);
+                }}
+                disabled={!lastPromptRef.current || sending}
                 title="Type the last prompt into ChatGPT, send it, and auto-copy the reply"
               >
-                Send prompt
+                {sending ? "Sending…" : "Send prompt"}
+              </button>
+              <button
+                className="btn small"
+                onClick={copyPromptToClipboard}
+                disabled={!lastPromptRef.current}
+                title="Put this instance's prompt on the clipboard, for pasting by hand"
+              >
+                {promptCopied ? "Copied ✓" : "Copy prompt"}
               </button>
               <button className="btn small" onClick={() => openChatTab()} title="Reload the ChatGPT tab at your Project Home">Reload</button>
               <button className="btn small" onClick={saveCurrentPageAsHome} title="Save the current page as your Project Home">Save as Project Home</button>

@@ -38,17 +38,30 @@ module.exports = async function (context) {
     return;
   }
 
+  // rcedit first; if it fails, the same resource update made directly through
+  // the Win32 API from PowerShell — rcedit started failing on the ~180 MB
+  // Electron exe ("Unable to commit changes") while the direct calls still work.
+  const stampers = [
+    () => execFileSync(rcedit, [exe, "--set-icon", ico], { stdio: "ignore" }),
+    () => execFileSync("powershell.exe", [
+      "-NoProfile", "-ExecutionPolicy", "Bypass",
+      "-File", path.join(__dirname, "set-icon.ps1"), "-Exe", exe, "-Ico", ico,
+    ], { stdio: "ignore" }),
+  ];
+
   let applied = false;
   let lastErr;
-  for (let attempt = 1; attempt <= 10; attempt++) {
-    try {
-      execFileSync(rcedit, [exe, "--set-icon", ico], { stdio: "ignore" });
-      applied = true;
-      break;
-    } catch (e) {
-      lastErr = e;
-      await sleep(2000); // let antivirus release the lock, then retry
+  for (let attempt = 1; attempt <= 10 && !applied; attempt++) {
+    for (const stamp of stampers) {
+      try {
+        stamp();
+        applied = true;
+        break;
+      } catch (e) {
+        lastErr = e;
+      }
     }
+    if (!applied) await sleep(2000); // let antivirus release the lock, then retry
   }
 
   cleanupTmp();

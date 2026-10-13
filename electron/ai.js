@@ -96,12 +96,43 @@ async function checkProxy(cfg) {
 }
 
 const MODELS = {
-  gemini: "gemini-2.5-flash-lite",
+  gemini: "gemini-3.5-flash-lite",
   openai: "gpt-4o-mini",
   anthropic: "claude-3-5-sonnet-20241022",
 };
 
+// Gemini models Google has shut down or closed to new users ("This model ... is
+// no longer available to new users"), mapped to their current replacements. A
+// saved key that still names one is upgraded on the fly (and in the DB at start).
+const RETIRED_GEMINI_MODELS = {
+  "gemini-2.5-flash-lite": "gemini-3.5-flash-lite",
+  "gemini-2.5-flash": "gemini-3.6-flash",
+  "gemini-2.5-pro": "gemini-pro-latest",
+  "gemini-2.0-flash": "gemini-3.6-flash",
+  "gemini-2.0-flash-001": "gemini-3.6-flash",
+  "gemini-2.0-flash-lite": "gemini-3.5-flash-lite",
+  "gemini-2.0-flash-lite-001": "gemini-3.5-flash-lite",
+  "gemini-1.5-flash": "gemini-3.6-flash",
+  "gemini-1.5-pro": "gemini-pro-latest",
+};
+
+// The Gemini model to actually call: the key's choice (or the default), with a
+// retired id swapped for its replacement.
+function geminiModel(model) {
+  const id = (model || "").trim().replace(/^models\//, "") || MODELS.gemini;
+  return RETIRED_GEMINI_MODELS[id] || id;
+}
+
+// A 4xx saying the model itself is gone or unknown (not a key/quota problem), so
+// another model may well work.
+function isModelGone(e) {
+  if (!e || e.status >= 500) return false;
+  return e.status === 404 || /no longer available|not found|not supported|deprecated|retired/i.test(e.message || "");
+}
+
 const STYLE_GUIDES = {
+  network:
+    "Style: Network — modern and scannable. Write a 3-4 sentence Professional Summary. Group the Skills section into 6-10 clear categories, each as `**Category:** comma-separated items` on its own line (e.g. Programming Languages, Frontend Engineering, Backend Engineering, Database & Data Engineering, Cloud & Infrastructure, Testing & Quality). Only if the candidate information mentions spoken languages or personal interests, add a `## Languages` section with one `- Language (Proficiency)` bullet each and a `## Interests` section with one short bullet per interest; never invent either.",
   professional:
     "Style: Professional — formal tone, concise, conventional section order, no flourishes.",
   modern:
@@ -579,7 +610,9 @@ function buildPromptJson(personal, work, education, projects, jobDescription, st
     },
   };
 
-  return { prompt: JSON.stringify(promptObj, null, 2), jobRef };
+  // Compact: ChatGPT turns long composer input into a file attachment, and the
+  // indentation alone is a large share of the length.
+  return { prompt: JSON.stringify(promptObj), jobRef };
 }
 
 // Pull a JSON ARRAY out of a model response that may be fenced or padded.
@@ -628,7 +661,7 @@ async function refineV2Prompt({ promptText, apiKey, model }) {
 
   // Splice ONLY the refined instructions back; everything else is untouched.
   canonical.instructions = arr.map((x) => String(x));
-  return JSON.stringify(canonical, null, 2);
+  return JSON.stringify(canonical);
 }
 
 // Parse + verify a Generate V2 reply from the clipboard. Returns:
@@ -681,8 +714,20 @@ function parseResumeJson(raw, expected) {
   };
 }
 
+// Call the key's Gemini model; if Google has since retired it, retry once on the
+// default model rather than failing outright.
 async function callGemini(apiKey, prompt, model, opts = {}) {
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model || MODELS.gemini}:generateContent?key=${encodeURIComponent(
+  const m = geminiModel(model);
+  try {
+    return await requestGemini(apiKey, prompt, m, opts);
+  } catch (e) {
+    if (m === MODELS.gemini || !isModelGone(e)) throw e;
+    return requestGemini(apiKey, prompt, MODELS.gemini, opts);
+  }
+}
+
+async function requestGemini(apiKey, prompt, model, opts = {}) {
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${encodeURIComponent(
     apiKey
   )}`;
   const res = await uFetch(url, {
@@ -1041,15 +1086,15 @@ async function callGeminiPdf(apiKey, base64, prompt, model) {
   );
 }
 
-// PDF import via Gemini, resilient to a single model being overloaded (503) or
-// rate-limited (429): try the key's model first (if any), then a chain of known-
-// good document models, moving on ONLY for transient errors. A non-transient
-// error (bad key, bad request) stops immediately.
+// PDF import via Gemini, resilient to a single model being overloaded (503),
+// rate-limited (429) or retired: try the key's model first (if any), then a chain
+// of known-good document models, moving on ONLY for those errors. Anything else
+// (bad key, bad request) stops immediately.
 async function callGeminiPdfWithFallback(apiKey, base64, prompt, model) {
   const chain = [];
   const add = (m) => { if (m && !chain.includes(m)) chain.push(m); };
-  add((model || "").trim() || undefined);
-  ["gemini-2.5-flash", "gemini-flash-latest", "gemini-2.5-flash-lite", "gemini-2.5-pro"].forEach(add);
+  if ((model || "").trim()) add(geminiModel(model));
+  ["gemini-3.6-flash", "gemini-flash-latest", "gemini-3.5-flash-lite", "gemini-flash-lite-latest"].forEach(add);
 
   let lastErr;
   for (const m of chain) {
@@ -1057,8 +1102,8 @@ async function callGeminiPdfWithFallback(apiKey, base64, prompt, model) {
       return await callGeminiPdf(apiKey, base64, prompt, m);
     } catch (e) {
       lastErr = e;
-      if (!isTransient(e)) throw e; // bad key / bad request → don't keep trying
-      // transient (overloaded / rate-limited) → try the next model
+      if (!isTransient(e) && !isModelGone(e)) throw e; // bad key / bad request → don't keep trying
+      // transient (overloaded / rate-limited) or retired model → try the next model
     }
   }
   throw lastErr;
@@ -1140,5 +1185,5 @@ async function parseResumeFile({ provider, apiKey, model, base64 }) {
 module.exports = {
   generateResume, generateCoverLetter, parseResumeFile, setProxy, checkProxy,
   buildPrompt, parseResumeMarkdown, buildPromptJson, parseResumeJson, jobRefFor,
-  refineV2Prompt, extractJdTarget, extractJobPost,
+  refineV2Prompt, extractJdTarget, extractJobPost, RETIRED_GEMINI_MODELS,
 };

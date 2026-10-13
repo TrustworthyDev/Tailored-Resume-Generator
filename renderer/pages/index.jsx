@@ -30,6 +30,11 @@ const TOAST_ICONS = {
 export default function Home() {
   const [tab, setTab] = useState("applications");
   const [licensed, setLicensed] = useState(null); // null = checking
+  // Which data profile this window owns. Shown in the sidebar so two or three
+  // copies running side by side are never mistaken for each other.
+  const [profile, setProfile] = useState("");
+  // Path of the database this app shares with other apps ("" = its own).
+  const [sharedDb, setSharedDb] = useState("");
   const [toast, setToast] = useState(null); // { message, type }
   const [sidebarOpen, setSidebarOpen] = useState(true);
   // Startup overlay: the embedded ChatGPT tab pre-warms in the background as
@@ -38,6 +43,10 @@ export default function Home() {
 
   useEffect(() => {
     api().licenseStatus().then((s) => setLicensed(!!(s && s.activated)));
+    api().profileInfo().then((p) => {
+      setProfile((p && p.profile) || "");
+      setSharedDb((p && p.sharedDatabase) || "");
+    });
     // Apply the saved theme as early as possible so the UI never flashes the
     // wrong palette before Settings is opened.
     api().getPref("theme").then((r) => applyTheme(r && r.value));
@@ -106,6 +115,16 @@ export default function Home() {
         {sidebarOpen ? "‹" : "›"}
       </button>
       <aside className="sidebar">
+        {profile && (
+          <div className="profile-badge" title={`Data profile "${profile}" — its own database, ChatGPT session and settings`}>
+            {profile}
+          </div>
+        )}
+        {sharedDb && (
+          <div className="profile-badge shared-db-badge" title={`Shared database: ${sharedDb}`}>
+            Shared database
+          </div>
+        )}
         <nav>
           {TABS.map((t) => (
             <button

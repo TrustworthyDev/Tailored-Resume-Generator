@@ -10,9 +10,13 @@ let db = null;
 let dbPath = null;
 let SQL = null; // the loaded sql.js module, reused to re-open DBs on import
 
-// Full schema (idempotent). Used on first init and after a database import so
-// an imported file always has every table this app expects.
-const SCHEMA = `
+// A shared database is two files: settings and history (see "Settings and
+// history files" below). An app's own database is one file, and these are null.
+let historyPath = null; // the shared history.sqlite
+let historyDb = null;   // the sql.js database holding it, attached to db as "history"
+
+// Settings tables: everything except the application history (idempotent).
+const SETTINGS_SCHEMA = `
     CREATE TABLE IF NOT EXISTS api_keys (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       name       TEXT,
@@ -85,6 +89,42 @@ const SCHEMA = `
       created_at  TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS sessions (
+      id         INTEGER PRIMARY KEY AUTOINCREMENT,
+      start_time TEXT,
+      end_time   TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS prefs (
+      key   TEXT PRIMARY KEY,
+      value TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS proxy (
+      id       INTEGER PRIMARY KEY CHECK (id = 1),
+      url      TEXT,
+      port     TEXT,
+      username TEXT,
+      password TEXT,
+      enabled  INTEGER DEFAULT 0
+    );
+
+    CREATE TABLE IF NOT EXISTS proxies (
+      id        INTEGER PRIMARY KEY AUTOINCREMENT,
+      name      TEXT,
+      url       TEXT,
+      port      TEXT,
+      username  TEXT,
+      password  TEXT,
+      is_active INTEGER DEFAULT 0,
+      created_at TEXT
+    );
+`;
+
+// Application history tables. An app's own database keeps them beside the
+// settings tables; a shared database keeps them in a file of their own.
+const HISTORY_TABLES = ["applications", "job_posts"];
+const HISTORY_SCHEMA = `
     CREATE TABLE IF NOT EXISTS applications (
       id         INTEGER PRIMARY KEY AUTOINCREMENT,
       account_id INTEGER,
@@ -123,62 +163,92 @@ const SCHEMA = `
       source       TEXT,
       created_at   TEXT
     );
-
-    CREATE TABLE IF NOT EXISTS sessions (
-      id         INTEGER PRIMARY KEY AUTOINCREMENT,
-      start_time TEXT,
-      end_time   TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS prefs (
-      key   TEXT PRIMARY KEY,
-      value TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS proxy (
-      id       INTEGER PRIMARY KEY CHECK (id = 1),
-      url      TEXT,
-      port     TEXT,
-      username TEXT,
-      password TEXT,
-      enabled  INTEGER DEFAULT 0
-    );
-
-    CREATE TABLE IF NOT EXISTS proxies (
-      id        INTEGER PRIMARY KEY AUTOINCREMENT,
-      name      TEXT,
-      url       TEXT,
-      port      TEXT,
-      username  TEXT,
-      password  TEXT,
-      is_active INTEGER DEFAULT 0,
-      created_at TEXT
-    );
 `;
 
-async function initDb(userDataDir) {
-  SQL = await initSqlJs({
-    locateFile: (file) =>
-      path.join(__dirname, "..", "node_modules", "sql.js", "dist", file),
-  });
+// Full schema (idempotent). Used on first init and after a database import so
+// an imported file always has every table this app expects.
+const SCHEMA = SETTINGS_SCHEMA + HISTORY_SCHEMA;
 
-  // Kept in step with DB_FILE in main.js, which migrates it across renames.
-  dbPath = path.join(userDataDir, "rgenerator.sqlite");
+// The history tables, created in the attached history file of a shared database.
+const ATTACHED_HISTORY_SCHEMA = HISTORY_SCHEMA.replace(
+  /CREATE TABLE IF NOT EXISTS /g,
+  "CREATE TABLE IF NOT EXISTS history."
+);
 
-  if (fs.existsSync(dbPath)) {
-    db = new SQL.Database(fs.readFileSync(dbPath));
-  } else {
-    db = new SQL.Database();
+// Opens the app's own database in userDataDir, or the file at opts.filePath —
+// a database shared with other apps on this PC (see openAt for the options).
+async function initDb(userDataDir, opts = {}) {
+  if (!SQL) {
+    SQL = await initSqlJs({
+      locateFile: (file) =>
+        path.join(__dirname, "..", "node_modules", "sql.js", "dist", file),
+    });
   }
-  // Remember what we just read, so the schema work below isn't mistaken for
-  // another process's write and reloaded away.
-  stampFile();
-
-  db.run(SCHEMA);
-
-  migrate();
-  persist();
+  // Kept in step with DB_FILE in main.js, which migrates it across renames.
+  openAt(opts.filePath || path.join(userDataDir, "rgenerator.sqlite"), opts);
   return db;
+}
+
+// Switch to the database at filePath, creating it if it doesn't exist.
+//   opts.historyPath: keep the application history in this second file
+//   opts.seedFrom:    a one-file database to start from when filePath doesn't
+//                     exist yet (sharing an app's own database); its history
+//                     moves into opts.historyPath
+//   opts.shared:      save under the lock (other apps use these files too)
+//   opts.watch:       notice other apps' saves
+// The schema work runs under the lock, after reading the files, so a shared
+// database another app is saving to can't be overwritten with a stale copy.
+// On failure the previous database stays open.
+function openAt(filePath, opts = {}) {
+  if (depth > 0) throw new Error("Can't switch databases in the middle of a save.");
+  const before = { db, historyDb, dbPath, historyPath, fileStamp, historyStamp, savedSettings, savedHistory, locking };
+  stopWatching();
+  db = historyDb = null;
+  dbPath = filePath;
+  historyPath = opts.historyPath || null;
+  fileStamp = historyStamp = "";
+  savedSettings = savedHistory = null;
+  locking = !!opts.shared;
+  opening = true;
+  try {
+    transaction(() => {
+      touch(); // reads the files that exist
+      if (!db) {
+        if (historyPath && fs.existsSync(historyPath)) {
+          throw new Error(`Found ${path.basename(historyPath)} without ${path.basename(dbPath)} in ${path.dirname(dbPath)}.`);
+        }
+        connect(opts.seedFrom ? fs.readFileSync(opts.seedFrom) : null, null);
+      }
+      ensureSchema();
+      dirty = true;
+    });
+  } catch (e) {
+    closeConnection();
+    ({ db, historyDb, dbPath, historyPath, fileStamp, historyStamp, savedSettings, savedHistory, locking } = before);
+    if (watchWanted) startWatching();
+    throw e;
+  } finally {
+    opening = false;
+  }
+  try { if (before.db) before.db.close(); } catch (_) {}
+  try { if (before.historyDb) before.historyDb.close(); } catch (_) {}
+  watchWanted = !!opts.watch;
+  if (watchWanted) startWatching();
+  return db;
+}
+
+// Every table this app expects, in the right file, brought up to date. A
+// shared database keeps the history tables in its history file — including any
+// the settings file arrived with.
+function ensureSchema() {
+  if (historyDb) {
+    db.run(SETTINGS_SCHEMA);
+    moveHistoryOut();
+    db.run(ATTACHED_HISTORY_SCHEMA);
+  } else {
+    db.run(SCHEMA);
+  }
+  migrate();
 }
 
 // Bring databases created by earlier versions up to the multi-account schema.
@@ -379,50 +449,451 @@ function migrate() {
 }
 
 // ---- Multi-instance safety --------------------------------------------------
-// Several copies of the app can be open at once, and each one holds the whole
-// database in memory and rewrites the ENTIRE file on every change. Left alone,
-// whichever copy saved last would wipe everything the other had done since it
-// started. So we fingerprint the file after each of our own writes, and re-read
-// it before any query if the fingerprint no longer matches — meaning another
-// copy wrote in the meantime. Every mutation persists immediately, so our memory
-// and the file agree except in that window; re-reading then applying our
-// statement on top gives each copy's work a chance to land.
+// Several apps can use one database file at once (a database shared between
+// apps on this PC), and each one holds the whole database in memory and
+// rewrites the ENTIRE file on every change. Left alone, whichever app saved
+// last would wipe everything the other had done since it started. So:
+//   - we fingerprint the file after each of our own writes, and re-read it
+//     before any query if the fingerprint no longer matches — meaning another
+//     app wrote in the meantime;
+//   - every change runs as a transaction: take the lock file, re-read the
+//     database if another app changed it, apply the change, save, release. A
+//     transaction can hold several statements (a read, then a write that
+//     depends on it) and saves once, at its end;
+//   - a save writes a temp file and renames it over the database, so a reader
+//     sees the old file or the new one, never a half-written one.
+// The lock is only taken for a shared database: an app's own database belongs
+// to that app alone (one process per data folder), so it saves without one.
 let fileStamp = "";
+let historyStamp = "";
+let savedSettings = null; // the bytes last read or written, so an unchanged
+let savedHistory = null;  // file isn't rewritten
+let locking = false;     // true for a shared database
+let depth = 0;           // nesting of transaction() calls
+let dirty = false;       // a statement ran since the transaction began
+let touched = false;     // this transaction has taken the lock and re-read the file
+let lockToken = null;    // set while we hold the lock
+let opening = false;     // inside openAt: a missing history file is created, not an error
 
-function stampFile() {
+const LOCK_WAIT_MS = 5000;   // how long a save waits for another app's save
+const LOCK_STALE_MS = 10000; // a lock this old was left behind by a crash
+const LOCK_RETRY_MS = 50;
+
+// Block this thread for ms. Saves are synchronous, so waiting for the lock is too.
+const pause = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+
+const stampOf = (st) => `${st.mtimeMs}:${st.size}`; // size too: two saves can share a millisecond
+
+function stampFiles() {
+  try { fileStamp = stampOf(fs.statSync(dbPath)); } catch (_) { fileStamp = ""; }
+  historyStamp = "";
+  if (historyPath) try { historyStamp = stampOf(fs.statSync(historyPath)); } catch (_) {}
+}
+
+// A file's bytes and their fingerprint, read through one handle so a save
+// landing in between can't pair the old fingerprint with the new contents.
+function readStamped(file) {
+  const fd = fs.openSync(file, "r");
   try {
-    const st = fs.statSync(dbPath);
-    // Size as well as mtime: two writes inside the same millisecond are
-    // indistinguishable by timestamp alone.
-    fileStamp = `${st.mtimeMs}:${st.size}`;
-  } catch (_) {
-    fileStamp = "";
+    const stamp = stampOf(fs.fstatSync(fd));
+    return { bytes: fs.readFileSync(fd), stamp };
+  } finally {
+    fs.closeSync(fd);
   }
 }
 
-function syncFromDisk() {
-  if (!db || !dbPath) return;
-  let st = null;
-  try { st = fs.statSync(dbPath); } catch (_) { return; } // no file yet — nothing to sync
-  const now = `${st.mtimeMs}:${st.size}`;
-  if (now === fileStamp) return;
-  let fresh = null;
-  try { fresh = new SQL.Database(fs.readFileSync(dbPath)); } catch (_) { return; }
-  const previous = db;
-  db = fresh;
-  fileStamp = now;
-  try { previous.close(); } catch (_) {}
+// Re-read the files if another app changed them since we last read or wrote
+// them. strict: throw when they can't be read, instead of carrying on with
+// what's in memory — a save must never write over a change it couldn't load.
+// Returns true when it reloaded.
+function reload(strict) {
+  if (!dbPath) return false;
+  let st, hst = null;
+  try { st = fs.statSync(dbPath); } catch (e) {
+    if (e.code === "ENOENT" || !strict) return false; // no file yet — nothing to read
+    throw e;
+  }
+  if (historyPath) {
+    try { hst = fs.statSync(historyPath); } catch (e) {
+      // Missing is normal only while opening: the history file gets created.
+      if (!(e.code === "ENOENT" && opening)) {
+        if (!strict) return false;
+        throw e.code === "ENOENT" ? new Error(`The history file is missing: ${historyPath}`) : e;
+      }
+    }
+  }
+  const same = db && stampOf(st) === fileStamp && (!historyPath || (hst && stampOf(hst) === historyStamp));
+  if (same) return false;
+  try {
+    const settings = readStamped(dbPath);
+    const history = hst ? readStamped(historyPath) : null;
+    connect(settings.bytes, history && history.bytes);
+    fileStamp = settings.stamp;
+    savedSettings = settings.bytes;
+    historyStamp = history ? history.stamp : "";
+    savedHistory = history ? history.bytes : null;
+    return true;
+  } catch (e) {
+    if (strict) throw e;
+    return false;
+  }
 }
 
+// Reads re-check the file. Inside a transaction, the first read or write takes
+// the lock and re-reads; after that the database in memory is current.
+function syncFromDisk() {
+  if (depth > 0) return touch();
+  reload(false);
+}
+
+const lockPath = () => dbPath + ".lock";
+
+function lockIsStale(file) {
+  try {
+    if (Date.now() - fs.statSync(file).mtimeMs > LOCK_STALE_MS) return true;
+    const info = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (info && info.pid && info.pid !== process.pid) {
+      try { process.kill(info.pid, 0); } catch (e) { return e.code === "ESRCH"; } // its app is gone
+    }
+  } catch (_) {} // being written or removed right now — not stale
+  return false;
+}
+
+function acquireLock() {
+  const file = lockPath();
+  const token = `${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const deadline = Date.now() + LOCK_WAIT_MS;
+  let lastCode = "";
+  for (;;) {
+    try {
+      const fd = fs.openSync(file, "wx"); // fails if the lock file exists
+      try {
+        fs.writeSync(fd, JSON.stringify({ pid: process.pid, token, at: new Date().toISOString() }));
+      } finally {
+        fs.closeSync(fd);
+      }
+      lockToken = token;
+      return;
+    } catch (e) {
+      // EEXIST = another app holds it. EPERM/EACCES/EBUSY = Windows is still
+      // deleting the previous lock file, or a scanner has it open.
+      if (!["EEXIST", "EPERM", "EACCES", "EBUSY"].includes(e.code)) throw e;
+      lastCode = e.code;
+    }
+    if (lastCode === "EEXIST" && lockIsStale(file)) {
+      try { fs.unlinkSync(file); } catch (_) {}
+      continue;
+    }
+    if (Date.now() > deadline) {
+      const err = new Error(
+        "The shared database is busy — another app is saving to it. Please try again." +
+          (lastCode === "EEXIST" ? "" : ` (${lastCode})`)
+      );
+      err.code = "DB_BUSY";
+      throw err;
+    }
+    pause(LOCK_RETRY_MS);
+  }
+}
+
+function releaseLock() {
+  const file = lockPath();
+  const token = lockToken;
+  lockToken = null;
+  try {
+    // Only remove our own lock: after a long stall another app may have
+    // judged ours stale and taken over.
+    const info = JSON.parse(fs.readFileSync(file, "utf8"));
+    if (!info || info.token !== token) return;
+    fs.unlinkSync(file);
+  } catch (_) {}
+}
+
+// The first database access inside a transaction: take the lock, then re-read
+// the file if another app changed it. Lazy, so a transaction that never
+// touches the database (most IPC handlers wrapped in main.js) costs nothing.
+function touch() {
+  if (depth === 0 || touched) return;
+  if (locking) acquireLock();
+  try {
+    // A file another app is replacing can be briefly unreadable; retry before
+    // giving up, and never save over what couldn't be read.
+    for (let i = 0; ; i++) {
+      try { reload(true); break; } catch (e) {
+        if (i >= 5) throw e;
+        pause(100);
+      }
+    }
+  } catch (e) {
+    if (lockToken) releaseLock();
+    throw e;
+  }
+  touched = true;
+}
+
+function end() {
+  if (--depth > 0) return;
+  try {
+    if (touched && dirty) persist();
+  } finally {
+    touched = false;
+    dirty = false;
+    if (lockToken) releaseLock();
+  }
+}
+
+// Run fn as one unit: its reads see the latest saved data, no other app can
+// save in between, and its changes are written once when it returns. Nests:
+// only the outermost call locks and saves. An async fn is covered up to its
+// first await; anything after saves statement by statement.
+function transaction(fn) {
+  depth++;
+  try {
+    return fn();
+  } finally {
+    end();
+  }
+}
+
+// Replace target with bytes in one step: write a temp file, rename it over.
+function writeAtomic(target, bytes) {
+  const tmp = target + ".tmp";
+  fs.writeFileSync(tmp, bytes);
+  for (let i = 0; ; i++) {
+    try {
+      fs.renameSync(tmp, target);
+      return;
+    } catch (e) {
+      if (!["EPERM", "EACCES", "EBUSY"].includes(e.code)) throw e;
+      if (i >= 20) {
+        // A scanner kept the file open for over a second. Write in place
+        // rather than lose the change; the lock still keeps other apps out.
+        fs.writeFileSync(target, bytes);
+        try { fs.unlinkSync(tmp); } catch (_) {}
+        return;
+      }
+      pause(50);
+    }
+  }
+}
+
+// Write the files whose contents changed. A save that only added history
+// leaves the settings file alone, and the other way round.
 function persist() {
   if (!db || !dbPath) return;
-  fs.writeFileSync(dbPath, Buffer.from(db.export()));
-  stampFile();
+  const settings = Buffer.from(db.export());
+  if (historyDb) attachHistory(); // export() reopens the connection without it
+  if (!savedSettings || !settings.equals(savedSettings)) {
+    writeAtomic(dbPath, settings);
+    savedSettings = settings;
+  }
+  if (historyDb) {
+    const history = Buffer.from(historyDb.export());
+    if (!savedHistory || !history.equals(savedHistory)) {
+      writeAtomic(historyPath, history);
+      savedHistory = history;
+    }
+  }
+  stampFiles();
 }
 
-// Absolute path of the on-disk SQLite file (used by the export feature).
+// ---- Settings and history files ---------------------------------------------
+// A shared database is two files in one folder: settings.sqlite (accounts, API
+// keys, prompts, proxies, settings) and history.sqlite (application history and
+// saved job posts). Each is opened as its own sql.js database, and the history
+// one is ATTACHed to the settings connection as "history". SQLite looks an
+// unqualified table name up in every attached file, so every existing query —
+// including the ones joining history to accounts — runs unchanged. (Only a
+// CREATE INDEX on a history table would need the "history." prefix.)
+
+// sql.js keeps each database in a file of its own inside its in-memory
+// filesystem, named by the database's `filename`; attaching that file is how
+// one connection reaches both.
+function attachHistory() {
+  db.run(`ATTACH DATABASE '${historyDb.filename}' AS history`);
+}
+
+function openBytes(bytes) {
+  // A copy: sql.js keeps a Node Buffer's memory as its file, so later writes
+  // would change `bytes` too — and savedSettings/savedHistory along with them.
+  const d = bytes ? new SQL.Database(new Uint8Array(bytes)) : new SQL.Database();
+  try {
+    d.exec("SELECT name FROM sqlite_master LIMIT 1"); // throws if not a database
+  } catch (e) {
+    try { d.close(); } catch (_) {}
+    throw e;
+  }
+  return d;
+}
+
+function closeConnection() {
+  try { if (db) db.close(); } catch (_) {}               // first: it holds the attachment
+  try { if (historyDb) historyDb.close(); } catch (_) {}
+  db = historyDb = null;
+}
+
+// Replace the open database with settingsBytes (null = empty) — plus, for a
+// shared database, historyBytes (null = empty) attached as "history".
+function connect(settingsBytes, historyBytes) {
+  const nextDb = openBytes(settingsBytes);
+  let nextHistory = null;
+  try {
+    if (historyPath) {
+      nextHistory = openBytes(historyBytes);
+      nextDb.run(`ATTACH DATABASE '${nextHistory.filename}' AS history`);
+    }
+  } catch (e) {
+    try { nextDb.close(); } catch (_) {}
+    try { if (nextHistory) nextHistory.close(); } catch (_) {}
+    throw e;
+  }
+  closeConnection();
+  db = nextDb;
+  historyDb = nextHistory;
+}
+
+// Move history tables found in the settings file into the history file: an
+// app's own database being shared, a shared file from before the split, or an
+// imported backup. Rows keep their ids, so their links to accounts hold.
+function moveHistoryOut(conn = db) {
+  let moved = false;
+  HISTORY_TABLES.forEach((t) => {
+    const own = srcAll(conn, "SELECT sql FROM main.sqlite_master WHERE type = 'table' AND name = ?", [t])[0];
+    if (!own) return;
+    const there = srcAll(conn, "SELECT 1 FROM history.sqlite_master WHERE type = 'table' AND name = ?", [t])[0];
+    if (!there) {
+      // Recreate it exactly — every column it gained over the years — then copy.
+      conn.run(own.sql.replace(/^CREATE TABLE\s+(?:IF NOT EXISTS\s+)?["`[]?\w+["`\]]?/i, `CREATE TABLE history.${t}`));
+      conn.run(`INSERT INTO history.${t} SELECT * FROM main.${t}`);
+    } else {
+      const names = (schema) => srcAll(conn, `PRAGMA ${schema}.table_info(${t})`).map((c) => c.name);
+      const theirs = new Set(names("history"));
+      const cols = names("main").filter((c) => theirs.has(c)).join(", ");
+      conn.run(`INSERT INTO history.${t} (${cols}) SELECT ${cols} FROM main.${t} WHERE id NOT IN (SELECT id FROM history.${t})`);
+    }
+    conn.run(`DROP TABLE main.${t}`);
+    moved = true;
+  });
+  if (moved) conn.run("VACUUM main"); // give the space back: the settings file is saved most
+}
+
+// The database as the two files of a shared folder — { settings, history } —
+// for a backup copy. Works from an app's own one-file database too.
+function exportTwoFiles() {
+  const out = openBytes(exportAll());
+  const history = new SQL.Database();
+  try {
+    out.run(`ATTACH DATABASE '${history.filename}' AS history`);
+    moveHistoryOut(out);
+    out.run(ATTACHED_HISTORY_SCHEMA); // empty history tables when there was no history
+    out.run("DETACH DATABASE history");
+    return { settings: Buffer.from(out.export()), history: Buffer.from(history.export()) };
+  } finally {
+    try { out.close(); } catch (_) {}
+    try { history.close(); } catch (_) {}
+  }
+}
+
+// The whole database as one file — settings and history together, the shape
+// of an app's own database and of a backup.
+function exportAll() {
+  return transaction(() => {
+    touch();
+    const settings = Buffer.from(db.export());
+    if (!historyDb) return settings;
+    attachHistory(); // export() reopens the connection without it
+    const out = openBytes(settings);
+    try {
+      out.run(`ATTACH DATABASE '${historyDb.filename}' AS history`);
+      HISTORY_TABLES.forEach((t) => {
+        const stmt = out.prepare("SELECT sql FROM history.sqlite_master WHERE type = 'table' AND name = ?");
+        stmt.bind([t]);
+        const sql = stmt.step() ? stmt.getAsObject().sql : null;
+        stmt.free();
+        if (!sql) return;
+        out.run(sql); // stored without a schema name, so it lands in the copy
+        out.run(`INSERT INTO main.${t} SELECT * FROM history.${t}`);
+      });
+      out.run("DETACH DATABASE history");
+      return Buffer.from(out.export());
+    } finally {
+      try { out.close(); } catch (_) {}
+    }
+  });
+}
+
+// ---- Noticing other apps' saves ---------------------------------------------
+// Reads already reload a changed file, but a screen that's just sitting there
+// wouldn't know to read again. For a shared database we watch the file and tell
+// main.js, which tells the window.
+let watchWanted = false;
+let watcher = null;
+let watchTimer = null;
+let pollTimer = null;
+let changeListener = null;
+
+function onExternalChange(fn) {
+  changeListener = fn;
+}
+
+function checkExternal() {
+  if (depth > 0) return; // mid-save: our own write, or about to be re-read anyway
+  if (reload(false) && changeListener) {
+    try { changeListener(); } catch (_) {}
+  }
+}
+
+function startWatching() {
+  stopWatching();
+  if (!dbPath) return;
+  const names = [dbPath, historyPath].filter(Boolean).map((p) => path.basename(p).toLowerCase());
+  try {
+    // The folder, not the files: a save renames a new file into place, which
+    // a watch on the old file would never see.
+    watcher = fs.watch(path.dirname(dbPath), (_event, file) => {
+      if (file && !names.includes(String(file).toLowerCase())) return;
+      clearTimeout(watchTimer);
+      watchTimer = setTimeout(checkExternal, 50); // just long enough to see the whole save
+    });
+    watcher.on("error", () => { try { watcher.close(); } catch (_) {} watcher = null; });
+  } catch (_) {
+    watcher = null;
+  }
+  // Safety net for events the watcher misses.
+  pollTimer = setInterval(checkExternal, 2000);
+  if (pollTimer.unref) pollTimer.unref();
+}
+
+function stopWatching() {
+  clearTimeout(watchTimer);
+  clearInterval(pollTimer);
+  watchTimer = pollTimer = null;
+  if (watcher) try { watcher.close(); } catch (_) {}
+  watcher = null;
+}
+
+// Is filePath a database this app can use? Checked before switching to it.
+function looksLikeAppDb(filePath) {
+  let src;
+  try {
+    src = new SQL.Database(fs.readFileSync(filePath));
+    return srcHasTable(src, "accounts") && srcHasTable(src, "prefs");
+  } catch (_) {
+    return false;
+  } finally {
+    try { if (src) src.close(); } catch (_) {}
+  }
+}
+
+// Absolute path of the on-disk SQLite file — the settings file of a shared
+// database.
 function getDbPath() {
   return dbPath;
+}
+
+// The shared history file, or null for a one-file database.
+function getHistoryPath() {
+  return historyPath;
 }
 
 // A standalone .sqlite holding ONLY the application history — every column of
@@ -458,28 +929,24 @@ function exportApplicationsDb() {
 // Replace the live database with the contents of an imported .sqlite file.
 // Throws if the bytes are not a valid SQLite database. This machine's license
 // key is preserved so importing another machine's backup can't deactivate the
-// app.
+// app. For a shared database the backup's history replaces the history file.
 function importDb(buffer) {
-  const license = get("SELECT value FROM prefs WHERE key = 'license_key'");
-  const keep = license ? license.value : null;
+  openBytes(buffer).close(); // throws if not a real DB, before anything changes
+  transaction(() => {
+    const license = get("SELECT value FROM prefs WHERE key = 'license_key'");
+    const keep = license ? license.value : null;
+    connect(buffer, null);
 
-  const next = new SQL.Database(buffer);
-  next.exec("SELECT name FROM sqlite_master LIMIT 1"); // throws if not a real DB
-  db = next;
-  // Pin the fingerprint to the file as it stands now, so the schema/migration
-  // work below can't be mistaken for a foreign write and reload the import away.
-  stampFile();
-
-  db.run(SCHEMA); // make sure every expected table exists
-  migrate();      // bring an older imported schema up to date
-  if (keep) {
-    run(
-      `INSERT INTO prefs (key, value) VALUES ('license_key', ?)
-       ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
-      [keep]
-    );
-  }
-  persist();
+    ensureSchema();
+    if (keep) {
+      run(
+        `INSERT INTO prefs (key, value) VALUES ('license_key', ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        [keep]
+      );
+    }
+    dirty = true;
+  });
 }
 
 // Raw query against the current connection, with no disk check. Used where a
@@ -502,13 +969,17 @@ function get(sql, params = []) {
   return all(sql, params)[0] || null;
 }
 
-function run(sql, params = []) {
-  syncFromDisk();
+function exec(sql, params) {
+  touch();
   const stmt = db.prepare(sql);
-  stmt.bind(params);
+  stmt.bind(params || []);
   stmt.step();
   stmt.free();
-  persist();
+  dirty = true;
+}
+
+function run(sql, params = []) {
+  transaction(() => exec(sql, params));
 }
 
 // Several statements as ONE unit: read the file once, apply them all, write it
@@ -518,37 +989,31 @@ function run(sql, params = []) {
 function runMany(statements) {
   const list = (statements || []).filter(Boolean);
   if (!list.length) return;
-  syncFromDisk();
-  list.forEach(([sql, params]) => {
-    const stmt = db.prepare(sql);
-    stmt.bind(params || []);
-    stmt.step();
-    stmt.free();
-  });
-  persist();
+  transaction(() => list.forEach(([sql, params]) => exec(sql, params)));
 }
 
 function insert(sql, params = []) {
-  syncFromDisk();
-  const stmt = db.prepare(sql);
-  stmt.bind(params);
-  stmt.step();
-  stmt.free();
-  // Read the id BEFORE persisting: db.export() resets last_insert_rowid(), so
-  // asking afterwards always returned 0. And no syncFromDisk in between — the
-  // id belongs to this connection, and a reload would swap it out.
-  const rows = query("SELECT last_insert_rowid() AS id");
-  persist();
-  return rows[0] ? rows[0].id : null;
+  return transaction(() => {
+    exec(sql, params);
+    // Read the id BEFORE the save: db.export() resets last_insert_rowid(), so
+    // asking afterwards always returned 0. And no reload in between — the id
+    // belongs to this connection, and a reload would swap it out.
+    const rows = query("SELECT last_insert_rowid() AS id");
+    return rows[0] ? rows[0].id : null;
+  });
 }
 
 // Merge the application history out of an exported .sqlite. Entries already
 // here are skipped — identified by their unique generation id (request_id), and
 // for older entries that have none, by account + role + company + date. Rows are
 // re-pointed at the local account of the same name, creating it if it's missing,
-// because account ids differ between databases.
+// because account ids differ between databases. One transaction: the duplicate
+// check and the inserts see the same data, and the file is written once.
 function importApplications(filePath) {
-  syncFromDisk();
+  return transaction(() => mergeApplications(filePath));
+}
+
+function mergeApplications(filePath) {
   let src;
   try {
     src = new SQL.Database(fs.readFileSync(filePath));
@@ -725,8 +1190,12 @@ function scanFile(filePath) {
 
 // Merge only the user-selected rows from `filePath` into the live database.
 // Rows are inserted as NEW records (no id clashes); prefs are upserted by key.
-// The license key is never touched.
+// The license key is never touched. Written to the file once, at the end.
 function importSelected(filePath, selection = {}) {
+  return transaction(() => mergeSelected(filePath, selection));
+}
+
+function mergeSelected(filePath, selection) {
   const src = new SQL.Database(fs.readFileSync(filePath));
   const nowIso = new Date().toISOString();
   const counts = { api_keys: 0, accounts: 0, instructions: 0, proxies: 0, prefs: 0 };
@@ -824,7 +1293,6 @@ function importSelected(filePath, selection = {}) {
         counts.prefs++;
       });
     }
-    persist();
     return counts;
   } finally {
     try { src.close(); } catch (_) {}
@@ -834,4 +1302,5 @@ function importSelected(filePath, selection = {}) {
 module.exports = {
   initDb, all, get, run, runMany, insert, getDbPath, importDb, scanFile, importSelected,
   exportApplicationsDb, importApplications,
+  openAt, transaction, exportAll, exportTwoFiles, getHistoryPath, looksLikeAppDb, onExternalChange,
 };

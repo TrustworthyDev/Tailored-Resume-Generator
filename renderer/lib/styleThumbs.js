@@ -330,6 +330,47 @@ export function styleThumb(style) {
       }
       break;
     }
+    case "network": {
+      // Faint node network at the top, navy name, teal title, summary lines, the
+      // navy contact bar with its lighter layer, then icon headings, the rail
+      // with teal dots, and the three-colour divider.
+      const navy = head ? darken(head, 0.55) : "#1e3448";
+      const net = [[60, 14, 140, 40], [140, 40, 200, 20], [200, 20, 222, 58], [100, 60, 160, 70]];
+      net.forEach(([x1, y1, x2, y2]) => { inner += `<line x1='${x1}' y1='${y1}' x2='${x2}' y2='${y2}' stroke='#eceef1' stroke-width='1'/>`; });
+      [[60, 14, 4], [140, 40, 6], [200, 20, 4], [222, 58, 8], [160, 70, 5], [100, 60, 3]].forEach(([x, y, r]) => { inner += `<circle cx='${x}' cy='${y}' r='${r}' fill='#eef0f3'/>`; });
+      inner += rc(16, 16, 92, 13, nameC || navy, 2);               // name
+      inner += rc(16, 34, 70, 6, titleC || a);                      // title (teal)
+      for (let i = 0; i < 3; i++) inner += rc(16, 46 + i * 7, i === 2 ? 150 : 206, 3.5, G);
+      inner += rc(20, 77, 200, 7, "#c8d0d8", 2);                    // lighter layer
+      inner += rc(16, 70, 208, 11, navy, 3);                        // contact bar
+      inner += rc(56, 74, 128, 3, "#ffffffaa");
+      let y = 98;
+      for (let k = 0; k < 2; k++) {
+        if (k) { inner += rc(16, y - 10, 66, 2.5, a + "99", 1); inner += rc(87, y - 10, 66, 2.5, "#c9cbce", 1); inner += rc(158, y - 10, 66, 2.5, "#c6d9ea", 1); }
+        inner += `<circle cx='22' cy='${y + 4}' r='6' fill='${navy}'/>`;  // icon circle
+        inner += rc(32, y + 1, 64, 6, navy);                         // heading
+        inner += rc(21, y + 10, 1.6, k ? 34 : 88, navy);             // rail
+        const entries = k ? 1 : 2;
+        for (let e = 0; e < entries; e++) {
+          const ey = y + 16 + e * 44;
+          inner += `<circle cx='21.8' cy='${ey + 2}' r='2.6' fill='${a}'/>`;
+          inner += rc(30, ey, 70, 5, "#14181e");                     // role
+          inner += rc(30, ey + 8, 44, 4, G);                         // company
+          inner += rc(30, ey + 15, 30, 3.5, G);                      // dates
+          inner += rc(30, ey + 22, 44, 3.5, a);                      // label
+          for (let i = 0; i < 2; i++) inner += rc(30, ey + 29 + i * 6, 186, 3, G);
+        }
+        y += k ? 62 : 112;
+      }
+      inner += rc(16, y - 6, 66, 2.5, a + "99", 1); inner += rc(87, y - 6, 66, 2.5, "#c9cbce", 1); inner += rc(158, y - 6, 66, 2.5, "#c6d9ea", 1);
+      inner += `<circle cx='22' cy='${y + 8}' r='6' fill='${navy}'/>`;
+      inner += rc(32, y + 5, 70, 6, navy);
+      for (let r2 = 0; r2 < 2; r2++) {
+        inner += rc(16, y + 18 + r2 * 16, 60, 4.5, "#14181e"); inner += rc(16, y + 25 + r2 * 16, 90, 3, G);
+        inner += rc(124, y + 18 + r2 * 16, 60, 4.5, "#14181e"); inner += rc(124, y + 25 + r2 * 16, 90, 3, G);
+      }
+      break;
+    }
     default: // professional
       inner += rc(20, 20, 7, 42, a, 1);
       inner += rc(36, 24, 100, 16, nameC || "#1f2937", 3);

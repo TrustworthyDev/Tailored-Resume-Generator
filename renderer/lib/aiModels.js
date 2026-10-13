@@ -14,13 +14,14 @@ export const providerLabel = (id) =>
 // resume generator's key dropdown. The first model is the default for new keys.
 export const MODEL_OPTIONS = {
   gemini: [
-    { id: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite — fast & low cost" },
-    { id: "gemini-2.5-flash", label: "Gemini 2.5 Flash — balanced" },
-    { id: "gemini-2.5-pro", label: "Gemini 2.5 Pro — most capable" },
-    { id: "gemini-2.0-flash", label: "Gemini 2.0 Flash" },
-    { id: "gemini-2.0-flash-lite", label: "Gemini 2.0 Flash-Lite" },
-    { id: "gemini-1.5-flash", label: "Gemini 1.5 Flash" },
-    { id: "gemini-1.5-pro", label: "Gemini 1.5 Pro" },
+    { id: "gemini-3.5-flash-lite", label: "Gemini 3.5 Flash-Lite — fast & low cost" },
+    { id: "gemini-3.6-flash", label: "Gemini 3.6 Flash — balanced" },
+    { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash — most intelligent Flash" },
+    { id: "gemini-pro-latest", label: "Gemini Pro (latest) — most capable" },
+    { id: "gemini-3.7-flash", label: "Gemini 3.7 Flash" },
+    { id: "gemini-3.5-flash", label: "Gemini 3.5 Flash" },
+    { id: "gemini-flash-latest", label: "Gemini Flash (latest)" },
+    { id: "gemini-flash-lite-latest", label: "Gemini Flash-Lite (latest)" },
   ],
   openai: [
     { id: "gpt-5", label: "GPT-5 — most capable" },
@@ -49,16 +50,16 @@ export const MODEL_OPTIONS = {
 export const defaultModel = (provider) => (MODEL_OPTIONS[provider] || [])[0]?.id || "";
 
 // Full label of the model that will ACTUALLY be used (resolves an empty model
-// to the provider's default), e.g. "Gemini 2.5 Flash-Lite — fast & low cost".
+// to the provider's default), e.g. "Gemini 3.5 Flash-Lite — fast & low cost".
 export const modelLabel = (provider, id) => {
   const real = id || defaultModel(provider);
   return ((MODEL_OPTIONS[provider] || []).find((m) => m.id === real) || {}).label || real || "—";
 };
 
-// Short model name (no "— description" suffix), e.g. "Gemini 2.5 Pro".
+// Short model name (no "— description" suffix), e.g. "Gemini 3.6 Flash".
 export const modelShort = (provider, id) => modelLabel(provider, id).split(" — ")[0];
 
 // Even shorter — the brand word dropped — for compact key lists, e.g.
-// "Gemini 2.5 Flash" -> "2.5 Flash", "Claude 3.5 Sonnet" -> "3.5 Sonnet".
+// "Gemini 3.6 Flash" -> "3.6 Flash", "Claude 3.5 Sonnet" -> "3.5 Sonnet".
 export const modelTiny = (provider, id) =>
   modelShort(provider, id).replace(/^(Gemini|Claude)\s+/i, "");

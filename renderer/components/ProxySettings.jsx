@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { useDbChanged } from "../lib/useDbChanged";
 import ConfirmModal from "./ConfirmModal";
 
 const EMPTY = { name: "", url: "", port: "", username: "", password: "" };
@@ -25,6 +26,7 @@ export default function ProxySettings() {
     if (!rows || rows.length === 0) setShowForm(true);
   };
   useEffect(() => { load(); }, []);
+  useDbChanged(load); // another app saved to the shared database
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
 

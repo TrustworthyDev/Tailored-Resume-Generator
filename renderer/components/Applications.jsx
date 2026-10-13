@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { useDbChanged } from "../lib/useDbChanged";
 import { countryFlag } from "../lib/flags";
 import ConfirmModal from "./ConfirmModal";
 
@@ -60,6 +61,16 @@ export default function Applications() {
     if (selectedId == null) { setApps([]); return; }
     api().applicationsByAccount(selectedId).then((rows) => setApps(rows || []));
   }, [selectedId]);
+
+  // Another app saved to the shared database: re-read the totals, the account
+  // list and the open account's entries.
+  useDbChanged(async () => {
+    loadAll();
+    const rows = (await api().listAccounts()) || [];
+    setAccounts(rows);
+    if (!rows.some((a) => a.id === selectedId)) setSelectedId(rows.length ? rows[0].id : null);
+    else api().applicationsByAccount(selectedId).then((r) => setApps(r || []));
+  });
 
   useEffect(() => {
     const q = query.trim();

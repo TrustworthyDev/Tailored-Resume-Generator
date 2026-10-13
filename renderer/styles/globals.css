@@ -71,6 +71,16 @@ h1, h2, h3 { color: var(--text); }
 .app.sidebar-collapsed .sidebar-toggle { left: 12px; }
 .app.sidebar-collapsed .content { padding-left: 58px; }
 .sidebar nav { display: flex; flex-direction: column; gap: 9px; }
+/* Which data profile this window owns — only shown when one is in use, i.e.
+   when several copies of the app are meant to run side by side. */
+.profile-badge {
+  margin-bottom: 14px; padding: 7px 12px; border-radius: 8px;
+  background: var(--panel-2); border: 1px solid var(--primary); color: var(--text);
+  font-size: 13px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
+  text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+/* Sits under the profile badge when this app uses a shared database. */
+.shared-db-badge { border-color: var(--border); color: var(--muted); font-size: 11px; }
 .nav {
   text-align: left; background: transparent; border: none; color: var(--muted);
   padding: 14px 18px; border-radius: 10px; cursor: pointer;
@@ -750,6 +760,8 @@ select.input {
   padding: 14px 16px; background: var(--panel-2);
 }
 .import-src { margin-bottom: 10px; word-break: break-all; }
+/* Settings → Database: where the database lives. Long paths wrap. */
+.db-location { display: block; margin: 6px 0; word-break: break-all; }
 .import-group { padding: 8px 0; border-top: 1px solid var(--border); }
 .import-group:first-of-type { border-top: none; }
 .import-group-head { display: flex; align-items: center; gap: 8px; cursor: pointer; }

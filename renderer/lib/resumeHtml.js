@@ -436,6 +436,74 @@ main ul{list-style:disc;padding-left:24px;}
 main li::marker{color:${accent};}
 main p.skills strong{color:#1b1f27;}
 a{color:${accent};}`;
+    case "network": {
+      // Navy and teal over a faint network of nodes at the top of every page:
+      // name, teal title and the summary up top, contacts in a navy bar with a
+      // lighter layer beneath, section headings led by an icon in a navy circle
+      // with a three-colour divider between sections, and experience/education
+      // on a navy rail with a teal dot per entry. The Content picker recolours
+      // the navy (darkened) and the teal; the Name picker the name and title.
+      const navy = head ? darkenHex(head, 0.55) : "#1e3448";
+      return `body{font-family:Roboto,"Segoe UI",Arial,sans-serif;color:#23272e;}
+.page{position:relative;}
+.nw-bg{position:absolute;top:0;left:0;right:0;height:230px;z-index:0;pointer-events:none;}
+.nw-bg svg{width:100%;height:100%;display:block;}
+.nw-bg line{stroke:#e7e9ec;stroke-width:1.3;}
+.nw-bg circle{fill:#eceef1;}
+@media print{.nw-bg{position:fixed;}}
+header,main{position:relative;z-index:1;}
+header{margin-bottom:6px;}
+header h1{margin:0;font-size:22pt;font-weight:700;color:${navy};letter-spacing:.2px;line-height:1.15;}
+.title{margin-top:2px;font-size:13pt;color:${accent};font-weight:400;}
+.nw-summary{margin-top:7px;font-size:10pt;line-height:1.45;color:#1f2329;}
+.nw-summary p{margin:0 0 4px;text-align:left;}
+.contacts{position:relative;margin:14px 0 22px;background:${navy};color:#fff;border-radius:7px;padding:8px 14px;display:flex;flex-wrap:wrap;justify-content:center;gap:4px 22px;font-size:9pt;}
+.contacts::after{content:"";position:absolute;left:10px;right:10px;bottom:-9px;height:14px;background:#c8d0d8;border-radius:0 0 7px 7px;z-index:-1;}
+.contacts a{color:#fff;}
+.contact{display:inline-flex;align-items:center;gap:7px;white-space:nowrap;}
+.contact svg{width:15px;height:15px;flex:0 0 auto;color:#fff;}
+.contact .nw-in{stroke:${navy};}
+.nw-div{display:flex;gap:4px;margin:18px 0 10px;break-after:avoid;}
+.nw-div i{flex:1 1 0;height:5px;border-radius:3px;}
+.nw-div i:nth-child(1){background:${accent}99;}
+.nw-div i:nth-child(2){background:#c9cbce;}
+.nw-div i:nth-child(3){background:${head ? head + "40" : "#c6d9ea"};}
+main h2{display:flex;align-items:center;gap:9px;font-size:12.5pt;font-weight:700;color:${navy};text-transform:uppercase;letter-spacing:.2px;border:none;margin:10px 0 0 !important;padding:0;}
+.nw-ico{flex:0 0 auto;width:28px;height:28px;border-radius:50%;background:${navy};color:#fff;display:inline-flex;align-items:center;justify-content:center;}
+.nw-ico svg{width:17px;height:17px;}
+main h2 + :not(.nw-rail){margin-top:8px;}
+/* The rail runs down from the heading icon's centre; every entry but the last
+   carries it on to the next, and the last keeps a stub up to its own dot. */
+.nw-rail{margin:0 0 4px;}
+.nw-entry{position:relative;margin-left:13px;padding:8px 0 12px 24px;border-left:2px solid ${navy};}
+.nw-entry:last-child{border-left-color:transparent;padding-bottom:2px;}
+.nw-entry:last-child::after{content:"";position:absolute;left:-2px;top:0;height:14px;border-left:2px solid ${navy};}
+.nw-entry::before{content:"";position:absolute;left:-7.5px;top:13px;width:9px;height:9px;border-radius:50%;background:${accent};border:2px solid #fff;z-index:1;}
+.nw-head{break-inside:avoid;break-after:avoid;}
+.nw-entry h3{margin:0;font-size:11pt;font-weight:700;color:#14181e;}
+.nw-entry h3 .edu-degree{font-weight:700;color:#14181e;}
+.nw-company{margin-top:1px;font-size:10.5pt;color:#23272e;display:flex;align-items:center;gap:6px;}
+.nw-company svg{width:11px;height:11px;color:${accent};flex:0 0 auto;}
+.nw-loc{color:#6a7280;font-size:9.5pt;}
+.nw-dates{margin-top:1px;font-size:9.5pt;color:#2b3038;}
+.nw-label{margin:7px 0 2px;color:${accent};font-weight:600;font-size:9.5pt;}
+main ul{list-style:none;padding-left:0;margin:2px 0 0;}
+main li{position:relative;padding-left:12px;margin:2px 0;}
+main li::before{content:"";position:absolute;left:1px;top:.55em;width:5px;height:5px;border-radius:50%;background:${accent};}
+.nw-skills{display:grid;grid-template-columns:1fr 1fr;column-gap:30px;row-gap:12px;margin:10px 0 2px;}
+.nw-skill{break-inside:avoid;}
+.nw-skill-cat{font-weight:700;font-size:10pt;color:#14181e;margin-bottom:2px;}
+.nw-skill-items{font-size:9pt;line-height:1.4;color:#23272e;}
+.nw-langs{display:grid;grid-template-columns:repeat(3,1fr);gap:10px 24px;margin:10px 0 2px;}
+.nw-lang{break-inside:avoid;}
+.nw-lang-name{font-weight:700;font-size:10.5pt;color:#14181e;}
+.nw-lang-level{font-style:italic;font-size:9.5pt;color:${accent};}
+.nw-chips{display:flex;flex-wrap:wrap;gap:8px;margin:10px 0 2px;}
+.nw-chip{display:inline-flex;align-items:center;gap:6px;border:1.2px solid ${navy};border-radius:6px;padding:3px 9px;font-size:10pt;color:#14181e;break-inside:avoid;}
+.nw-chip svg{width:15px;height:15px;color:${navy};}
+main p.skills strong{color:#14181e;}
+a{color:${accent};}`;
+    }
     default: // professional
       return `body{font-family:Calibri,"Segoe UI",Arial,sans-serif;}
 header{border-left:5px solid ${accent};padding-left:16px;margin-bottom:18px;}
@@ -653,6 +721,71 @@ const CONTACT_ICONS = {
     '<svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1Zm4.9 6h-2c-.1-1.5-.5-2.8-1-3.7A5.5 5.5 0 0 1 12.9 7ZM8 2.6c.6.7 1.2 2.1 1.3 4.4H6.7c.1-2.3.7-3.7 1.3-4.4ZM3.1 7a5.5 5.5 0 0 1 3-3.7c-.5.9-.9 2.2-1 3.7h-2Zm0 2h2c.1 1.5.5 2.8 1 3.7A5.5 5.5 0 0 1 3.1 9ZM8 13.4c-.6-.7-1.2-2.1-1.3-4.4h2.6c-.1 2.3-.7 3.7-1.3 4.4Zm1.9-.7c.5-.9.9-2.2 1-3.7h2a5.5 5.5 0 0 1-3 3.7Z"/></svg>',
 };
 
+// ---- Network style artwork ----------------------------------------------------
+// Line icons (24-unit grid) drawn in currentColor, so CSS decides their colour.
+const nwIcon = (paths) =>
+  `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths}</svg>`;
+
+// Section heading icons, chosen by the heading's words (first match wins).
+const NW_SECTION_ICONS = [
+  [/experience|employment|\bwork\b|career/i, nwIcon('<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 7V5a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2M3 12.5h18M10 12.5v1.8h4v-1.8"/>')],
+  [/skill|technolog|competenc|expertise|stack/i, nwIcon('<circle cx="12" cy="12" r="6.3"/><path d="M12 3v2.4M12 18.6V21M3 12h2.4M18.6 12H21M5.6 5.6l1.7 1.7M16.7 16.7l1.7 1.7M18.4 5.6l-1.7 1.7M7.3 16.7l-1.7 1.7M10.6 10.2 8.9 12l1.7 1.8M13.4 10.2l1.7 1.8-1.7 1.8"/>')],
+  [/education|academic|degree/i, nwIcon('<path d="M2 9.5 12 4.5l10 5-10 5z"/><path d="M6 11.5v4.6c0 1.6 2.7 3.2 6 3.2s6-1.6 6-3.2v-4.6M22 9.5V15"/>')],
+  [/language/i, nwIcon('<path d="M3.5 5.5h9M8 3.5v2M5.8 5.5c.6 3.1 2.6 5.6 5.4 7M10.4 5.5c-.8 3.5-3.3 6.3-6.9 7.8"/><path d="M12.5 20.5l4-9.5 4 9.5M13.9 17.3h5.2"/>')],
+  [/interest|hobb/i, nwIcon('<path d="M7.5 20.5h10M8.5 20.5c0-3 1-4.4 3.2-6.4-2 .2-3.6-.3-4.4-1.6l4-4.3c.5-1.7 1.6-3.2 3.2-4.2 1.3 2.3 2.5 4.8 2.5 8.4 0 3.6-.7 5.7-1 8.1"/>')],
+  [/project|portfolio/i, nwIcon('<path d="M3 7a2 2 0 0 1 2-2h4.2l2 2.2H19a2 2 0 0 1 2 2V17a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/>')],
+  [/certif|licen/i, nwIcon('<circle cx="12" cy="9" r="5.2"/><path d="m8.6 13.2-1.6 7.8 5-3 5 3-1.6-7.8"/>')],
+  [/award|achiev|honou?r|accomplish/i, nwIcon('<path d="M8 4h8v5a4 4 0 0 1-8 0zM8 6H5a3 3 0 0 0 3.3 4M16 6h3a3 3 0 0 1-3.3 4M12 13v4M8.5 21h7M10 17h4"/>')],
+  [/publication|research|paper/i, nwIcon('<path d="M4.5 5a2 2 0 0 1 2-2h12.5v15.5H6.5a2 2 0 0 0-2 2z"/><path d="M4.5 20.5a2 2 0 0 1 2-2H19"/>')],
+  [/summary|profile|about|objective/i, nwIcon('<circle cx="12" cy="8" r="4"/><path d="M4 21c0-4.2 3.6-7 8-7s8 2.8 8 7"/>')],
+];
+const NW_DEFAULT_ICON = nwIcon('<path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/>');
+const nwSectionIcon = (heading) => (NW_SECTION_ICONS.find(([re]) => re.test(heading)) || [null, NW_DEFAULT_ICON])[1];
+
+// Contact bar icons (outline, white on the navy bar).
+const NW_CONTACT_ICONS = {
+  email: nwIcon('<rect x="3" y="5.5" width="18" height="13" rx="2"/><path d="m3.5 7 8.5 6 8.5-6"/>'),
+  phone: nwIcon('<rect x="7" y="2.5" width="10" height="19" rx="2"/><path d="M11 18h2"/>'),
+  linkedin: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2.5" fill="currentColor"/><path class="nw-in" d="M8 10.5V17M8 7.4v.1M11.6 17v-6.5M11.6 13.2c0-1.6 1-2.7 2.4-2.7s2.2 1 2.2 2.7V17" fill="none" stroke-width="2" stroke-linecap="round"/></svg>',
+  link: nwIcon('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c2.4 2.5 3.5 5.5 3.5 9s-1.1 6.5-3.5 9c-2.4-2.5-3.5-5.5-3.5-9S9.6 5.5 12 3z"/>'),
+  location: nwIcon('<path d="M12 21s-7-6.2-7-11.5a7 7 0 0 1 14 0C19 14.8 12 21 12 21z"/><circle cx="12" cy="9.5" r="2.5"/>'),
+};
+
+// The small "open" glyph after a company name, as in the template it copies.
+const NW_EXTERNAL = nwIcon('<path d="M14 4h6v6M20 4l-8.5 8.5M18 14v5a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h5"/>');
+
+// Interest chips get a matching icon where one obviously fits.
+const NW_INTEREST_ICONS = [
+  [/basketball|football|soccer|tennis|volleyball|baseball|golf|sport|cricket|rugby/i, nwIcon('<circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3v18M5.7 5.7c3 3 3 9.6 0 12.6M18.3 5.7c-3 3-3 9.6 0 12.6"/>')],
+  [/cook|bak|culinar|food|kitchen/i, nwIcon('<path d="M7 14.5a4 4 0 1 1 1.6-7.6 4 4 0 0 1 6.8 0A4 4 0 1 1 17 14.5V19H7z"/><path d="M7 16.5h10"/>')],
+  [/hik|run|walk|trek|climb|marathon|fitness|gym|cycl|bik|yoga|swim/i, nwIcon('<circle cx="13.5" cy="4" r="1.8"/><path d="m9 21 2.6-6.2 2.6 2.2V21M11.6 14.8l1.2-5.3 2.9 2.6 2.3.5M12.8 9.5 9.4 10.7l-1 3.1"/>')],
+  [/read|book|writ|poetry|literat|blog/i, nwIcon('<path d="M12 6.5C10.5 5 8 4.5 4 4.5v13c4 0 6.5.5 8 2 1.5-1.5 4-2 8-2v-13c-4 0-6.5.5-8 2zM12 6.5v13"/>')],
+  [/music|guitar|piano|sing|drum|violin|concert/i, nwIcon('<path d="M9 18V5.5l11-2v12.5"/><circle cx="6.5" cy="18" r="2.5"/><circle cx="17.5" cy="16" r="2.5"/>')],
+  [/photo|film|video|camera|movie|cinema/i, nwIcon('<rect x="3" y="7" width="18" height="13" rx="2"/><circle cx="12" cy="13.5" r="3.5"/><path d="M8.5 7 10 4.5h4L15.5 7"/>')],
+  [/gam|chess|esport|puzzle/i, nwIcon('<rect x="2.5" y="7" width="19" height="11" rx="5"/><path d="M7 10.8v3.4M5.3 12.5h3.4M15.5 12h.01M18 13.6h.01"/>')],
+  [/travel|explor|trip|adventure/i, nwIcon('<path d="M10.5 13.5 3 11l1.5-1.5 7.5 1L17 5.5a1.8 1.8 0 0 1 2.5 2.5L14.5 13l1 7.5L14 22l-2.5-7.5z"/>')],
+];
+const NW_INTEREST_DEFAULT = nwIcon('<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.6A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>');
+const nwInterestIcon = (text) => (NW_INTEREST_ICONS.find(([re]) => re.test(text)) || [null, NW_INTEREST_DEFAULT])[1];
+
+// The faint network of lines and nodes behind the top of every page.
+const NW_NODES = [
+  [300, 8, 6], [262, 40, 10], [330, 98, 8], [182, 92, 15], [424, 46, 11], [470, 28, 5],
+  [528, 6, 4], [598, 38, 10], [650, 54, 4], [732, 28, 6], [722, 92, 18], [662, 150, 22],
+  [560, 134, 7], [478, 150, 12], [622, 182, 6], [402, 162, 5], [262, 176, 8], [704, 204, 13],
+  [96, 30, 7], [40, 120, 5],
+];
+const NW_EDGES = [
+  [0, 1], [1, 3], [1, 2], [2, 4], [4, 5], [5, 6], [4, 7], [7, 8], [8, 9], [8, 10], [7, 11],
+  [11, 12], [12, 13], [13, 2], [11, 14], [14, 17], [10, 17], [13, 15], [15, 16], [16, 3],
+  [3, 18], [18, 19], [12, 7], [10, 9],
+];
+const NW_BACKGROUND =
+  `<div class="nw-bg" aria-hidden="true"><svg viewBox="0 0 794 230" preserveAspectRatio="xMidYMin slice">` +
+  NW_EDGES.map(([a, b]) => `<line x1="${NW_NODES[a][0]}" y1="${NW_NODES[a][1]}" x2="${NW_NODES[b][0]}" y2="${NW_NODES[b][1]}"/>`).join("") +
+  NW_NODES.map(([x, y, r]) => `<circle cx="${x}" cy="${y}" r="${r}"/>`).join("") +
+  `</svg></div>`;
+
 // Which icon belongs beside a contact item. Mirrors linkifyContact's tests, so
 // an item that becomes a mailto/tel/https link gets the matching glyph and
 // anything left over (a city, an address) reads as a place.
@@ -672,12 +805,33 @@ function contactKind(t) {
 const BD_SEP = ' <span class="bd-sep">|</span> ';
 
 const STACKED_CONTACTS = new Set(["cards", "highlight", "darkheader"]);
-function headerHtml(id, name, title, contacts) {
+function headerHtml(id, name, title, contacts, summaryHtml = "") {
   if (!name) return "";
   const raw = String(contacts || "")
     .split("  •  ")
     .map((s) => s.trim())
     .filter(Boolean);
+
+  // Network: name, title, then the summary (lifted out of the body), then the
+  // contacts in a navy bar, each led by its icon. LinkedIn shows just the handle.
+  if (id === "network") {
+    const contactsHtml = raw
+      .map((t) => {
+        const kind = contactKind(t);
+        const handle = kind === "linkedin" ? t.replace(/^(?:https?:\/\/)?(?:www\.)?linkedin\.com\/(?:in\/)?/i, "").replace(/\/+$/, "") : "";
+        const link = handle
+          ? `<a href="https://${t.replace(/^https?:\/\//i, "").replace(/"/g, "%22")}">${escapeHtml(handle)}</a>`
+          : linkifyContact(t);
+        return `<span class="contact">${NW_CONTACT_ICONS[kind] || ""}${link}</span>`;
+      })
+      .join("");
+    return (
+      `<header><h1>${escapeHtml(name)}</h1>` +
+      `${title ? `<div class="title">${escapeHtml(title)}</div>` : ""}` +
+      `${summaryHtml ? `<div class="nw-summary">${summaryHtml}</div>` : ""}` +
+      `${raw.length ? `<div class="contacts">${contactsHtml}</div>` : ""}</header>`
+    );
+  }
 
   // Classic: the role title and its technology list take separate lines, and the
   // contacts sit between two rules with an icon matching each item.
@@ -896,6 +1050,21 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
             `</div></div>`
           );
         }
+        // Network style: education rides the same rail as the work history — the
+        // degree, the school (and its location), then the period. data-nw marks
+        // the entry as built, so the experience pass below leaves it alone.
+        if (id === "network") {
+          const school = degree && uni ? uni : "";
+          const org = [school ? escapeHtml(school) : "", loc ? `<span class="nw-loc">${escapeHtml(loc)}</span>` : ""]
+            .filter(Boolean)
+            .join(" · ");
+          return (
+            `<div class="nw-entry nw-edu"><div class="nw-head"><h3 data-nw>${primary}</h3>` +
+            (org ? `<div class="nw-company">${org}</div>` : "") +
+            (period ? `<div class="nw-dates">${escapeHtml(period)}</div>` : "") +
+            `</div></div><!--nw-->`
+          );
+        }
         // Formal style: the same centered three-line block as its experience
         // entries — the degree leads, then the school with its location, then the
         // study period last. With no degree to lead, `primary` already falls back
@@ -1024,6 +1193,97 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
         return `<div class="tl-entry">${side}${main}</div>`;
       }
     );
+  }
+
+  // Network style: the summary moves up into the header, roles and degrees ride
+  // a rail, skills/languages/interests get their grids and chips, and every
+  // section heading gets its icon (and, after the first, the divider).
+  let nwSummary = "";
+  if (id === "network") {
+    body = body.replace(
+      /<h2[^>]*>\s*(?:Professional\s+)?(?:Summary|Profile|About(?:\s+Me)?)\s*<\/h2>([\s\S]*?)(?=<h2|$)/i,
+      (m, content) => { nwSummary = content.trim(); return ""; }
+    );
+
+    // Each role: title, company (with the "open" glyph) and location, dates,
+    // the "Accomplishments / Tasks" label, then its bullets.
+    body = body.replace(
+      /<h3\b(?![^>]*data-nw)([^>]*)>([\s\S]*?)<\/h3>\s*(?:<div class="role-org">([\s\S]*?)<\/div>)?\s*(<ul\b[\s\S]*?<\/ul>)?/g,
+      (m, attr, h3inner, org, ul) => {
+        const dm = h3inner.match(/<span class="role-dates">([\s\S]*?)<\/span>/);
+        const dates = (dm ? dm[1].trim() : "").replace(/\b(\d{1,2})\s*\/\s*(\d{4})\b/g, "$1 / $2");
+        const roleTitle = h3inner.replace(/<span class="role-dates">[\s\S]*?<\/span>/, "").trim();
+        const parts = (org || "").split(/\s*[·•]\s*/).map((s) => s.trim()).filter(Boolean);
+        const company = parts[0] || "";
+        const location = parts.slice(1).join(" · ");
+        const companyLine = company
+          ? `<div class="nw-company">${company}${NW_EXTERNAL}${location ? `<span class="nw-loc">${location}</span>` : ""}</div>`
+          : "";
+        return (
+          `<div class="nw-entry"><div class="nw-head"><h3 data-nw${attr}>${roleTitle}</h3>${companyLine}` +
+          (dates ? `<div class="nw-dates">${dates}</div>` : "") +
+          (ul ? `<div class="nw-label">Accomplishments / Tasks</div>` : "") +
+          `</div>${ul || ""}</div><!--nw-->`
+        );
+      }
+    );
+    // Consecutive entries share one rail, so the last can end at its own dot.
+    body = body.replace(
+      /(?:<div class="nw-entry[^"]*">[\s\S]*?<!--nw-->\s*)+/g,
+      (run) => `<div class="nw-rail">${run.replace(/<!--nw-->/g, "")}</div>`
+    );
+
+    // Skills: every "Category: items" line becomes a cell in a two-column grid.
+    body = body.replace(/(<h2[^>]*>[^<]*(?:Skill|Technolog|Competenc|Expertise)[^<]*<\/h2>)([\s\S]*?)(?=<h2|$)/i, (m, heading, content) => {
+      const cells = [];
+      content.replace(/<strong>([^<]*?):?\s*<\/strong>:?\s*([\s\S]*?)(?=<strong>|<\/p>|$)/g, (mm, cat, items) => {
+        const text = items.replace(/<br\s*\/?>/gi, " ").replace(/<\/?p[^>]*>/gi, "").trim();
+        if (cat.trim() && text) {
+          cells.push(`<div class="nw-skill"><div class="nw-skill-cat">${cat.trim().replace(/:$/, "")}</div><div class="nw-skill-items">${text}</div></div>`);
+        }
+        return mm;
+      });
+      return cells.length >= 2 ? `${heading}<div class="nw-skills">${cells.join("")}</div>` : m;
+    });
+
+    // The items of a section, whether written as bullets or as one line.
+    const sectionItems = (content) => {
+      const lis = content.match(/<li\b[^>]*>[\s\S]*?<\/li>/gi);
+      const raw = lis
+        ? lis.map((li) => li.replace(/<[^>]+>/g, ""))
+        : content.replace(/<br\s*\/?>/gi, ",").replace(/<[^>]+>/g, "").split(/[,;•|]\s*(?![^(]*\))/);
+      return raw.map((s) => s.trim()).filter(Boolean);
+    };
+
+    // Languages: name in bold, proficiency in italic teal, three to a row.
+    body = body.replace(/(<h2[^>]*>[^<]*Languages?[^<]*<\/h2>)([\s\S]*?)(?=<h2|$)/i, (m, heading, content) => {
+      const items = sectionItems(content);
+      if (!items.length) return m;
+      const cells = items.map((it) => {
+        const lm = it.match(/^(.+?)\s*(?:\(([^)]*)\)|[—–:]\s*(.+)|\s-\s(.+))$/);
+        const nm = lm ? lm[1] : it;
+        const level = lm ? (lm[2] || lm[3] || lm[4] || "").trim() : "";
+        return `<div class="nw-lang"><div class="nw-lang-name">${escapeHtml(nm)}</div>` +
+          (level ? `<div class="nw-lang-level">${escapeHtml(level)}</div>` : "") + `</div>`;
+      });
+      return `${heading}<div class="nw-langs">${cells.join("")}</div>`;
+    });
+
+    // Interests: outlined chips, each with a matching icon where one fits.
+    body = body.replace(/(<h2[^>]*>[^<]*(?:Interests?|Hobbies)[^<]*<\/h2>)([\s\S]*?)(?=<h2|$)/i, (m, heading, content) => {
+      const items = sectionItems(content);
+      if (!items.length) return m;
+      const chips = items.map((it) => `<span class="nw-chip">${nwInterestIcon(it)}${escapeHtml(it)}</span>`);
+      return `${heading}<div class="nw-chips">${chips.join("")}</div>`;
+    });
+
+    // Section headings: an icon in a navy circle; a divider before all but the first.
+    let firstHeading = true;
+    body = body.replace(/<h2\b([^>]*)>([\s\S]*?)<\/h2>/g, (m, attr, inner) => {
+      const divider = firstHeading ? "" : `<div class="nw-div"><i></i><i></i><i></i></div>`;
+      firstHeading = false;
+      return `${divider}<h2${attr}><span class="nw-ico">${nwSectionIcon(inner.replace(/<[^>]+>/g, ""))}</span><span>${inner}</span></h2>`;
+    });
   }
 
   // Classic and Ribbon render the company·location line as "Company, Location".
@@ -1181,11 +1441,11 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
     contacts = contacts.replace(/https?:\/\/(?:www\.)?(linkedin\.com\/[^\s)]+)/gi, "$1");
   }
 
-  const header = headerHtml(id, name, title, contacts);
+  const header = headerHtml(id, name, title, contacts, nwSummary);
 
   return `<!doctype html>
 <html><head><meta charset="utf-8" /><base target="_blank" /><style>${css}${fontOverride(style)}</style></head>
-<body><div class="page">
+<body><div class="page">${id === "network" ? NW_BACKGROUND : ""}
 ${header}
 <main>${body}</main>
 </div></body></html>`;
@@ -1216,7 +1476,7 @@ export function buildCoverLetterHtml(coverMarkdown, style, contactInfo = null) {
 
   return `<!doctype html>
 <html><head><meta charset="utf-8" /><base target="_blank" /><style>${css}</style></head>
-<body><div class="page">
+<body><div class="page">${id === "network" ? NW_BACKGROUND : ""}
 ${header}
 <main>${body}</main>
 </div></body></html>`;

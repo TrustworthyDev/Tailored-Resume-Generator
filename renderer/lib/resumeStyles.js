@@ -21,6 +21,7 @@ export const STYLES = [
   { id: "darkheader", label: "Dark Header", accent: "#1f1f1f" },
   { id: "ribbon", label: "Ribbon", accent: "#8b2635" },
   { id: "formal", label: "Formal", accent: "#111111" },
+  { id: "network", label: "Network", accent: "#2e86a8" },
 ];
 
 // Sample colors. The Content picker applies one to EVERY template's borders,

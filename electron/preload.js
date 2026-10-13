@@ -6,6 +6,9 @@ const { contextBridge, ipcRenderer } = require("electron");
 const invoke = (channel, payload) => ipcRenderer.invoke(channel, payload);
 
 contextBridge.exposeInMainWorld("api", {
+  // Which data profile this window runs on ("" = the default one).
+  profileInfo: () => invoke("app:profile"),
+
   // License / activation
   licenseStatus: () => invoke("license:status"),
   activateLicense: (key) => invoke("license:activate", key),
@@ -79,6 +82,22 @@ contextBridge.exposeInMainWorld("api", {
   importDatabase: () => invoke("db:import"),
   scanDatabase: () => invoke("db:scan"),
   importSelectedDatabase: (payload) => invoke("db:importSelected", payload),
+
+  // Shared database (one file used by several apps on this PC)
+  databaseLocation: () => invoke("db:location"),
+  shareDatabase: () => invoke("db:share"),
+  useSharedDatabase: () => invoke("db:useShared"),
+  stopSharingDatabase: () => invoke("db:stopSharing"),
+  scanOwnDatabase: () => invoke("db:scanOwn"),
+  mergeOwnHistory: () => invoke("db:mergeOwnHistory"),
+  exportTwoDatabaseFiles: () => invoke("db:exportTwo"),
+  connectedApps: () => invoke("db:connectedApps"),
+  // Another app saved to the shared database. Returns an unsubscribe function.
+  onDbChanged: (cb) => {
+    const handler = () => cb();
+    ipcRenderer.on("db:changed", handler);
+    return () => ipcRenderer.removeListener("db:changed", handler);
+  },
 
   // Resume
   generateResume: (data) => invoke("resume:generate", data),

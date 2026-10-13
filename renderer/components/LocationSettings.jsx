@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api } from "../lib/api";
+import { useDbChanged } from "../lib/useDbChanged";
 
 // Where generated resume PDFs are saved.
 export default function LocationSettings() {
@@ -7,6 +8,7 @@ export default function LocationSettings() {
 
   const load = () => api().getDownloadLocation().then((r) => setPath((r && r.path) || ""));
   useEffect(() => { load(); }, []);
+  useDbChanged(load); // another app saved to the shared database
 
   const choose = async () => {
     const r = await api().chooseDownloadLocation();
