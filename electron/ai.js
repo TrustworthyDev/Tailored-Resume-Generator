@@ -97,7 +97,6 @@ async function checkProxy(cfg) {
 
 const MODELS = {
   gemini: "gemini-3.5-flash-lite",
-  openai: "gpt-4o-mini",
   anthropic: "claude-3-5-sonnet-20241022",
 };
 
@@ -128,145 +127,6 @@ function geminiModel(model) {
 function isModelGone(e) {
   if (!e || e.status >= 500) return false;
   return e.status === 404 || /no longer available|not found|not supported|deprecated|retired/i.test(e.message || "");
-}
-
-const STYLE_GUIDES = {
-  network:
-    "Style: Network — modern and scannable. Write a 3-4 sentence Professional Summary. Group the Skills section into 6-10 clear categories, each as `**Category:** comma-separated items` on its own line (e.g. Programming Languages, Frontend Engineering, Backend Engineering, Database & Data Engineering, Cloud & Infrastructure, Testing & Quality). Only if the candidate information mentions spoken languages or personal interests, add a `## Languages` section with one `- Language (Proficiency)` bullet each and a `## Interests` section with one short bullet per interest; never invent either.",
-  professional:
-    "Style: Professional — formal tone, concise, conventional section order, no flourishes.",
-  modern:
-    "Style: Modern — clean layout, a short punchy summary, confident action verbs, light use of tasteful section emphasis.",
-  minimal:
-    "Style: Minimal — terse, no filler words, short bullet points, only the essentials.",
-  creative:
-    "Style: Creative — engaging voice and a distinctive summary, while remaining professional and truthful.",
-  technical:
-    "Style: Technical — emphasize technologies, tools, measurable impact, and a prominent Skills section.",
-  academic:
-    "Style: Academic — formal, emphasize education, research, publications, and detailed experience.",
-  executive:
-    "Style: Executive — senior leadership tone; emphasize strategy, scope, ownership, and measurable business outcomes; polished and concise.",
-  compact:
-    "Style: Compact — fit to a single page; very concise bullets; trim less-relevant detail while keeping impact.",
-  cards:
-    "Style: Cards — modern, scannable. Write a strong 3-4 sentence Professional Summary, and group the Skills section into 4-6 clear categories, each as `**Category:** comma-separated items` on its own line (e.g. Programming Languages, Frontend, Backend, Databases, Cloud & DevOps, Tools).",
-};
-
-function buildPrompt(personal, work, education, projects, jobDescription, style, instruction, extraInfo) {
-  const p = personal || {};
-  const lines = [];
-
-  lines.push(
-    "You are an expert resume writer. Produce a clean, professional, ATS-friendly resume in Markdown."
-  );
-  const guide = STYLE_GUIDES[(style || "").toLowerCase()];
-  if (guide) lines.push(guide);
-  if (instruction && instruction.trim()) {
-    lines.push("");
-    lines.push("Follow these user instructions carefully:");
-    lines.push(instruction.trim());
-  }
-  lines.push(
-    "Use only the information provided. Do not invent employers, dates, or achievements."
-  );
-  // Enforce the exact header structure the renderer parses. Kept after the user
-  // instruction so the layout stays consistent regardless of custom prompts.
-  lines.push("");
-  lines.push("Output structure — follow this Markdown layout EXACTLY:");
-  lines.push("- Line 1: the candidate's full name as a level-1 heading, e.g. `# Jane Doe`.");
-  lines.push("- Line 2: the professional title only, as plain text (no heading, no bold).");
-  lines.push("- Line 3: contacts on ONE line separated by ` | ` — email | phone | city, country | LinkedIn URL.");
-  lines.push("- Then each section as a level-2 heading, e.g. `## Professional Summary`, `## Core Technical Skills`, `## Professional Experience`.");
-  lines.push("- Each job under experience as a level-3 heading `### Role Title | Tech1, Tech2, Tech3 — Company · Location | Dates`, then `- ` bullet points (omit `· Location` if there is no location, and the ` | Tech…` part if the role has no headline stack).");
-  lines.push("- Those three separators are parsed to lay out the role line, so use them exactly: COMMAS between the technologies (never `|`), an em dash ` — ` before the company, and a middle dot ` · ` between company and location.");
-  lines.push("- KEYWORDS: inside the experience bullets and project descriptions, wrap every technology, tool, framework, platform or named skill that also appears in the job description in `**bold**` — these are what a recruiter skims and an ATS scores. Bold the term ONLY, never a whole clause or sentence, and use the job description's exact spelling and casing. Leave ordinary prose unbolded; if nearly everything is bold, nothing stands out.");
-  lines.push("- Never put the name, title, and contacts on the same line, and do not wrap the LinkedIn URL in a Markdown link.");
-  if (jobDescription && jobDescription.trim()) {
-    lines.push(
-      "Tailor the wording, summary, and emphasis to the target job description below."
-    );
-  }
-  lines.push("");
-  lines.push("## Candidate");
-  lines.push(`Name: ${p.name || ""}`);
-  lines.push(`Title: ${p.title || ""}`);
-  lines.push(`Email: ${p.email || ""}`);
-  lines.push(`Phone: ${p.phone || ""}`);
-  lines.push(`Address: ${p.address || ""}`);
-  lines.push(`Country: ${p.country || ""}`);
-  lines.push(`LinkedIn: ${p.linkedin || ""}`);
-  lines.push(`Portfolio: ${p.portfolio || ""}`);
-  lines.push("");
-  lines.push("## Work history");
-  (work || []).forEach((w, i) => {
-    lines.push(
-      `${i + 1}. ${w.role_name || ""} — ${w.company_name || ""} (${
-        w.location || ""
-      }) | ${w.work_duration || ""}`
-    );
-  });
-
-  if (education && education.length) {
-    lines.push("");
-    lines.push("## Education");
-    education.forEach((e, i) => {
-      lines.push(
-        `${i + 1}. ${e.degree || ""} — ${e.university || ""} (${
-          e.location || ""
-        }) | ${e.period || ""}`
-      );
-    });
-  }
-
-  if (projects && projects.length) {
-    lines.push("");
-    lines.push("## Projects");
-    projects.forEach((pr, i) => {
-      lines.push(
-        `${i + 1}. "${pr.title || ""}"${pr.link ? ` (${pr.link})` : ""} — ${pr.description || ""}`
-      );
-    });
-  }
-
-  if (p.additional_info && String(p.additional_info).trim()) {
-    lines.push("");
-    lines.push("## Additional information");
-    lines.push(
-      "Extra candidate-provided details (e.g. certifications, languages, awards). Weave the relevant items into the resume — add a dedicated section (such as Certifications or Languages) when it makes sense:"
-    );
-    lines.push(String(p.additional_info).trim());
-  }
-
-  if (jobDescription && jobDescription.trim()) {
-    lines.push("");
-    lines.push("## Target job description");
-    lines.push(jobDescription.trim());
-  }
-
-  // Per-generation notes typed on the Generate tab (this job only). Ranked above
-  // the account's stored extras because they're deliberately job-specific.
-  if (extraInfo && String(extraInfo).trim()) {
-    lines.push("");
-    lines.push("## Additional info for THIS application");
-    lines.push(
-      "Notes the candidate added for this specific job. Honour them — they take priority over the general guidance above (but never invent facts):"
-    );
-    lines.push(String(extraInfo).trim());
-  }
-
-  lines.push("");
-  lines.push(
-    "Output sections: a one-line header with contact links, a 2-3 sentence Professional Summary, an Experience section with 2-4 strong bullet points per role, an Education section, a Skills section inferred from the roles, and a Projects section (only if projects are provided). Format EACH project as exactly: `**Project Title** ([domain](full-url))` on the first line — the title in bold, then the link in parentheses using ONLY the domain (e.g. `veygo.com`) as the visible link text; omit the parentheses entirely if there is no link, and NEVER write the raw URL anywhere else. Put the description on the NEXT line, with a blank line between projects. In the Skills section, put EACH category on its own line as `**Category:** items` (one category per line). Return Markdown."
-  );
-  if (jobDescription && jobDescription.trim()) {
-    lines.push("");
-    lines.push(
-      "FORMAT: The VERY FIRST line of your output must be exactly `TARGET: <job title> | <company> | <country>`. For <job title>, copy the COMPLETE title VERBATIM from the job description, including every word and symbol such as parentheses, slashes, or qualifiers (e.g. `AI Engineer (Full Remote)`) — do NOT shorten or summarize it. For <company>, use the hiring company's name. For <country>, give a plain country name, inferring it from the job location, office, or phrases like `Remote (US)` / `based in Berlin` (map a city to its country, e.g. Tallinn → Estonia). Use Unknown only for a part genuinely absent. Then a blank line, then the resume Markdown."
-    );
-  }
-
-  return lines.join("\n");
 }
 
 // A short, deterministic fingerprint of a job description. Used by Generate V2
@@ -539,7 +399,7 @@ function resumeStructToMarkdown(resume) {
   return lines.join("\n").trim();
 }
 
-// Generate V2 builds the SAME tailored resume request as V1, but serialised as a
+// The tailored resume request, serialised as a
 // single JSON object (the user pastes this into their signed-in ChatGPT). The
 // object carries a unique request_id and a job_ref so the reply can be verified,
 // and a response_format template telling ChatGPT to reply with ONLY a JSON
@@ -692,8 +552,8 @@ function parseResumeJson(raw, expected) {
   const exp = expected || {};
   const gotId = obj.request_id == null ? "" : String(obj.request_id).trim();
   const gotRef = obj.job_ref == null ? "" : String(obj.job_ref).trim();
-  if (exp.id && gotId !== String(exp.id)) return { ok: false, reason: "mismatch", detail: "id" };
-  if (exp.jobRef && gotRef !== String(exp.jobRef)) return { ok: false, reason: "mismatch", detail: "job" };
+  if (exp.id && gotId !== String(exp.id)) return { ok: false, reason: "mismatch", detail: "id", id: gotId };
+  if (exp.jobRef && gotRef !== String(exp.jobRef)) return { ok: false, reason: "mismatch", detail: "job", id: gotId };
 
   // Prefer the structured target fields; fall back to a TARGET line if the
   // model embedded one in the markdown. parseResumeMarkdown also strips any
@@ -762,112 +622,9 @@ async function requestGemini(apiKey, prompt, model, opts = {}) {
   );
 }
 
-async function callOpenAI(apiKey, prompt, model) {
-  const mdl = model || MODELS.openai;
-  // Reasoning models (o1/o3/o4/gpt-5…) reject a custom `temperature`; omit it.
-  const isReasoning = /^o\d/i.test(mdl) || /^gpt-5/i.test(mdl);
-  const body = { model: mdl, messages: [{ role: "user", content: prompt }] };
-  if (!isReasoning) body.temperature = 0.7;
-  const res = await uFetch("https://api.openai.com/v1/chat/completions", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
-    },
-    body: JSON.stringify(body),
-    dispatcher: proxyAgent || undefined,
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    const err = new Error(
-      `OpenAI API error: ${(data && data.error && data.error.message) || res.statusText}`
-    );
-    err.status = res.status;
-    throw err;
-  }
-  return data && data.choices && data.choices[0] && data.choices[0].message
-    ? data.choices[0].message.content
-    : null;
-}
-
-async function callAnthropic(apiKey, prompt, model) {
-  const res = await uFetch("https://api.anthropic.com/v1/messages", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-api-key": apiKey,
-      "anthropic-version": "2023-06-01",
-    },
-    body: JSON.stringify({
-      model: model || MODELS.anthropic,
-      max_tokens: 4096,
-      messages: [{ role: "user", content: prompt }],
-    }),
-    dispatcher: proxyAgent || undefined,
-    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-  });
-  const data = await res.json();
-  if (!res.ok) {
-    const err = new Error(
-      `Anthropic API error: ${(data && data.error && data.error.message) || res.statusText}`
-    );
-    err.status = res.status;
-    throw err;
-  }
-  return data && data.content && data.content[0] ? data.content[0].text : null;
-}
-
-async function generateResume({
-  provider,
-  apiKey,
-  model,
-  personal,
-  work,
-  education,
-  projects,
-  jobDescription,
-  style,
-  instruction,
-  extraInfo,
-}) {
-  if (!apiKey) {
-    throw new Error("No active API key. Add one under API Keys first.");
-  }
-
-  const prompt = buildPrompt(
-    personal,
-    work,
-    education,
-    projects,
-    jobDescription,
-    style,
-    instruction,
-    extraInfo
-  );
-
-  const p = (provider || "gemini").toLowerCase();
-  const mdl = (model || "").trim() || undefined;
-  let text;
-  try {
-    text = await withRetry(() => {
-      if (p === "openai") return callOpenAI(apiKey, prompt, mdl);
-      if (p === "anthropic" || p === "claude") return callAnthropic(apiKey, prompt, mdl);
-      return callGemini(apiKey, prompt, mdl);
-    });
-  } catch (e) {
-    throw new Error(describeError(e));
-  }
-
-  if (!text) throw new Error("The AI returned an empty response.");
-
-  return parseResumeMarkdown(text);
-}
-
 // Pull the target job role/company/country off the first "TARGET: …" line (if
-// present) and return the cleaned resume body plus those fields. Shared by the
-// Gemini path (V1) and the ChatGPT-clipboard path (V2) so both yield the same
-// shape and the same rendering pipeline.
+// present) and return the cleaned resume body plus those fields. Used on the
+// Markdown that parseResumeJson builds from the ChatGPT reply.
 function parseResumeMarkdown(input) {
   let text = String(input || "");
   let jobRole = "";
@@ -888,84 +645,6 @@ function parseResumeMarkdown(input) {
   }
 
   return { text: text.trim(), jobRole, jobCompany, jobCountry };
-}
-
-// ---- Cover letter --------------------------------------------------------
-
-function buildCoverLetterPrompt(personal, work, education, projects, jobDescription, instruction, role, company) {
-  const p = personal || {};
-  const lines = [];
-  lines.push("You are an expert career writer. Write a concise, tailored, professional cover letter in Markdown.");
-  if (instruction && instruction.trim()) {
-    lines.push("");
-    lines.push("Honor these user style preferences where reasonable:");
-    lines.push(instruction.trim());
-  }
-  lines.push("");
-  lines.push("Rules:");
-  lines.push("- Use ONLY the candidate's real background below; never invent employers, dates, or achievements.");
-  lines.push(`- Address it to the hiring team${company ? ` at ${company}` : ""}${role ? ` for the ${role} role` : ""}.`);
-  lines.push("- Exactly 3 short paragraphs: (1) a strong opening on why this role/company, (2) the most relevant experience and concrete achievements mapped to the role, (3) a confident closing with a call to action.");
-  lines.push("- Keep it under ~220 words.");
-  lines.push("- Output ONLY the letter in Markdown: a salutation line (e.g. `Dear Hiring Team,`), the paragraphs, then `Sincerely,` and the candidate's name on the next line.");
-  lines.push("- Do NOT include a letterhead, contact details, the date, or the company's address — those are added separately.");
-  lines.push("");
-  lines.push("## Candidate");
-  lines.push(`Name: ${p.name || ""}`);
-  lines.push(`Title: ${p.title || ""}`);
-  lines.push("");
-  lines.push("## Work history");
-  (work || []).forEach((w, i) =>
-    lines.push(`${i + 1}. ${w.role_name || ""} — ${w.company_name || ""} (${w.location || ""}) | ${w.work_duration || ""}`)
-  );
-  if (education && education.length) {
-    lines.push("");
-    lines.push("## Education");
-    education.forEach((e, i) =>
-      lines.push(`${i + 1}. ${e.degree || ""} — ${e.university || ""} (${e.location || ""}) | ${e.period || ""}`)
-    );
-  }
-  if (projects && projects.length) {
-    lines.push("");
-    lines.push("## Projects");
-    projects.forEach((pr, i) =>
-      lines.push(`${i + 1}. ${pr.title || ""}${pr.link ? ` (${pr.link})` : ""}${pr.description ? ` — ${pr.description}` : ""}`)
-    );
-  }
-  if (p.additional_info && String(p.additional_info).trim()) {
-    lines.push("");
-    lines.push("## Additional information");
-    lines.push(String(p.additional_info).trim());
-  }
-  if (jobDescription && jobDescription.trim()) {
-    lines.push("");
-    lines.push("## Target job description");
-    lines.push(jobDescription.trim());
-  }
-  return lines.join("\n");
-}
-
-async function generateCoverLetter({
-  provider, apiKey, model, personal, work, education, projects, jobDescription, instruction, role, company,
-}) {
-  if (!apiKey) {
-    throw new Error("No active API key. Add one under API Keys first.");
-  }
-  const prompt = buildCoverLetterPrompt(personal, work, education, projects, jobDescription, instruction, role, company);
-  const pr = (provider || "gemini").toLowerCase();
-  const m = (model || "").trim() || undefined;
-  let text;
-  try {
-    text = await withRetry(() => {
-      if (pr === "openai") return callOpenAI(apiKey, prompt, m);
-      if (pr === "anthropic" || pr === "claude") return callAnthropic(apiKey, prompt, m);
-      return callGemini(apiKey, prompt, m);
-    });
-  } catch (e) {
-    throw new Error(describeError(e));
-  }
-  if (!text) throw new Error("The AI returned an empty cover letter.");
-  return { text: text.trim() };
 }
 
 // ---- Resume import (parse a resume PDF into structured account fields) -----
@@ -1183,7 +862,7 @@ async function parseResumeFile({ provider, apiKey, model, base64 }) {
 }
 
 module.exports = {
-  generateResume, generateCoverLetter, parseResumeFile, setProxy, checkProxy,
-  buildPrompt, parseResumeMarkdown, buildPromptJson, parseResumeJson, jobRefFor,
+  parseResumeFile, setProxy, checkProxy,
+  parseResumeMarkdown, buildPromptJson, parseResumeJson, jobRefFor,
   refineV2Prompt, extractJdTarget, extractJobPost, RETIRED_GEMINI_MODELS,
 };

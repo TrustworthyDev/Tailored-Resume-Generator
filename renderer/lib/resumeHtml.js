@@ -1450,34 +1450,3 @@ ${header}
 <main>${body}</main>
 </div></body></html>`;
 }
-
-// Build a cover letter PDF that shares the resume's header style.
-export function buildCoverLetterHtml(coverMarkdown, style, contactInfo = null) {
-  const id = (style && style.id) || "professional";
-  const accent = (style && style.accent) || "#2f5b8f";
-  const head = (style && style.head) || "";
-  const nameColor = (style && style.nameColor) || "";
-  const name = (contactInfo && contactInfo.name) || "";
-  const title = (contactInfo && (contactInfo.title || "").trim()) || "";
-  const contacts = buildContacts(contactInfo);
-
-  const header = headerHtml(id, name, title, contacts);
-
-  const body = marked.parse((coverMarkdown || "").trim(), {
-    mangle: false,
-    headerIds: false,
-  });
-
-  const css =
-    BASE + "\n" + templateCss(id, accent, head, nameColor) + nameTitleCss(nameColor) +
-    "\n.contacts{overflow-wrap:anywhere;}" +
-    "\nmain p{margin:0 0 11px;line-height:1.5;text-align:left;}" +
-    fontOverride(style);
-
-  return `<!doctype html>
-<html><head><meta charset="utf-8" /><base target="_blank" /><style>${css}</style></head>
-<body><div class="page">${id === "network" ? NW_BACKGROUND : ""}
-${header}
-<main>${body}</main>
-</div></body></html>`;
-}

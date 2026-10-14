@@ -90,6 +90,55 @@ h1, h2, h3 { color: var(--text); }
 .nav:hover { background: var(--panel-2); color: var(--text); }
 .nav.active { background: var(--primary); color: #fff; box-shadow: 0 4px 14px rgba(79, 140, 255, 0.35); }
 .content { flex: 1; min-width: 0; height: 100vh; overflow-y: auto; padding: 26px 30px; }
+/* Generate V3's jobs, in a column beside the main sidebar. Same top padding as
+   the sidebar, so the collapse button never sits on a job. */
+.job-rail {
+  width: 190px; flex-shrink: 0; height: 100vh; overflow-y: auto;
+  background: var(--panel); border-right: 1px solid var(--border);
+  padding: 58px 12px 20px; display: flex; flex-direction: column; gap: 8px;
+}
+/* The rail already clears the collapse button, so the content needn't. */
+.app.sidebar-collapsed.has-job-rail .content { padding-left: 30px; }
+.job-rail-title {
+  color: var(--muted); font-size: 11px; font-weight: 700;
+  letter-spacing: 0.08em; text-transform: uppercase; padding: 0 4px 2px;
+}
+.job-tab {
+  display: flex; align-items: stretch; flex-shrink: 0; min-height: 52px;
+  background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
+}
+.job-tab.active { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
+.job-tab-main {
+  flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  background: transparent; border: none; color: var(--muted); cursor: pointer;
+  padding: 8px 10px; text-align: left;
+}
+.job-tab.active .job-tab-main, .job-tab-main:hover { color: var(--text); }
+.job-tab-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.job-tab-name { font-size: 14px; font-weight: 700; }
+.job-tab-company {
+  font-size: 12px; font-weight: 500; color: var(--muted);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.job-tab-spinner.spinner.small { flex-shrink: 0; width: 14px; height: 14px; border-width: 2px; }
+.job-tab-flag {
+  flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%; font-size: 11px; font-weight: 700; color: #fff;
+}
+.job-tab-flag.attention { background: #e0a030; }
+.job-tab-flag.done { background: var(--ok); }
+.job-tab-close {
+  flex-shrink: 0; width: 30px; background: transparent; border: none;
+  border-left: 1px solid var(--border); color: var(--muted); cursor: pointer; font-size: 16px;
+}
+.job-tab-close:hover:not(:disabled) { color: var(--danger); }
+.job-tab-close:disabled { opacity: 0.35; cursor: not-allowed; }
+.job-tab-add {
+  flex-shrink: 0; height: 40px; border-radius: 10px; cursor: pointer;
+  background: transparent; border: 1px dashed var(--border); color: var(--muted);
+  font-size: 13px; font-weight: 600;
+}
+.job-tab-add:hover { color: var(--text); border-color: var(--muted); }
 
 /* Cards & layout */
 .card {
@@ -289,7 +338,7 @@ select.input {
 .boot-overlay { z-index: 200; }
 .boot-actions { justify-content: center; margin-top: 18px; }
 
-/* Generate V2 — "waiting for the ChatGPT reply" banner. */
+/* Generate V3 — "waiting for the ChatGPT reply" banner. */
 .v2-wait {
   display: flex; align-items: center; gap: 14px; margin-top: 12px;
   padding: 13px 16px; border: 1px solid var(--border);
@@ -297,7 +346,7 @@ select.input {
 }
 .v2-wait-text { display: flex; flex-direction: column; gap: 2px; flex: 1; min-width: 0; }
 
-/* Generate V2 — embedded ChatGPT tab (webview). Fills the remaining card height
+/* Generate V3 — embedded ChatGPT tab (webview). Fills the remaining card height
    (the .resume-form card is a fixed-height flex column) so there's no black gap. */
 .chat-embed { flex-direction: column; gap: 8px; flex: 1 1 auto; min-height: 0; }
 .chat-embed-bar { display: flex; align-items: center; gap: 10px; flex-shrink: 0; }
@@ -316,7 +365,7 @@ select.input {
   min-height: 30px;
 }
 
-/* Generate V2 — ChatGPT Project Home row. Fixed row height so the section size
+/* Generate V3 — ChatGPT Project Home row. Fixed row height so the section size
    stays constant regardless of its contents. */
 .chat-home {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
@@ -629,11 +678,22 @@ select.input {
 .date-input { width: auto; padding: 6px 10px; font-size: 13px; color-scheme: dark; }
 
 /* Resume generator */
+/* Sidebar count of jobs generating, visible from any tab. */
+.nav-badge {
+  display: inline-flex; align-items: center; justify-content: center;
+  min-width: 22px; height: 22px; margin-left: 10px; padding: 0 6px;
+  border-radius: 11px; background: var(--primary); color: #fff;
+  font-size: 12px; font-weight: 700; vertical-align: middle;
+}
+.nav.active .nav-badge { background: #fff; color: var(--primary); }
 .resume-layout { display: grid; grid-template-columns: 380px 1fr; gap: 22px; align-items: start; }
+/* Same fixed height as the form card beside it, whether or not Colors & Font
+   is expanded: the style grid takes up whatever room the pickers leave. */
 .resume-styles {
-  position: sticky; top: 0; max-height: calc(100vh - 52px);
+  position: sticky; top: 0; height: calc(100vh - 52px);
   display: flex; flex-direction: column;
 }
+.resume-styles .style-grid { flex-grow: 1; }
 .style-grid {
   /* Exactly 2 columns x 4 rows in view; every further style scrolls. */
   --style-row: 122px;

@@ -60,6 +60,7 @@ contextBridge.exposeInMainWorld("api", {
   // Preferences (persisted selections)
   getPref: (key) => invoke("prefs:get", key),
   setPref: (key, value) => invoke("prefs:set", { key, value }),
+  clearJobPrefs: (n) => invoke("prefs:clearJob", n),
 
   // Proxies (multiple; one active)
   listProxies: () => invoke("proxy:list"),
@@ -99,14 +100,10 @@ contextBridge.exposeInMainWorld("api", {
     return () => ipcRenderer.removeListener("db:changed", handler);
   },
 
-  // Resume
-  generateResume: (data) => invoke("resume:generate", data),
-  generateCoverLetter: (data) => invoke("coverletter:generate", data),
-
   // Generate V3 — extract a full job posting from a job-post link.
   fetchJobPost: (url) => invoke("jd:fromLink", url),
 
-  // Generate V2 — ChatGPT-in-a-browser via a clipboard handshake.
+  // ChatGPT-in-a-browser via a clipboard handshake (used by Generate V3).
   chatgptBuildPrompt: (data) => invoke("chatgpt:buildPrompt", data),
   openChatgpt: (opts) => invoke("chatgpt:open", opts),
   chatgptSessionInfo: () => invoke("chatgpt:sessionInfo"),
@@ -130,7 +127,7 @@ contextBridge.exposeInMainWorld("api", {
   awaitChatgptClipboard: (id, prompt, jobRef) => invoke("chatgpt:awaitClipboard", { id, prompt, jobRef }),
   // Hand a captured reply straight to the waiting run (no clipboard involved).
   submitChatgptReply: (data) => invoke("chatgpt:submitReply", data),
-  cancelChatgptClipboard: () => invoke("chatgpt:cancelClipboard"),
+  cancelChatgptClipboard: (id) => invoke("chatgpt:cancelClipboard", id),
   importResumeFile: () => invoke("resume:importFile"),
   // One account as a Markdown record (export sends what's on screen).
   exportAccountMd: (data) => invoke("account:exportMd", data),
