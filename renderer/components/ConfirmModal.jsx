@@ -9,6 +9,7 @@ export default function ConfirmModal({
   cancelLabel = "Cancel",
   onConfirm,
   onCancel,
+  overlayClassName = "", // extra class for the backdrop, e.g. to scope it to a panel
 }) {
   useEffect(() => {
     if (!open) return;
@@ -23,7 +24,7 @@ export default function ConfirmModal({
   if (!open) return null;
 
   return (
-    <div className="modal-overlay" onClick={onCancel}>
+    <div className={"modal-overlay" + (overlayClassName ? " " + overlayClassName : "")} onClick={onCancel}>
       <div className="modal" onClick={(e) => e.stopPropagation()}>
         {title && <h3 className="modal-title">{title}</h3>}
         {message && <p className="muted modal-msg">{message}</p>}

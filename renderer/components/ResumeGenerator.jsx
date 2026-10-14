@@ -283,12 +283,14 @@ function CopyButton({ label, done, onCopy }) {
 //
 // Several of these run side by side, one per job (`job` = 1, 2, …), each with
 // its own ChatGPT tab and its own saved draft. `multi` says more than one job is
-// open, and `onStatus` tells the job tabs what this one is doing.
-export default function ResumeGenerator({ active = true, job = 1, multi = false, onStatus }) {
+// open, `onStatus` tells the job tabs what this one is doing, and
+// `startRequest` ({ url, token }) hands it a link to extract straight away.
+export default function ResumeGenerator({ active = true, job = 1, multi = false, onStatus, startRequest }) {
   // This job's copy of a per-job setting. Job 1 keeps the plain key, so the
   // draft from before jobs existed is still there.
   const jk = (key) => (job > 1 ? `${key}@${job}` : key);
-  // A job opened after the first starts from job 1's account and notes.
+  // Every other job starts from job 1's account and notes (kept even while job
+  // 1 is closed).
   const getJobPref = async (key) => {
     const own = await api().getPref(jk(key));
     if (job === 1 || (own && own.value != null)) return own;
@@ -345,16 +347,24 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
   const [prefsReady, setPrefsReady] = useState(false); // toggles render after load
   const [copied, setCopied] = useState(false);
   // Where this job stands, drawn as a border around the whole generator:
-  //   ""          nothing extracted yet (how every fresh start begins)
+  //   ""          nothing extracted yet, or an extraction is running
   //   "extracted" a job post came in and is not filed yet - blue, and it stays
   //               blue while its resume is generated
+  //   "failed"    the last extraction failed or came back incomplete - yellow,
+  //               and the job stops there instead of going on to generate
   //   "copied"    its folder path has been taken away to file it - green
-  // Persisted so it survives switching tabs, and cleared when the app starts:
-  // the mark describes the job being worked on right now, not one from days ago.
+  // Persisted with the job, so the job tabs come back as they were when the app
+  // was closed. A yellow job keeps the reason it stopped (gen_issue) as well.
   const [mark, setMark] = useState("");
   const setMarkState = (v) => {
     setMark(v);
     api().setPref(jk("gen_mark_state"), v || "");
+    if (v !== "failed") api().setPref(jk("gen_issue"), "");
+  };
+  // Why the extraction stopped: shown on the job, and kept for the next start.
+  const setIssue = (msg) => {
+    setError(msg);
+    api().setPref(jk("gen_issue"), msg || "");
   };
   const [acctInfo, setAcctInfo] = useState(null); // contact info for the live viewer
   const [eduRows, setEduRows] = useState([]); // structured education for the resume
@@ -390,18 +400,38 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
   const pastedRef = useRef(false);
   const busyRef = useRef(false); // guards overlapping PDF renders
 
-  // What the job tabs show: running, waiting on an answer, or finished with its
-  // "Resume saved" summary not seen yet - plus the company it's for.
+  // A link handed in by the Jobs column's Start: put it in the box and extract
+  // it. Waits for this job's saved state to load first, so the account (and the
+  // auto-generate toggle) are in place and the load can't overwrite the result.
+  const startedTokenRef = useRef("");
+  useEffect(() => {
+    if (!prefsReady || !startRequest || !startRequest.url) return;
+    if (startedTokenRef.current === startRequest.token) return;
+    startedTokenRef.current = startRequest.token;
+    // Start may hand a finished job its next link: drop the old job first.
+    resetJob();
+    setJobLink(startRequest.url);
+    api().setPref(jk("gen_job_link"), startRequest.url);
+    setView("generate");
+    fetchJobFromLink(startRequest.url);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [prefsReady, startRequest]);
+
+  // What the job tabs show: running, waiting on an answer, finished (this job's
+  // resume is generated and saved), whether it holds a job at all, its border
+  // mark (extracted / path copied) - plus the company it's for.
   useEffect(() => {
     if (!onStatus) return;
     onStatus(job, {
       busy: loading || fetchingJd || chatWaiting,
       attention: !!dupConfirm,
-      done: showSaved,
+      done: !!savedPath,
+      hasJob: !!jobMeta || !!(jd && jd.trim()),
+      mark,
       company: jobCompany,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, fetchingJd, chatWaiting, dupConfirm, showSaved, jobCompany]);
+  }, [loading, fetchingJd, chatWaiting, dupConfirm, savedPath, jobMeta, jd, mark, jobCompany]);
 
   // Brief in-app toast, shown by the single global toast in the app shell.
   const toast = (message, type = "alert") =>
@@ -464,6 +494,28 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
   const rememberResult = (text) => {
     setResult(text || "");
     api().setPref(RESULT_PREF, text || "");
+  };
+
+  // Back to a blank job: no link, posting, description, resume or mark. The
+  // account, prompt and Additional Info stay - they belong to the person, not
+  // the job. Used by Start before it hands this job its link.
+  const resetJob = () => {
+    setShowSaved(false);
+    setShowInfo(false);
+    setShowPreview(false);
+    setShowPromptModal(false);
+    setJobLink("");
+    api().setPref(jk("gen_job_link"), "");
+    setJobMeta(null);
+    jobMetaRef.current = null;
+    api().setPref(jk("gen_v3_meta"), "");
+    setJd("");
+    api().setPref(JD_PREF, "");
+    clearCache();
+    rememberTarget("", "", "");
+    setMarkState("");
+    setError("");
+    setView("generate");
   };
 
   // Drops the cached generation (the resume text and the file it produced).
@@ -547,6 +599,10 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
       // Where the job stood when this tab was last open.
       const markPref = await api().getPref(jk("gen_mark_state"));
       if (markPref && markPref.value) setMark(markPref.value);
+      if (markPref && markPref.value === "failed") {
+        const issuePref = await api().getPref(jk("gen_issue"));
+        if (issuePref && issuePref.value) setError(issuePref.value);
+      }
 
       // The last target job, so "View info" survives a restart — and the resume
       // text that went with it, so the style/colour/font controls can re-render
@@ -619,8 +675,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
       // reorder done there would otherwise not show up here.
       const orderPref = await api().getPref("style_order");
       if (!cancelled && orderPref && orderPref.value) setStyles(rankStyles(orderPref.value));
-      // Same for the mark: it belongs to the job in hand, and it is cleared
-      // when the app starts.
+      // Same for the mark: it belongs to the job in hand.
       const markPref = await api().getPref(jk("gen_mark_state"));
       if (!cancelled && markPref) setMark(markPref.value || "");
       // The toggles are shared by every job, so pick up a change made in another.
@@ -941,14 +996,17 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
   // Generate V3: load the job-post link and extract the full posting. The full
   // clear — description, cached resume, remembered extraction — happens on the
   // Extract CLICK, not while the link is being typed.
-  const fetchJobFromLink = async () => {
-    const link = (jobLink || "").trim();
+  // `linkArg`: extract this link instead of the one in the box (a link handed
+  // in by the Jobs column, before the box has caught up with it).
+  const fetchJobFromLink = async (linkArg) => {
+    const link = (typeof linkArg === "string" ? linkArg : jobLink || "").trim();
     if (!/^https?:\/\//i.test(link)) {
       toast("Paste a job-post link that starts with http:// or https://", "warning");
       return;
     }
     setFetchingJd(true);
     setError("");
+    setMarkState(""); // no colour while the read runs
     // Drop the whole previous job now that a new read is starting: the detail
     // chips, the description, the remembered extraction and the cached resume.
     setJobMeta(null);
@@ -960,7 +1018,8 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     try {
       const res = await api().fetchJobPost(link);
       if (!res || !res.ok) {
-        setError((res && res.error) || "Could not read that job post.");
+        setMarkState("failed");
+        setIssue((res && res.error) || "Could not read that job post.");
         return;
       }
       const meta = {
@@ -971,8 +1030,6 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
         source: res.source || "", usedRaw: !!res.usedRaw,
       };
       setJobMeta(meta);
-      // The posting is in: mark the generator blue until it is generated.
-      setMarkState("extracted");
       jobMetaRef.current = meta;
       api().setPref(jk("gen_v3_meta"), JSON.stringify(meta));
       // Fill the Job Description with the details AND the description, so what
@@ -991,9 +1048,23 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
       const acctId = accountIdRef.current;
       // The detail layer reports why it came up empty instead of failing silently.
       if (res.aiNote && !meta.role && !meta.company) toast(res.aiNote, "warning");
-      if (res.usedRaw) {
-        toast("Couldn't fully parse the page — showing the raw text. Review and trim the Job Description below.", "warning");
-      } else if (autoGen && acctId && jdText.trim()) {
+      // Anything missing means the resume would be built - and filed, and
+      // checked for duplicates - on guesswork. Mark the job yellow and stop
+      // here, even with auto-generate on; the user fixes it and generates.
+      const issues = [];
+      if (res.usedRaw) issues.push("the page couldn't be fully parsed");
+      if (!meta.company) issues.push("no company name");
+      if (!meta.role) issues.push("no job title");
+      if (!(res.jobDescription || "").trim()) issues.push("no job description");
+      if (issues.length) {
+        setMarkState("failed");
+        setIssue(`Extracted with issues: ${issues.join(", ")}. Fix the Job Description, then press Generate Resume.`);
+        toast(`Extraction needs a look — ${issues.join(", ")}.`, "warning");
+        return;
+      }
+      // A clean extraction: blue until it is filed.
+      setMarkState("extracted");
+      if (autoGen && acctId && jdText.trim()) {
         // Auto-generate: run the full workflow immediately (no Generate click).
         toast("Job extracted — generating the resume automatically…", "info");
         setFetchingJd(false);
@@ -1008,7 +1079,8 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
         );
       }
     } catch (e) {
-      setError(friendlyError(e));
+      setMarkState("failed");
+      setIssue(friendlyError(e));
     } finally {
       setFetchingJd(false);
     }
@@ -2197,12 +2269,16 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
 
   const copy = () => navigator.clipboard.writeText(result);
 
+  // The job's own panel. Its pop-ups (job-modal) cover this panel only, not the
+  // whole window, so the Jobs column stays usable and a pop-up stays with its
+  // job: hidden while another job is on screen, back when this one returns.
   return (
-    <div>
+    <div className="job-pane">
     {/* The outline around both panels says where this job stands: blue from the
         moment a posting is extracted - through generating it - until its folder
-        is copied, which turns it green. A fresh start of the app clears it. */}
-    <div className={"resume-layout" + (mark === "copied" ? " location-copied" : mark === "extracted" ? " job-extracted" : "")}>
+        is copied, which turns it green; yellow when the extraction had issues.
+        It is saved with the job, so it is still there after a restart. */}
+    <div className={"resume-layout" + (mark === "copied" ? " location-copied" : mark === "extracted" ? " job-extracted" : mark === "failed" ? " job-failed" : "")}>
       <section className="card resume-styles">
         <div className="styles-head">
           <h2>Resume Styles</h2>
@@ -2449,7 +2525,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
               />
               <button
                 className="btn primary"
-                onClick={fetchJobFromLink}
+                onClick={() => fetchJobFromLink()}
                 disabled={fetchingJd || !jobLink.trim()}
               >
                 {fetchingJd ? "Reading…" : "Extract"}
@@ -2706,9 +2782,11 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
             style={
               view === "chatgpt"
                 ? { display: "flex" }
-                // Keep the WebView laid out (off-screen) instead of display:none so
-                // it stays attached and pre-warmed; snaps into the card when active.
-                : { display: "flex", position: "absolute", left: "-99999px", top: 0, width: "1000px", height: "700px", pointerEvents: "none" }
+                // Keep the WebView laid out instead of display:none so it stays
+                // attached and pre-warmed; snaps into the card when active. It is
+                // parked inside the window, invisible and unclickable, rather than
+                // off-screen: Chromium all but stops a page that sits off-screen.
+                : { display: "flex", position: "absolute", left: 0, top: 0, width: "1000px", height: "700px", opacity: 0, zIndex: -1, pointerEvents: "none" }
             }
           >
             <div className="chat-embed-bar">
@@ -2755,7 +2833,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     </div>
 
     {active && showPreview && (
-      <div className="modal-overlay" onClick={() => setShowPreview(false)}>
+      <div className="modal-overlay job-modal" onClick={() => setShowPreview(false)}>
         <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
           <div className="card-head">
             <h2>Generated Resume</h2>
@@ -2772,7 +2850,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     )}
 
     {active && showPromptModal && (
-      <div className="modal-overlay" onClick={() => setShowPromptModal(false)}>
+      <div className="modal-overlay job-modal" onClick={() => setShowPromptModal(false)}>
         <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
           <div className="card-head">
             <h2>{selectedPrompt ? (selectedPrompt.name || "Prompt") : "Prompt"}</h2>
@@ -2790,7 +2868,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     {/* Opens itself as soon as a resume is saved: what was generated, where it
         went, and the actions you'd reach for next. */}
     {active && showSaved && (
-      <div className="modal-overlay" onClick={() => setShowSaved(false)}>
+      <div className="modal-overlay job-modal" onClick={() => setShowSaved(false)}>
         <div className="modal modal-saved" onClick={(e) => e.stopPropagation()}>
           {/* No Close in the corner — the actions at the bottom carry one. */}
           <div className="card-head">
@@ -2850,7 +2928,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     )}
 
     {active && showInfo && (
-      <div className="modal-overlay" onClick={() => setShowInfo(false)}>
+      <div className="modal-overlay job-modal" onClick={() => setShowInfo(false)}>
         <div className="modal modal-info" onClick={(e) => e.stopPropagation()}>
           {/* Actions live at the bottom right, not in the corner. */}
           <div className="card-head">
@@ -2917,6 +2995,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
 
     <ConfirmModal
       open={active && !!dupConfirm}
+      overlayClassName="job-modal"
       title="Already applied to this role?"
       message={
         dupConfirm
