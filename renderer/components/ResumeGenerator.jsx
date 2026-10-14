@@ -14,6 +14,13 @@ import ConfirmModal from "./ConfirmModal";
 // Shown when the user tweaks a style/colour/font but hasn't generated a resume.
 const NO_CONTENT_MSG = "There is no resume content yet. Please generate a resume first.";
 
+// The company on the first "Company: …" line of a job description - the line
+// Extract writes at the top, and the one to type when Extract missed it.
+const companyFromJd = (text) => {
+  const m = String(text || "").match(/^[ \t]*Company[ \t]*:[ \t]*(\S.*?)[ \t]*$/im);
+  return m ? m[1] : "";
+};
+
 // ---- ChatGPT composer helpers (injected into the ChatGPT page) ---------------
 //
 // ChatGPT's message box is a plain <textarea> until someone types markdown or
@@ -2657,6 +2664,10 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
               setJd(v);
               api().setPref(JD_PREF, v);
               clearCache();
+              // Typing or fixing the "Company: …" line names the job (and its tab)
+              // straight away, rather than only once the resume is generated.
+              const typedCompany = companyFromJd(v);
+              if (typedCompany && typedCompany !== jobCompany) rememberTarget(jobRole, typedCompany, jobCountry);
               // "Auto-preview on paste" is the sole gate for paste-triggered
               // work. Run it with the EXACT pasted text (not state) so the very
               // first request never uses a stale/previous JD.
