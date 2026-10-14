@@ -13,7 +13,7 @@ function mask(key) {
 }
 
 // `kind` splits keys into two independent groups:
-//   "v1" — direct resume generation (Gemini / OpenAI / Anthropic)
+//   "v1" — resume PDF import, and a fallback Gemini key for job-post reading
 //   "v2" — a Gemini key that refines the ChatGPT prompt (Gemini only)
 export default function ApiKeys({ kind = "v1" }) {
   const isV2 = kind === "v2";
@@ -195,15 +195,15 @@ export default function ApiKeys({ kind = "v1" }) {
   return (
     <section className="card">
       <div className="card-head">
-        <h2>{isV2 ? "API Keys — V2 (prompt refiner)" : "API Keys — V1 (resume generation)"}</h2>
+        <h2>{isV2 ? "API Keys — V2 (prompt refiner)" : "API Keys — V1 (resume import)"}</h2>
         <button className="btn primary" onClick={startAdd}>
           + Add New
         </button>
       </div>
       <p className="muted small">
         {isV2
-          ? "A Google Gemini key used by Generate V2 to refine the ChatGPT prompt before it's copied. Optional — without an active key, V2 uses the app's built-in prompt."
-          : "Keys used by Generate V1 to create resumes directly (Google Gemini, OpenAI, or Anthropic). The active key is used for generation."}
+          ? "A Google Gemini key used by Generate V3 to refine the ChatGPT prompt before it's sent. Optional — without an active key, the app's built-in prompt is used."
+          : "Keys used to import a resume PDF into an account (Google Gemini or Anthropic). An active Gemini key here is also the fallback for reading job posts when no V2 key is set."}
       </p>
 
       {/* Adding a new key shows the form at the top; editing shows it inline. */}

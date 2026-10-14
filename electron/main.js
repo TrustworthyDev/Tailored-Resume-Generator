@@ -3,7 +3,7 @@ const path = require("path");
 const fs = require("fs");
 const db = require("./db");
 const {
-  generateResume, generateCoverLetter, parseResumeFile, setProxy, checkProxy,
+  parseResumeFile, setProxy, checkProxy,
   buildPromptJson, parseResumeJson, refineV2Prompt, extractJdTarget, extractJobPost,
   RETIRED_GEMINI_MODELS,
 } = require("./ai");
@@ -159,8 +159,8 @@ function handle(channel, fn) {
 
 // ---- Per-app settings ----------------------------------------------------------
 // Settings that belong to this copy of the app rather than to the data: the
-// network route and ChatGPT page that go with this app's own ChatGPT login, and
-// whatever the generator is working on right now. They live in a small JSON
+// network route and ChatGPT page that go with this app's own ChatGPT login, its
+// appearance, and whatever the generator is working on right now. They live in a small JSON
 // file in this app's data folder, so apps sharing one database don't overwrite
 // each other's drafts — and typing in the generator no longer rewrites the
 // whole database on every keystroke. Everything else stays in the database.
@@ -170,8 +170,15 @@ const LOCAL_PREF_KEYS = new Set([
   "selected_account_id",
   "gen_jd", "gen_v3_jd", "gen_result", "gen_v3_result", "gen_v3_meta",
   "gen_job_link", "gen_job_company", "gen_job_role", "gen_job_country", "gen_extra_info",
-  "gen_saved_path", "gen_saved_at", "gen_mark_state",
+  "gen_saved_path", "gen_saved_at", "gen_mark_state", "gen_slots",
+  "theme",
 ]);
+// Keys that became per-app after the first move out of the database. Each is
+// brought across once, by adoptLaterLocalPrefs below.
+const LATER_LOCAL_KEYS = ["theme"];
+// Generate V3 runs several jobs side by side. Job 1 keeps the plain keys above;
+// every further job stores its own copy as "<key>@<job number>".
+const isLocalPref = (key) => LOCAL_PREF_KEYS.has(String(key).replace(/@\d+$/, ""));
 
 // { prefs: {key: value}, sharedFolder: "C:\\RGenerator Shared", movedFromDatabase: true }
 let localPrefs = {};
@@ -199,7 +206,7 @@ function saveLocalPrefs() {
 }
 
 function getPref(key) {
-  if (LOCAL_PREF_KEYS.has(key)) {
+  if (isLocalPref(key)) {
     const v = localPrefs.prefs[key];
     return v == null ? null : String(v);
   }
@@ -209,7 +216,7 @@ function getPref(key) {
 
 function setPref(key, value) {
   const v = value == null ? null : String(value);
-  if (LOCAL_PREF_KEYS.has(key)) {
+  if (isLocalPref(key)) {
     localPrefs.prefs[key] = v;
     saveLocalPrefs();
     return;
@@ -222,7 +229,7 @@ function setPref(key, value) {
 }
 
 function deletePref(key) {
-  if (LOCAL_PREF_KEYS.has(key)) {
+  if (isLocalPref(key)) {
     delete localPrefs.prefs[key];
     saveLocalPrefs();
     return;
@@ -233,7 +240,7 @@ function deletePref(key) {
 // Imports leave per-app settings out: in the database nothing would read them.
 function withoutLocalPrefs(groups) {
   return groups
-    .map((g) => (g.id === "prefs" ? { ...g, items: g.items.filter((it) => !LOCAL_PREF_KEYS.has(it.id)) } : g))
+    .map((g) => (g.id === "prefs" ? { ...g, items: g.items.filter((it) => !isLocalPref(it.id)) } : g))
     .filter((g) => g.items.length);
 }
 
@@ -245,7 +252,7 @@ function moveLocalPrefsOutOfDatabase() {
   if (!sharedFolder()) {
     try {
       db.all("SELECT key, value FROM prefs").forEach((r) => {
-        if (LOCAL_PREF_KEYS.has(r.key) && localPrefs.prefs[r.key] == null) {
+        if (isLocalPref(r.key) && localPrefs.prefs[r.key] == null) {
           localPrefs.prefs[r.key] = r.value;
         }
       });
@@ -254,6 +261,28 @@ function moveLocalPrefsOutOfDatabase() {
     }
   }
   localPrefs.movedFromDatabase = true;
+  saveLocalPrefs();
+}
+
+// A key that became per-app later starts from the value this app shows today -
+// read from whatever database it uses, shared or not - so moving it changes
+// nothing on screen. Done once per key; after that only this app's copy counts.
+function adoptLaterLocalPrefs() {
+  const adopted = new Set(localPrefs.adoptedKeys || []);
+  const todo = LATER_LOCAL_KEYS.filter((k) => !adopted.has(k));
+  if (!todo.length) return;
+  todo.forEach((k) => {
+    if (localPrefs.prefs[k] == null) {
+      try {
+        const row = db.get("SELECT value FROM prefs WHERE key = ?", [k]);
+        if (row && row.value != null) localPrefs.prefs[k] = row.value;
+      } catch (e) {
+        logCrash("adoptLaterLocalPrefs", e);
+      }
+    }
+    adopted.add(k);
+  });
+  localPrefs.adoptedKeys = [...adopted];
   saveLocalPrefs();
 }
 
@@ -697,8 +726,8 @@ function createWindow() {
 
 // ---- IPC handlers ----------------------------------------------------------
 
-// Every read of an account's roles uses this, so the form, the resume, the
-// prompt and the cover letter all see the same newest-first order. Rows written
+// Every read of an account's roles uses this, so the form, the resume and the
+// prompt all see the same newest-first order. Rows written
 // before sort_order existed fall back to id, keeping them together at the end
 // until the next save renumbers them.
 const WORK_BY_ACCOUNT =
@@ -725,6 +754,9 @@ function renumberWork(accountId) {
 function clearLocationCopied() {
   try {
     setPref("gen_mark_state", "");
+    Object.keys(localPrefs.prefs || {})
+      .filter((k) => /^gen_mark_state@\d+$/.test(k))
+      .forEach((k) => setPref(k, ""));
   } catch (e) {
     console.log("[prefs] could not clear the copied mark:", (e && e.message) || e);
   }
@@ -1787,6 +1819,17 @@ function registerIpc() {
     return { ok: true };
   });
 
+  // A Generate V3 job was closed: forget everything it kept (its draft, last
+  // resume and mark), so the next job opened in that place starts clean.
+  handle("prefs:clearJob", (_e, n) => {
+    const num = Number(n);
+    if (!Number.isInteger(num) || num < 2) return { ok: false };
+    const keys = Object.keys(localPrefs.prefs || {}).filter((k) => k.endsWith("@" + num));
+    keys.forEach((k) => { delete localPrefs.prefs[k]; });
+    if (keys.length) saveLocalPrefs();
+    return { ok: true };
+  });
+
   // What the whole app is currently using to reach the network. Drives the
   // generator's badge and its pre-flight check.
   handle("connection:status", () => {
@@ -1925,38 +1968,6 @@ function registerIpc() {
       }
       if (!savedFile) return { ok: false, error: "Could not write the PDF file." };
 
-      // Optionally render + save the cover letter in the same folder.
-      let coverFile = null;
-      if (d.coverHtml) {
-        let cwin;
-        try {
-          cwin = await htmlWindow(d.coverHtml, false);
-          const coverPdf = await cwin.webContents.printToPDF({
-            printBackground: true,
-            pageSize: "A4",
-            preferCSSPageSize: true,
-          });
-          let cf = path.join(folder, "Cover Letter.pdf");
-          for (let i = 1; i <= 50; i++) {
-            try {
-              fs.writeFileSync(cf, coverPdf);
-              coverFile = cf;
-              break;
-            } catch (err) {
-              if (["EBUSY", "EPERM", "EACCES"].includes(err.code) && i < 50) {
-                cf = path.join(folder, `Cover Letter (${i + 1}).pdf`);
-                continue;
-              }
-              throw err;
-            }
-          }
-        } catch (e) {
-          logCrash("coverLetter", e); // non-fatal: the resume still saved
-        } finally {
-          if (cwin) cwin.close();
-        }
-      }
-
       // Update the single existing entry for a duplicate; otherwise add a new one.
       const recRequestId = (d.requestId || "").trim();
       const recJd = (d.jobDescription || "").trim();
@@ -1972,7 +1983,7 @@ function registerIpc() {
       if (isDuplicate) {
         // Silently update the existing entry (the renderer handles the user-facing
         // duplicate confirmation before it gets here). Keep existing values when
-        // this regeneration carries none (e.g. a V1 colour re-render).
+        // this regeneration carries none (e.g. a colour re-render).
         db.run(
           `UPDATE applications SET pdf_path = ?, country = ?, applied_at = ?,
              request_id = COALESCE(NULLIF(?, ''), request_id),
@@ -2001,7 +2012,7 @@ function registerIpc() {
            matchRole, matchCompany, matchAccount, nowIso(), savedFile]
         );
       }
-      return { ok: true, path: savedFile, coverPath: coverFile, duplicate: isDuplicate, savedAt: stamp.display };
+      return { ok: true, path: savedFile, duplicate: isDuplicate, savedAt: stamp.display };
     } catch (e) {
       return { ok: false, error: (e && e.message) || String(e) };
     } finally {
@@ -2036,60 +2047,9 @@ function registerIpc() {
     }
   });
 
-  // Resume generation
-  handle("resume:generate", async (_e, payload) => {
-    const keyRow =
-      db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' AND is_active = 1 LIMIT 1") ||
-      db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' ORDER BY id DESC LIMIT 1");
-    const accountId = payload && payload.accountId;
-    const personal = accountId
-      ? db.get("SELECT * FROM accounts WHERE id = ?", [accountId])
-      : null;
-    const work = accountId
-      ? db.all(
-          WORK_BY_ACCOUNT,
-          [accountId]
-        )
-      : [];
-    const education = accountId
-      ? db.all(
-          "SELECT * FROM education WHERE account_id = ? ORDER BY id ASC",
-          [accountId]
-        )
-      : [];
-    const projects = accountId
-      ? db.all(
-          "SELECT * FROM projects WHERE account_id = ? ORDER BY id ASC",
-          [accountId]
-        )
-      : [];
-    if (!personal) throw new Error("Select an account to build a resume for.");
-    // Always apply the selected prompt; fall back to the active one.
-    const instrId = payload && payload.instructionId;
-    const instrRow =
-      (instrId
-        ? db.get("SELECT body FROM instructions WHERE id = ?", [instrId])
-        : null) || db.get("SELECT body FROM instructions WHERE is_active = 1 LIMIT 1");
-    const out = await generateResume({
-      apiKey: keyRow && keyRow.api_key,
-      provider: keyRow && keyRow.provider,
-      model: keyRow && keyRow.model,
-      personal,
-      work,
-      education,
-      projects,
-      jobDescription: payload && payload.jobDescription,
-      style: payload && payload.style,
-      instruction: instrRow && instrRow.body,
-      extraInfo: payload && payload.extraInfo,
-    });
-    return out; // { text, jobRole, jobCompany }
-  });
-
-  // ---- Generate V2: ChatGPT-in-a-browser via a clipboard handshake ---------
-  // V2 builds the SAME resume prompt as V1 but, instead of calling the Gemini
-  // API, hands the prompt to the user's signed-in ChatGPT (in an embedded,
-  // session-persistent browser). A unique ID wraps the expected reply so the
+  // ---- ChatGPT-in-a-browser via a clipboard handshake (Generate V3) --------
+  // The resume prompt is handed to the user's signed-in ChatGPT (in an
+  // embedded, session-persistent browser). A unique ID wraps the expected reply so the
   // app can recognise it on the clipboard and feed it into the same renderer.
 
   const CHAT_PARTITION = "persist:chatgpt";
@@ -2099,9 +2059,13 @@ function registerIpc() {
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
   let chatWin = null;
   // Every in-flight "waiting for the ChatGPT reply" watcher. A Set rather than a
-  // single slot, so starting a second generation (V2 and V3 are both mounted)
-  // no longer silently cancels the first one's wait.
+  // single slot, so starting a second generation no longer silently cancels
+  // the first one's wait.
   const clipWatches = new Set(); // each { resolve }
+  // Every request id this app has handed out. With several jobs generating at
+  // once, one job's reply lands on the clipboard while the others are still
+  // watching it - that is expected, not a stray reply worth reporting.
+  const issuedIds = new Set();
   let chatProxyAuth = null; // { username, password } for the embedded browser's proxy
   let chatProxyKey = null;  // last-applied session proxy ("direct" | "host:port") to avoid redundant setProxy calls
 
@@ -2375,6 +2339,7 @@ function registerIpc() {
 
     // Short unique handshake id (no Math.random dependency at import time).
     const id = (Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36)).slice(-10);
+    issuedIds.add(id);
     const { prompt: basePrompt, jobRef } = buildPromptJson(
       personal, work, education, projects,
       payload && payload.jobDescription, payload && payload.style, instrRow && instrRow.body, id,
@@ -2732,8 +2697,8 @@ function registerIpc() {
 
   // Poll the clipboard until the ChatGPT reply (a JSON object echoing the unique
   // request_id and the job_ref) appears, verify it belongs to this request and
-  // job description, then parse it into the same { text, jobRole, … } shape as
-  // V1. Only a verified reply resolves ok — so the app never builds the final
+  // job description, then parse it into a { text, jobRole, … } result.
+  // Only a verified reply resolves ok — so the app never builds the final
   // resume from stale or mismatched clipboard content.
   handle("chatgpt:awaitClipboard", (_e, d) => {
     const id = d && d.id;
@@ -2779,7 +2744,7 @@ function registerIpc() {
             // fail with "That reply doesn't match this request" the moment the
             // first one finished.
             if (res.reason === "mismatch") {
-              if (!sawOther) {
+              if (!sawOther && !issuedIds.has(res.id)) {
                 sawOther = true;
                 notify(
                   "Waiting for this resume",
@@ -2825,54 +2790,14 @@ function registerIpc() {
     return { ok: true };
   });
 
-  // Stop waiting for the clipboard reply (user cancelled / left the tab).
-  handle("chatgpt:cancelClipboard", () => {
-    [...clipWatches].forEach((w) => w.resolve({ ok: false, canceled: true }));
-    clipWatches.clear();
+  // Stop waiting for a clipboard reply (user cancelled / closed the job). With
+  // an id only that request stops — the other jobs keep waiting for theirs.
+  handle("chatgpt:cancelClipboard", (_e, id) => {
+    const want = String(id || "");
+    [...clipWatches]
+      .filter((w) => !want || w.id === want)
+      .forEach((w) => w.resolve({ ok: false, canceled: true }));
     return { ok: true };
-  });
-
-  // Cover letter generation (same account data, addressed to the JD's company).
-  handle("coverletter:generate", async (_e, payload) => {
-    const keyRow =
-      db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' AND is_active = 1 LIMIT 1") ||
-      db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' ORDER BY id DESC LIMIT 1");
-    const accountId = payload && payload.accountId;
-    const personal = accountId
-      ? db.get("SELECT * FROM accounts WHERE id = ?", [accountId])
-      : null;
-    if (!personal) throw new Error("Select an account to build a cover letter for.");
-    const work = db.all(
-      WORK_BY_ACCOUNT,
-      [accountId]
-    );
-    const education = db.all(
-      "SELECT * FROM education WHERE account_id = ? ORDER BY id ASC",
-      [accountId]
-    );
-    const projects = db.all(
-      "SELECT * FROM projects WHERE account_id = ? ORDER BY id ASC",
-      [accountId]
-    );
-    const instrId = payload && payload.instructionId;
-    const instrRow =
-      (instrId
-        ? db.get("SELECT body FROM instructions WHERE id = ?", [instrId])
-        : null) || db.get("SELECT body FROM instructions WHERE is_active = 1 LIMIT 1");
-    const out = await generateCoverLetter({
-      apiKey: keyRow && keyRow.api_key,
-      provider: keyRow && keyRow.provider,
-      model: keyRow && keyRow.model,
-      personal,
-      work,
-      education,
-      projects,
-      jobDescription: payload && payload.jobDescription,
-      instruction: instrRow && instrRow.body,
-      role: payload && payload.role,
-      company: payload && payload.company,
-    });
-    return out; // { text }
   });
 
   // Pick a resume PDF and parse it into structured account fields (active key).
@@ -2993,6 +2918,7 @@ app.whenReady().then(async () => {
     // Startup housekeeping, saved in one write rather than one per step.
     db.transaction(() => {
       moveLocalPrefsOutOfDatabase();
+      adoptLaterLocalPrefs();
       // Number any roles saved before ordering existed, so existing accounts read
       // newest-first straight away rather than only after their next save.
       backfillWorkOrder();
