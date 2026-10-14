@@ -6,8 +6,7 @@ release-portable/
 release-single/
 release-shared-db/
 release-shared-db-2/
-release-multi/
-release-multi-2/
+release-multi*/
 *.log
 .DS_Store
 final-release/

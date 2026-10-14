@@ -499,7 +499,7 @@ export default function AccountForm({ accountId, onSaved }) {
           )}
 
           {/* The look this account's resumes are generated with. Picking the
-              account in Generate V3 applies everything set here. */}
+              account in Generate applies everything set here. */}
           {tab === "setresume" && (
             <div className="setresume-split">
               {/* Left: every control — colours, font, then the templates. */}

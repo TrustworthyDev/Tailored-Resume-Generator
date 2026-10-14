@@ -202,7 +202,7 @@ export default function ApiKeys({ kind = "v1" }) {
       </div>
       <p className="muted small">
         {isV2
-          ? "A Google Gemini key used by Generate V3 to refine the ChatGPT prompt before it's sent. Optional — without an active key, the app's built-in prompt is used."
+          ? "A Google Gemini key used by Generate to refine the ChatGPT prompt before it's sent. Optional — without an active key, the app's built-in prompt is used."
           : "Keys used to import a resume PDF into an account (Google Gemini or Anthropic). An active Gemini key here is also the fallback for reading job posts when no V2 key is set."}
       </p>
 

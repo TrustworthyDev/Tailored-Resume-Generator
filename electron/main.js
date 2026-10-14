@@ -170,7 +170,7 @@ const LOCAL_PREF_KEYS = new Set([
   "selected_account_id",
   "gen_jd", "gen_v3_jd", "gen_result", "gen_v3_result", "gen_v3_meta",
   "gen_job_link", "gen_job_company", "gen_job_role", "gen_job_country", "gen_extra_info",
-  "gen_saved_path", "gen_saved_at", "gen_mark_state", "gen_slots",
+  "gen_saved_path", "gen_saved_at", "gen_mark_state", "gen_issue", "gen_slots", "gen_active_job", "gen_batch_links",
   "theme",
 ]);
 // Keys that became per-app after the first move out of the database. Each is
@@ -178,6 +178,11 @@ const LOCAL_PREF_KEYS = new Set([
 const LATER_LOCAL_KEYS = ["theme"];
 // Generate V3 runs several jobs side by side. Job 1 keeps the plain keys above;
 // every further job stores its own copy as "<key>@<job number>".
+// Job 1's own draft under the plain keys - what closing it clears.
+const JOB1_DRAFT_KEYS = [
+  "gen_v3_jd", "gen_v3_result", "gen_v3_meta", "gen_job_link", "gen_job_company",
+  "gen_job_role", "gen_job_country", "gen_saved_path", "gen_saved_at", "gen_mark_state", "gen_issue",
+];
 const isLocalPref = (key) => LOCAL_PREF_KEYS.has(String(key).replace(/@\d+$/, ""));
 
 // { prefs: {key: value}, sharedFolder: "C:\\RGenerator Shared", movedFromDatabase: true }
@@ -746,20 +751,6 @@ function renumberWork(accountId) {
   db.runMany(
     sorted.map((r, i) => ["UPDATE work_history SET sort_order = ? WHERE id = ?", [i, r.id]])
   );
-}
-
-// The border mark - a job extracted, or its resume already taken away to file -
-// belongs to a single working session. A fresh start of the app is a fresh
-// session, so no mark ever carries over into it.
-function clearLocationCopied() {
-  try {
-    setPref("gen_mark_state", "");
-    Object.keys(localPrefs.prefs || {})
-      .filter((k) => /^gen_mark_state@\d+$/.test(k))
-      .forEach((k) => setPref(k, ""));
-  } catch (e) {
-    console.log("[prefs] could not clear the copied mark:", (e && e.message) || e);
-  }
 }
 
 // One-off on startup: number the roles that predate the sort_order column.
@@ -1821,10 +1812,14 @@ function registerIpc() {
 
   // A Generate V3 job was closed: forget everything it kept (its draft, last
   // resume and mark), so the next job opened in that place starts clean.
+  // Job 1 keeps the plain keys; its account and Additional Info stay, since
+  // every new job starts from them.
   handle("prefs:clearJob", (_e, n) => {
     const num = Number(n);
-    if (!Number.isInteger(num) || num < 2) return { ok: false };
-    const keys = Object.keys(localPrefs.prefs || {}).filter((k) => k.endsWith("@" + num));
+    if (!Number.isInteger(num) || num < 1) return { ok: false };
+    const keys = num === 1
+      ? JOB1_DRAFT_KEYS.filter((k) => k in (localPrefs.prefs || {}))
+      : Object.keys(localPrefs.prefs || {}).filter((k) => k.endsWith("@" + num));
     keys.forEach((k) => { delete localPrefs.prefs[k]; });
     if (keys.length) saveLocalPrefs();
     return { ok: true };
@@ -2923,7 +2918,6 @@ app.whenReady().then(async () => {
       // newest-first straight away rather than only after their next save.
       backfillWorkOrder();
       upgradeRetiredModels();
-      clearLocationCopied();
       // Settle the connection choice, then apply it before any API calls.
       seedConnectionMode();
     });
