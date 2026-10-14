@@ -113,9 +113,10 @@ function resolveConnection() {
     ? db.get("SELECT name, url, port, username, password FROM proxies WHERE id = ?", [pid])
     : null;
   if (!row) {
-    row = db.get(
-      "SELECT name, url, port, username, password FROM proxies WHERE is_active = 1 LIMIT 1"
-    );
+    const activeProxy = activeId("proxy");
+    row = activeProxy
+      ? db.get("SELECT name, url, port, username, password FROM proxies WHERE id = ?", [activeProxy])
+      : null;
   }
   return row && String(row.url || "").trim() ? row : null;
 }
@@ -138,8 +139,7 @@ function applyApiConnection() {
 // setup keeps behaving the same instead of silently switching to direct.
 function seedConnectionMode() {
   if (getPref("chat_conn_mode")) return;
-  const active = db.get("SELECT id FROM proxies WHERE is_active = 1 LIMIT 1");
-  setPref("chat_conn_mode", active ? "proxy" : "direct");
+  setPref("chat_conn_mode", activeId("proxy") ? "proxy" : "direct");
 }
 process.on("unhandledRejection", (e) => logCrash("unhandledRejection", e));
 let mainWindow = null;
@@ -160,7 +160,8 @@ function handle(channel, fn) {
 // ---- Per-app settings ----------------------------------------------------------
 // Settings that belong to this copy of the app rather than to the data: the
 // network route and ChatGPT page that go with this app's own ChatGPT login, its
-// appearance, and whatever the generator is working on right now. They live in a small JSON
+// appearance, which prompt / API keys / proxy are active, every choice on the
+// Generate page, and whatever the generator is working on right now. They live in a small JSON
 // file in this app's data folder, so apps sharing one database don't overwrite
 // each other's drafts — and typing in the generator no longer rewrites the
 // whole database on every keystroke. Everything else stays in the database.
@@ -172,17 +173,26 @@ const LOCAL_PREF_KEYS = new Set([
   "gen_job_link", "gen_job_company", "gen_job_role", "gen_job_country", "gen_extra_info",
   "gen_saved_path", "gen_saved_at", "gen_mark_state", "gen_issue", "gen_slots", "gen_active_job", "gen_batch_links",
   "theme",
+  // The Generate page's look and toggles.
+  "resume_style", "resume_accent", "resume_name_color", "resume_font", "resume_font_size",
+  "style_order", "v3_auto_generate", "auto_open_pdf", "auto_preview", "open_preview_after",
+  // Which prompt, API key (one per list) and proxy is active - see activeId.
+  "active_instruction_id", "active_apikey_v1", "active_apikey_v2", "active_proxy_id",
 ]);
 // Keys that became per-app after the first move out of the database. Each is
 // brought across once, by adoptLaterLocalPrefs below.
-const LATER_LOCAL_KEYS = ["theme"];
-// Generate V3 runs several jobs side by side. Job 1 keeps the plain keys above;
-// every further job stores its own copy as "<key>@<job number>".
+const LATER_LOCAL_KEYS = [
+  "theme",
+  "resume_style", "resume_accent", "resume_name_color", "resume_font", "resume_font_size",
+  "style_order", "v3_auto_generate", "auto_open_pdf", "auto_preview", "open_preview_after",
+];
 // Job 1's own draft under the plain keys - what closing it clears.
 const JOB1_DRAFT_KEYS = [
   "gen_v3_jd", "gen_v3_result", "gen_v3_meta", "gen_job_link", "gen_job_company",
   "gen_job_role", "gen_job_country", "gen_saved_path", "gen_saved_at", "gen_mark_state", "gen_issue",
 ];
+// Generate runs several jobs side by side. Job 1 keeps the plain keys above;
+// every further job stores its own copy as "<key>@<job number>".
 const isLocalPref = (key) => LOCAL_PREF_KEYS.has(String(key).replace(/@\d+$/, ""));
 
 // { prefs: {key: value}, sharedFolder: "C:\\RGenerator Shared", movedFromDatabase: true }
@@ -289,6 +299,59 @@ function adoptLaterLocalPrefs() {
   });
   localPrefs.adoptedKeys = [...adopted];
   saveLocalPrefs();
+}
+
+// ---- Per-app "active" choices --------------------------------------------------
+// Which prompt, which API key in each list, and which proxy is active belongs to
+// this app, not to the data: apps sharing one database each keep their own, so
+// picking one here never switches it in another app. The tables' is_active
+// columns are only read to seed an app's first choice.
+const ACTIVE_SLOTS = {
+  instruction: { pref: "active_instruction_id", table: "instructions", scope: "", order: "sort_order ASC, id ASC" },
+  apikey_v1: { pref: "active_apikey_v1", table: "api_keys", scope: "kind = 'v1'", order: "sort_order ASC, id ASC" },
+  apikey_v2: { pref: "active_apikey_v2", table: "api_keys", scope: "kind = 'v2'", order: "sort_order ASC, id ASC" },
+  // A proxy can be switched off entirely ("0"), and is never picked by default.
+  proxy: { pref: "active_proxy_id", table: "proxies", scope: "", order: "", allowNone: true },
+};
+const keySlot = (kind) => (kind === "v2" ? "apikey_v2" : "apikey_v1");
+
+// The id of this app's active row, or null. A choice whose row has since been
+// deleted (by any app) falls back like a first start: the database's flagged
+// row, else the first row - which is then kept as this app's own choice.
+function activeId(slot) {
+  const s = ACTIVE_SLOTS[slot];
+  const and = s.scope ? ` AND ${s.scope}` : "";
+  const saved = getPref(s.pref);
+  if (saved === "0" && s.allowNone) return null;
+  if (saved) {
+    const row = db.get(`SELECT id FROM ${s.table} WHERE id = ?${and}`, [Number(saved)]);
+    if (row) return row.id;
+  }
+  let row = db.get(`SELECT id FROM ${s.table} WHERE is_active = 1${and} LIMIT 1`);
+  if (!row && s.order) row = db.get(`SELECT id FROM ${s.table}${s.scope ? " WHERE " + s.scope : ""} ORDER BY ${s.order} LIMIT 1`);
+  if (row) setPref(s.pref, String(row.id));
+  return row ? row.id : null;
+}
+
+// Make a row this app's active one (null = none, for the proxy).
+function setActiveId(slot, id) {
+  setPref(ACTIVE_SLOTS[slot].pref, id == null ? "0" : String(id));
+}
+
+// The active API key of a list, as { api_key, provider, model }, or null.
+function activeKeyRow(kind) {
+  const id = activeId(keySlot(kind));
+  return id ? db.get("SELECT id, api_key, provider, model FROM api_keys WHERE id = ?", [id]) : null;
+}
+
+// A Gemini key for the quick reads (job post, title/company): the active V2 key,
+// else the active V1 key when it is a Gemini one, else any V1 Gemini key.
+function geminiKeyRow() {
+  const v2 = activeKeyRow("v2");
+  if (v2 && v2.api_key) return v2;
+  const v1 = activeKeyRow("v1");
+  if (v1 && v1.api_key && String(v1.provider || "").toLowerCase() === "gemini") return v1;
+  return db.get("SELECT api_key, model FROM api_keys WHERE kind = 'v1' AND provider = 'gemini' ORDER BY id DESC LIMIT 1");
 }
 
 // ---- Shared database -------------------------------------------------------------
@@ -811,16 +874,19 @@ function registerIpc() {
   // API keys (multiple; one active key PER KIND is used). Kinds: 'v1' = direct
   // resume generation (Gemini/OpenAI/Anthropic), 'v2' = a Gemini key that
   // refines the ChatGPT prompt. Pass a kind to list only that group.
+  // is_active is this app's own choice (activeId), not the shared column.
   handle("apikeys:list", (_e, kind) => {
     const k = kind === "v1" || kind === "v2" ? kind : null;
-    return k
+    const rows = k
       ? db.all(
-          "SELECT id, name, api_key, provider, model, kind, is_active FROM api_keys WHERE kind = ? ORDER BY sort_order ASC, id ASC",
+          "SELECT id, name, api_key, provider, model, kind FROM api_keys WHERE kind = ? ORDER BY sort_order ASC, id ASC",
           [k]
         )
       : db.all(
-          "SELECT id, name, api_key, provider, model, kind, is_active FROM api_keys ORDER BY sort_order ASC, id ASC"
+          "SELECT id, name, api_key, provider, model, kind FROM api_keys ORDER BY sort_order ASC, id ASC"
         );
+    const active = { v1: activeId("apikey_v1"), v2: activeId("apikey_v2") };
+    return rows.map((r) => ({ ...r, is_active: r.id === active[r.kind === "v2" ? "v2" : "v1"] ? 1 : 0 }));
   });
 
   // Persist a new API-key ranking from drag-and-drop (array of ids in order).
@@ -839,7 +905,8 @@ function registerIpc() {
     const provider = kind === "v2" ? "gemini" : (d.provider || "gemini").trim().toLowerCase();
     const model = (d.model || "").trim();
     if (!key) return { ok: false, error: "Key is required." };
-    // First key added IN THIS KIND becomes active automatically.
+    // First key added IN THIS KIND becomes active automatically (here, and as
+    // the seed for any app that hasn't chosen one yet).
     const existing = db.get("SELECT COUNT(*) AS c FROM api_keys WHERE kind = ?", [kind]);
     const active = existing && existing.c > 0 ? 0 : 1;
     const maxRow = db.get("SELECT COALESCE(MAX(sort_order), -1) AS m FROM api_keys");
@@ -848,6 +915,7 @@ function registerIpc() {
       "INSERT INTO api_keys (name, api_key, provider, model, kind, is_active, sort_order, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
       [name, key, provider, model, kind, active, nextOrder, nowIso()]
     );
+    if (!activeId(keySlot(kind))) setActiveId(keySlot(kind), id);
     return { ok: true, id };
   });
 
@@ -867,26 +935,27 @@ function registerIpc() {
   });
 
   handle("apikeys:delete", (_e, id) => {
-    const wasActive = db.get("SELECT is_active, kind FROM api_keys WHERE id = ?", [id]);
+    const row = db.get("SELECT kind FROM api_keys WHERE id = ?", [id]);
+    const slot = keySlot(row && row.kind);
+    const wasActive = activeId(slot) === Number(id);
     db.run("DELETE FROM api_keys WHERE id = ?", [id]);
-    // If we removed the active key, promote the most recent remaining one OF THE
-    // SAME KIND so each group keeps an active key.
-    if (wasActive && wasActive.is_active) {
+    // If we removed this app's active key, promote the most recent remaining one
+    // OF THE SAME KIND so each group keeps an active key.
+    if (wasActive) {
       const next = db.get(
         "SELECT id FROM api_keys WHERE kind = ? ORDER BY id DESC LIMIT 1",
-        [wasActive.kind || "v1"]
+        [(row && row.kind) || "v1"]
       );
-      if (next) db.run("UPDATE api_keys SET is_active = 1 WHERE id = ?", [next.id]);
+      setActiveId(slot, next ? next.id : null);
     }
     return { ok: true };
   });
 
+  // Active is per-kind, and per-app: only this app switches to the key.
   handle("apikeys:setActive", (_e, id) => {
-    // Active is per-kind: clear only this key's group, then activate it.
     const row = db.get("SELECT kind FROM api_keys WHERE id = ?", [id]);
-    const kind = (row && row.kind) || "v1";
-    db.run("UPDATE api_keys SET is_active = 0 WHERE kind = ?", [kind]);
-    db.run("UPDATE api_keys SET is_active = 1 WHERE id = ?", [id]);
+    if (!row) return { ok: false, error: "That key no longer exists." };
+    setActiveId(keySlot(row.kind), Number(id));
     return { ok: true };
   });
 
@@ -1391,11 +1460,13 @@ function registerIpc() {
   });
 
   // Instructions (multiple named prompts; one active is used for generation)
-  handle("instructions:list", () =>
-    db.all(
-      "SELECT id, name, body, is_active FROM instructions ORDER BY sort_order ASC, id ASC"
-    )
-  );
+  // is_active is this app's own choice (activeId), not the shared column.
+  handle("instructions:list", () => {
+    const active = activeId("instruction");
+    return db
+      .all("SELECT id, name, body FROM instructions ORDER BY sort_order ASC, id ASC")
+      .map((r) => ({ ...r, is_active: r.id === active ? 1 : 0 }));
+  });
 
   handle("instructions:add", (_e, d) => {
     const existing = db.get("SELECT COUNT(*) AS c FROM instructions");
@@ -1406,6 +1477,7 @@ function registerIpc() {
       "INSERT INTO instructions (name, body, is_active, sort_order, created_at) VALUES (?, ?, ?, ?, ?)",
       [(d.name || "Untitled").trim(), d.body || "", active, nextOrder, nowIso()]
     );
+    if (!activeId("instruction")) setActiveId("instruction", id);
     return { ok: true, id };
   });
 
@@ -1426,18 +1498,18 @@ function registerIpc() {
   });
 
   handle("instructions:delete", (_e, id) => {
-    const wasActive = db.get("SELECT is_active FROM instructions WHERE id = ?", [id]);
+    const wasActive = activeId("instruction") === Number(id);
     db.run("DELETE FROM instructions WHERE id = ?", [id]);
-    if (wasActive && wasActive.is_active) {
+    if (wasActive) {
       const next = db.get("SELECT id FROM instructions ORDER BY id DESC LIMIT 1");
-      if (next) db.run("UPDATE instructions SET is_active = 1 WHERE id = ?", [next.id]);
+      setActiveId("instruction", next ? next.id : null);
     }
     return { ok: true };
   });
 
+  // Per-app: only this app switches to the prompt.
   handle("instructions:setActive", (_e, id) => {
-    db.run("UPDATE instructions SET is_active = 0");
-    db.run("UPDATE instructions SET is_active = 1 WHERE id = ?", [id]);
+    setActiveId("instruction", Number(id));
     return { ok: true };
   });
 
@@ -1739,24 +1811,25 @@ function registerIpc() {
     applyApiConnection();
   }
 
-  handle("proxy:list", () =>
-    db.all(
-      "SELECT id, name, url, port, username, password, is_active FROM proxies ORDER BY id DESC"
-    )
-  );
+  // is_active is this app's own choice (activeId), not the shared column.
+  handle("proxy:list", () => {
+    const active = activeId("proxy");
+    return db
+      .all("SELECT id, name, url, port, username, password FROM proxies ORDER BY id DESC")
+      .map((r) => ({ ...r, is_active: r.id === active ? 1 : 0 }));
+  });
 
   // Currently active proxy (for the resume-build gating/badge).
   handle("proxy:active", () => {
-    const row = db.get(
-      "SELECT id, name, url, port FROM proxies WHERE is_active = 1 LIMIT 1"
-    );
+    const id = activeId("proxy");
+    const row = id ? db.get("SELECT id, name, url, port FROM proxies WHERE id = ?", [id]) : null;
     return { enabled: !!row, proxy: row || null };
   });
 
   handle("proxy:add", (_e, d) => {
     if (!d || !(d.url || "").trim()) return { ok: false, error: "Proxy URL is required." };
-    const existing = db.get("SELECT COUNT(*) AS c FROM proxies WHERE is_active = 1");
-    const active = existing && existing.c > 0 ? 0 : 1; // first proxy becomes active
+    // The first proxy this app has becomes its active one.
+    const active = activeId("proxy") ? 0 : 1;
     const id = db.insert(
       `INSERT INTO proxies (name, url, port, username, password, is_active, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -1766,31 +1839,37 @@ function registerIpc() {
         (d.port || "").trim(),
         (d.username || "").trim(),
         (d.password || "").trim(),
-        active,
+        0,
         nowIso(),
       ]
     );
-    if (active) applyActiveProxy();
+    if (active) {
+      setActiveId("proxy", id);
+      applyActiveProxy();
+    }
     return { ok: true, id };
   });
 
+  // Per-app: only this app switches to the proxy (or turns it off).
   handle("proxy:setActive", (_e, id) => {
-    db.run("UPDATE proxies SET is_active = 0");
-    db.run("UPDATE proxies SET is_active = 1 WHERE id = ?", [id]);
+    setActiveId("proxy", Number(id));
     applyActiveProxy();
     return { ok: true };
   });
 
   handle("proxy:disable", () => {
-    db.run("UPDATE proxies SET is_active = 0");
+    setActiveId("proxy", null);
     applyApiConnection();
     return { ok: true };
   });
 
   handle("proxy:delete", (_e, id) => {
-    const wasActive = db.get("SELECT is_active FROM proxies WHERE id = ?", [id]);
+    const wasActive = activeId("proxy") === Number(id);
     db.run("DELETE FROM proxies WHERE id = ?", [id]);
-    if (wasActive && wasActive.is_active) applyApiConnection(); // dropped active
+    if (wasActive) {
+      setActiveId("proxy", null);
+      applyApiConnection(); // dropped active
+    }
     return { ok: true };
   });
 
@@ -2134,10 +2213,7 @@ function registerIpc() {
     if (!/^https?:\/\//i.test(link)) {
       return { ok: false, error: "Enter a valid job-post link starting with http(s)://" };
     }
-    const gemKey =
-      db.get("SELECT api_key, model FROM api_keys WHERE kind = 'v2' AND is_active = 1 LIMIT 1") ||
-      db.get("SELECT api_key, model FROM api_keys WHERE kind = 'v1' AND provider = 'gemini' AND is_active = 1 LIMIT 1") ||
-      db.get("SELECT api_key, model FROM api_keys WHERE kind = 'v1' AND provider = 'gemini' ORDER BY id DESC LIMIT 1");
+    const gemKey = geminiKeyRow();
     try { await applyChatProxy(); } catch (_) {}
     let win = null;
     try {
@@ -2330,7 +2406,7 @@ function registerIpc() {
     const instrId = payload && payload.instructionId;
     const instrRow =
       (instrId ? db.get("SELECT body FROM instructions WHERE id = ?", [instrId]) : null) ||
-      db.get("SELECT body FROM instructions WHERE is_active = 1 LIMIT 1");
+      db.get("SELECT body FROM instructions WHERE id = ?", [activeId("instruction")]);
 
     // Short unique handshake id (no Math.random dependency at import time).
     const id = (Date.now().toString(36) + Math.floor(Math.random() * 1e6).toString(36)).slice(-10);
@@ -2344,9 +2420,7 @@ function registerIpc() {
     // Optional refinement via the active V2 Gemini key (Settings → API (V2)).
     // refineV2Prompt falls back to basePrompt on any error, and never disturbs
     // the verification fields, so this is always safe.
-    const v2Key = db.get(
-      "SELECT api_key, model FROM api_keys WHERE kind = 'v2' AND is_active = 1 LIMIT 1"
-    );
+    const v2Key = activeKeyRow("v2");
     let prompt = basePrompt;
     let refined = false;
     if (v2Key && v2Key.api_key) {
@@ -2357,10 +2431,7 @@ function registerIpc() {
     // Extract the job title + company from the JD (fast Gemini call) so the app
     // can check for a duplicate application BEFORE the ChatGPT generation. Uses
     // the V2 key if set, otherwise an active/any V1 Gemini key.
-    const gemKey =
-      (v2Key && v2Key.api_key ? v2Key : null) ||
-      db.get("SELECT api_key, model FROM api_keys WHERE kind = 'v1' AND provider = 'gemini' AND is_active = 1 LIMIT 1") ||
-      db.get("SELECT api_key, model FROM api_keys WHERE kind = 'v1' AND provider = 'gemini' ORDER BY id DESC LIMIT 1");
+    const gemKey = geminiKeyRow();
     let target = { role: "", company: "", country: "" };
     if (gemKey && gemKey.api_key) {
       try {
@@ -2806,7 +2877,7 @@ function registerIpc() {
 
     const filePath = res.filePaths[0];
     const keyRow =
-      db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' AND is_active = 1 LIMIT 1") ||
+      activeKeyRow("v1") ||
       db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' ORDER BY id DESC LIMIT 1");
     try {
       const stat = fs.statSync(filePath);
