@@ -98,24 +98,36 @@ h1, h2, h3 { color: var(--text); }
 .gen-v3-jobs { flex: 1; min-width: 0; }
 .gen-v3.parked, .gen-v3.parked .gen-v3-jobs { display: contents; }
 .job-rail {
-  width: 240px; flex-shrink: 0; position: sticky; top: 0;
-  height: calc(100vh - 52px); overflow-y: auto;
+  width: 300px; flex-shrink: 0; position: sticky; top: 0;
+  height: calc(100vh - 52px); overflow: hidden;
   background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
   padding: 16px 10px; display: flex; flex-direction: column; gap: 8px;
 }
+/* Links box + Start on top, the jobs scrolling in the middle, + New job and
+   Clear pinned at the foot. */
+.job-rail-head { flex-shrink: 0; display: flex; flex-direction: column; gap: 8px; }
+.job-list {
+  flex: 1 1 auto; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 2px; margin: 0 -2px; /* room for the active job's outer ring */
+  border-top: 1px solid var(--border); padding-top: 10px;
+}
+.job-rail-foot { flex-shrink: 0; display: flex; gap: 8px; padding-top: 8px; border-top: 1px solid var(--border); }
+.job-rail-foot .job-tab-add, .job-rail-foot .job-clear { flex: 1; height: 38px; margin: 0; }
+.job-tab-add:disabled { opacity: 0.45; cursor: not-allowed; }
+.job-rail-count { float: right; font-weight: 600; letter-spacing: 0; text-transform: none; }
 .job-links {
   min-height: 84px; resize: vertical; flex-shrink: 0;
   font-size: 12px; line-height: 1.5; padding: 8px 9px;
 }
 .job-start { flex-shrink: 0; width: 100%; }
 .job-links-note { padding: 0 4px; font-size: 12px; }
-.job-rail-sep { flex-shrink: 0; height: 1px; background: var(--border); margin: 4px 0; }
 .job-rail-title {
   color: var(--muted); font-size: 11px; font-weight: 700;
   letter-spacing: 0.08em; text-transform: uppercase; padding: 0 4px 2px;
 }
 .job-tab {
-  display: flex; align-items: stretch; flex-shrink: 0; min-height: 52px;
+  display: flex; flex-direction: column; flex-shrink: 0;
   background: var(--panel-2); border: 1px solid var(--border); border-radius: 10px;
 }
 .job-tab.active { border-color: var(--primary); box-shadow: 0 0 0 1px var(--primary); }
@@ -136,7 +148,7 @@ h1, h2, h3 { color: var(--text); }
 .job-tab.extracted .job-tab-close, .job-tab.failed .job-tab-close, .job-tab.copied .job-tab-close { padding-right: 6px; }
 .jobs-empty { padding: 40px 28px; text-align: center; }
 .job-tab-main {
-  flex: 1; min-width: 0; display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  flex: 1; min-width: 0; display: flex; align-items: center; justify-content: flex-start; gap: 9px;
   background: transparent; border: none; color: var(--muted); cursor: pointer;
   padding: 8px 10px; text-align: left;
 }
@@ -159,20 +171,23 @@ h1, h2, h3 { color: var(--text); }
   border-left: 1px solid var(--border); color: var(--muted); cursor: pointer; font-size: 16px;
 }
 .job-tab-close:hover:not(:disabled) { color: var(--danger); }
-/* Opens the job post in the browser, beside the close button. */
-.job-tab-link {
+/* Icon buttons beside the close button: Open Resume and Copy Location on a
+   finished job, and the job post itself. */
+.job-tab-icon {
   flex-shrink: 0; width: 30px; background: transparent; border: none;
   border-left: 1px solid var(--border); color: var(--muted); cursor: pointer;
   display: inline-flex; align-items: center; justify-content: center;
 }
-.job-tab-link:hover { color: var(--primary); }
+.job-tab-icon:hover { color: var(--primary); }
 .job-tab-close:disabled { opacity: 0.35; cursor: not-allowed; }
 .job-tab-add {
   flex-shrink: 0; height: 40px; border-radius: 10px; cursor: pointer;
   background: transparent; border: 1px dashed var(--border); color: var(--muted);
   font-size: 13px; font-weight: 600;
 }
-.job-tab-add:hover { color: var(--text); border-color: var(--muted); }
+.job-tab-add:hover:not(:disabled) { color: var(--text); border-color: var(--muted); }
+.job-tab-row { display: flex; align-items: stretch; min-height: 52px; }
+
 /* Clear sits at the foot of the column. */
 .job-clear { flex-shrink: 0; width: 100%; margin-top: auto; }
 

@@ -17,12 +17,13 @@ const TABS = [
   { id: "generate3", label: "Generate" },
 ];
 
-// Generate jobs that can run side by side. Each keeps its own ChatGPT tab
-// alive, so the number is capped to keep memory in check.
-const MAX_JOBS = 10;
+// Jobs that can run at the same time - extracting, generating, waiting for an
+// answer, or just handed a link by Start. The number of job tabs is not limited:
+// a job only holds a ChatGPT page while it runs, so idle tabs cost little.
+const MAX_THREADS = 20;
 
 // Where a job stands, from the status it reports.
-const isRunning = (st) => !!(st && (st.busy || st.attention));
+const isRunning = (st) => !!(st && (st.busy || st.attention || st.pending));
 // Finished = its resume is generated and nothing is running in it.
 const isFinished = (st) => !isRunning(st) && !!(st && st.done);
 
@@ -74,6 +75,19 @@ export default function Home() {
   const [batchText, setBatchText] = useState("");
   const [startRequests, setStartRequests] = useState({});
   const [confirmClear, setConfirmClear] = useState(false); // Clear's confirmation
+  // A job-tab button for a job to run ({ [job]: { type, token } }).
+  const [commands, setCommands] = useState({});
+  const sendCommand = (n, type) => setCommands((prev) => ({ ...prev, [n]: { type, token: `${Date.now()}-${type}` } }));
+  // The job whose Copy Location was just pressed - its icon shows a tick briefly.
+  const [copiedJob, setCopiedJob] = useState(null);
+  const copyJobLocation = (n) => {
+    sendCommand(n, "copyPath");
+    setCopiedJob(n);
+    setTimeout(() => setCopiedJob((cur) => (cur === n ? null : cur)), 1500);
+  };
+  // The one job whose ChatGPT tab loads at startup (for the startup overlay and
+  // a quick first run); every other job loads its own when it runs.
+  const [bootJob, setBootJob] = useState(null);
   const notify = (message, type = "alert") => setToast({ message, type });
 
   useEffect(() => {
@@ -91,18 +105,21 @@ export default function Home() {
     // was closed, so none. Each job restores its own state (link, description,
     // resume, colour) itself.
     Promise.all([api().getPref("gen_slots"), api().getPref("gen_active_job")]).then(([r, a]) => {
+      let first = 1;
       if (r && r.value != null) {
         const list = String(r.value)
           .split(",")
           .map(Number)
           .filter((n) => Number.isInteger(n) && n >= 1);
-        const uniq = [...new Set(list)].sort((x, y) => x - y).slice(0, MAX_JOBS);
+        const uniq = [...new Set(list)].sort((x, y) => x - y);
         const wanted = Number(a && a.value);
+        first = uniq.includes(wanted) ? wanted : uniq.length ? uniq[0] : null;
         setJobs(uniq);
-        setActiveJob(uniq.includes(wanted) ? wanted : uniq.length ? uniq[0] : null);
+        setActiveJob(first);
         // No job means no ChatGPT tab warming up - nothing to wait for.
         if (!uniq.length) setBooting(false);
       }
+      setBootJob(first);
       jobsLoadedRef.current = true;
     });
   }, []);
@@ -112,7 +129,7 @@ export default function Home() {
     api().setPref("gen_slots", list.join(","));
   };
   const addJob = async () => {
-    if (jobs.length >= MAX_JOBS) return;
+    if (!freeThreads) return;
     // Numbered after every open job, so the new tab is added at the end of the
     // list rather than slotted into a gap left by a closed one.
     const n = Math.max(0, ...jobs) + 1;
@@ -125,38 +142,27 @@ export default function Home() {
     setBatchText(v);
     api().setPref("gen_batch_links", v);
   };
-  // Start never touches a job that's open: every link gets a brand-new tab.
-  // At the limit, room is made by closing finished jobs - those whose resume
-  // path was copied (filed) first, then the other finished ones, oldest first.
-  // The finished jobs Start may close, in that order:
-  const closableFinished = () => {
-    const done = jobs.filter((n) => isFinished(jobStatus[n]));
-    const copied = done.filter((n) => jobStatus[n].mark === "copied");
-    return [...copied, ...done.filter((n) => !copied.includes(n))];
-  };
-  const slotCount = Math.max(0, MAX_JOBS - jobs.length) + closableFinished().length;
+  // Threads in use, and free. Finished, idle and stopped (yellow) jobs don't
+  // use one, so a thread frees up as each job finishes.
+  const runningCount = jobs.filter((n) => isRunning(jobStatus[n])).length;
+  const freeThreads = Math.max(0, MAX_THREADS - runningCount);
 
-  // Start: a new tab per pasted link, each extracting its link straight away.
-  // Links beyond the free slots stay in the box for the next Start.
+  // Start: a new tab per pasted link, each extracting its link straight away -
+  // as many as there are free threads. Existing tabs are never touched. Links
+  // beyond the free threads stay in the box for the next Start.
   const startBatch = async () => {
     const links = parseJobLinks(batchText);
     if (!links.length) {
       notify("Paste job-post links first — one per line, e.g. a column copied from Google Sheets.", "warning");
       return;
     }
-    const empty = Math.max(0, MAX_JOBS - jobs.length);
-    const finished = closableFinished();
-    const room = empty + finished.length;
-    if (!room) {
-      notify("Every job is still working. Start again once one has finished.", "warning");
+    if (!freeThreads) {
+      notify(`All ${MAX_THREADS} threads are busy. Start again once a job has finished.`, "warning");
       return;
     }
-    const take = links.slice(0, room);
-    const rest = links.slice(room);
-    // Close only as many finished jobs as the new tabs need.
-    const closing = finished.slice(0, Math.max(0, take.length - empty));
-    closing.forEach((n) => api().clearJobPrefs(n));
-    const list = jobs.filter((n) => !closing.includes(n));
+    const take = links.slice(0, freeThreads);
+    const rest = links.slice(freeThreads);
+    const list = [...jobs];
     // New tabs are numbered after every open job, so they read as new.
     let next = Math.max(0, ...jobs) + 1;
     const started = [];
@@ -168,15 +174,6 @@ export default function Home() {
       started.push([n, url]);
     }
     saveJobs(list.sort((a, b) => a - b));
-    if (closing.length) {
-      const drop = (prev) => {
-        const copy = { ...prev };
-        closing.forEach((n) => { delete copy[n]; });
-        return copy;
-      };
-      setJobStatus(drop);
-      setStartRequests(drop);
-    }
     const stamp = Date.now();
     setStartRequests((prev) => {
       const next = { ...prev };
@@ -187,7 +184,7 @@ export default function Home() {
     onBatchText(rest.join("\n"));
     notify(
       rest.length
-        ? `Started ${take.length} job${take.length > 1 ? "s" : ""}. ${rest.length} link${rest.length > 1 ? "s are" : " is"} left in the box — press Start again when a job has finished.`
+        ? `Started ${take.length} job${take.length > 1 ? "s" : ""}. ${rest.length} link${rest.length > 1 ? "s are" : " is"} left in the box — press Start again when a thread frees up.`
         : `Started ${take.length} job${take.length > 1 ? "s" : ""} — extracting each job post.`,
       rest.length ? "warning" : "success"
     );
@@ -218,7 +215,7 @@ export default function Home() {
 
   // Any job can be closed, except while it's running.
   const closeJob = (n) => {
-    if (jobStatus[n] && jobStatus[n].busy) return;
+    if (isRunning(jobStatus[n])) return;
     const next = jobs.filter((x) => x !== n);
     saveJobs(next);
     setJobStatus((prev) => {
@@ -227,6 +224,11 @@ export default function Home() {
       return copy;
     });
     setStartRequests((prev) => {
+      const copy = { ...prev };
+      delete copy[n];
+      return copy;
+    });
+    setCommands((prev) => {
       const copy = { ...prev };
       delete copy[n];
       return copy;
@@ -335,124 +337,177 @@ export default function Home() {
       </aside>
 
       <main className="content">
-        {/* Generate V3: the Jobs column on the left, the job on screen beside
-            it. Every job stays mounted from startup so its embedded ChatGPT
-            WebView pre-warms in the background (loads Project Home once) and
-            keeps running across tab and job switches; this container is always
-            rendered (it only changes class) so they never remount. A job that
-            isn't on screen is parked off-screen but still laid out — display:none
-            would detach Electron's webview guest and stop it loading. On screen,
-            display:contents makes the wrapper transparent so layout matches a
-            direct child. */}
+        {/* Generate: the Jobs column on the left, the job on screen beside it.
+            Every job stays mounted, so a run keeps going across tab and job
+            switches; this container is always rendered (it only changes class)
+            so they never remount. A job that isn't on screen is parked - still
+            laid out, since display:none would detach Electron's webview guest
+            and stop it loading. On screen, display:contents makes the wrapper
+            transparent so layout matches a direct child. */}
         <div className={tab === "generate3" ? "gen-v3" : "gen-v3 parked"}>
           {tab === "generate3" && (
             <aside className="job-rail" aria-label="Jobs">
-              <div className="job-rail-title">Jobs</div>
-              <textarea
-                className="textarea job-links"
-                rows={4}
-                wrap="off"
-                spellCheck={false}
-                placeholder="Paste job-post links, one per line (e.g. a Google Sheets column)"
-                value={batchText}
-                onChange={(e) => onBatchText(e.target.value)}
-              />
-              <button
-                type="button"
-                className="btn primary job-start"
-                onClick={startBatch}
-                disabled={!batchCount || !slotCount}
-                title={
-                  slotCount
-                    ? `${slotCount} free slot${slotCount > 1 ? "s" : ""} — each link opens a new job and is extracted`
-                    : "Every job is still working — Start frees up as each one finishes"
-                }
-              >
-                Start ({slotCount})
-              </button>
-              {batchCount > 0 && (
-                <div className="muted small job-links-note">
-                  {batchCount} link{batchCount > 1 ? "s" : ""}
-                  {batchCount > slotCount ? ` · ${slotCount} start now` : ""}
+              <div className="job-rail-head">
+                <div className="job-rail-title">
+                  Jobs
+                  <span className="job-rail-count" title={`${runningCount} of ${MAX_THREADS} threads in use`}>
+                    {runningCount}/{MAX_THREADS} running
+                  </span>
                 </div>
-              )}
-              <div className="job-rail-sep" />
-              {jobs.map((n) => {
-                const st = jobStatus[n] || {};
-                return (
-                  <div
-                    key={n}
-                    className={
-                      "job-tab" +
-                      (n === activeJob ? " active" : "") +
-                      (st.mark === "copied" ? " copied" : st.mark === "extracted" ? " extracted" : st.mark === "failed" ? " failed" : "")
-                    }
-                  >
-                    <button
-                      type="button"
-                      className="job-tab-main"
-                      onClick={() => setActiveJob(n)}
-                      title={st.company ? `Job ${n} — ${st.company}` : `Job ${n}`}
-                    >
-                      <span className="job-tab-text">
-                        <span className="job-tab-name">Job {n}</span>
-                        {st.company && <span className="job-tab-company">{st.company}</span>}
-                      </span>
-                      {st.attention ? (
-                        <span className="job-tab-flag attention" title="Waiting for your answer">!</span>
-                      ) : st.busy ? (
-                        <span className="spinner small job-tab-spinner" title="Generating" />
-                      ) : st.done ? (
-                        <span
-                          className="job-tab-flag done"
-                          title={st.mark === "copied" ? "Resume generated · path copied" : "Resume generated"}
-                        >
-                          ✓
-                        </span>
-                      ) : null}
-                    </button>
-                    {/^https?:\/\//i.test(st.link || "") && (
-                      <button
-                        type="button"
-                        className="job-tab-link"
-                        onClick={() => api().openExternalLink(st.link)}
-                        title={`Open the job post — ${st.link}`}
-                        aria-label={`Open job ${n}'s job post`}
-                      >
-                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
-                          <polyline points="15 3 21 3 21 9" />
-                          <line x1="10" y1="14" x2="21" y2="3" />
-                        </svg>
-                      </button>
-                    )}
-                    <button
-                      type="button"
-                      className="job-tab-close"
-                      onClick={() => closeJob(n)}
-                      disabled={!!st.busy}
-                      title={st.busy ? "Can't close a job while it's generating" : "Close this job"}
-                      aria-label={`Close job ${n}`}
-                    >
-                      ×
-                    </button>
+                <textarea
+                  className="textarea job-links"
+                  rows={4}
+                  wrap="off"
+                  spellCheck={false}
+                  placeholder="Paste job-post links, one per line (e.g. a Google Sheets column)"
+                  value={batchText}
+                  onChange={(e) => onBatchText(e.target.value)}
+                />
+                <button
+                  type="button"
+                  className="btn primary job-start"
+                  onClick={startBatch}
+                  disabled={!batchCount || !freeThreads}
+                  title={
+                    freeThreads
+                      ? `${freeThreads} free thread${freeThreads > 1 ? "s" : ""} — each link opens a new job and is extracted`
+                      : `All ${MAX_THREADS} threads are busy — Start frees up as each job finishes`
+                  }
+                >
+                  Start ({freeThreads})
+                </button>
+                {batchCount > 0 && (
+                  <div className="muted small job-links-note">
+                    {batchCount} link{batchCount > 1 ? "s" : ""}
+                    {batchCount > freeThreads ? ` · ${freeThreads} start now` : ""}
                   </div>
-                );
-              })}
-              {jobs.length < MAX_JOBS && (
-                <button type="button" className="job-tab-add" onClick={addJob} title="Open another job to generate in parallel">
+                )}
+              </div>
+              <div className="job-list">
+                {jobs.map((n) => {
+                  const st = jobStatus[n] || {};
+                  return (
+                    <div
+                      key={n}
+                      className={
+                        "job-tab" +
+                        (n === activeJob ? " active" : "") +
+                        (st.mark === "copied" ? " copied" : st.mark === "extracted" ? " extracted" : st.mark === "failed" ? " failed" : "")
+                      }
+                    >
+                      <div className="job-tab-row">
+                        <button
+                          type="button"
+                          className="job-tab-main"
+                          onClick={() => setActiveJob(n)}
+                          title={st.company ? `Job ${n} — ${st.company}` : `Job ${n}`}
+                        >
+                          {/* Status first, ahead of the job's name. */}
+                          {st.attention ? (
+                            <span className="job-tab-flag attention" title="Waiting for your answer">!</span>
+                          ) : st.busy ? (
+                            <span className="spinner small job-tab-spinner" title="Generating" />
+                          ) : st.done ? (
+                            <span
+                              className="job-tab-flag done"
+                              title={st.mark === "copied" ? "Resume generated · path copied" : "Resume generated"}
+                            >
+                              ✓
+                            </span>
+                          ) : null}
+                          <span className="job-tab-text">
+                            <span className="job-tab-name">Job {n}</span>
+                            {st.company && <span className="job-tab-company">{st.company}</span>}
+                          </span>
+                        </button>
+                        {/* A finished job: its resume and folder, a click away. */}
+                        {isFinished(st) && (
+                          <>
+                            <button
+                              type="button"
+                              className="job-tab-icon"
+                              onClick={() => sendCommand(n, "openFile")}
+                              title="Open Resume"
+                              aria-label={`Open job ${n}'s resume`}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <polyline points="14 2 14 8 20 8" />
+                                <line x1="8" y1="13" x2="16" y2="13" />
+                                <line x1="8" y1="17" x2="13" y2="17" />
+                              </svg>
+                            </button>
+                            <button
+                              type="button"
+                              className="job-tab-icon"
+                              onClick={() => copyJobLocation(n)}
+                              title={copiedJob === n ? "Copied" : "Copy Location"}
+                              aria-label={`Copy job ${n}'s resume location`}
+                            >
+                              {copiedJob === n ? (
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  <polyline points="20 6 9 17 4 12" />
+                                </svg>
+                              ) : (
+                                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
+                                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+                                </svg>
+                              )}
+                            </button>
+                          </>
+                        )}
+                        {/^https?:\/\//i.test(st.link || "") && (
+                          <button
+                            type="button"
+                            className="job-tab-icon"
+                            onClick={() => api().openExternalLink(st.link)}
+                            title={`Open the job post — ${st.link}`}
+                            aria-label={`Open job ${n}'s job post`}
+                          >
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+                              <polyline points="15 3 21 3 21 9" />
+                              <line x1="10" y1="14" x2="21" y2="3" />
+                            </svg>
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          className="job-tab-close"
+                          onClick={() => closeJob(n)}
+                          disabled={isRunning(st)}
+                          title={isRunning(st) ? "Can't close a job while it's running" : "Close this job"}
+                          aria-label={`Close job ${n}`}
+                        >
+                          ×
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              {/* Pinned to the foot of the column, below the scrolling jobs. */}
+              <div className="job-rail-foot">
+                <button
+                  type="button"
+                  className="job-tab-add"
+                  onClick={addJob}
+                  disabled={!freeThreads}
+                  title={freeThreads ? "Open another job to generate in parallel" : `All ${MAX_THREADS} threads are busy`}
+                >
                   + New job
                 </button>
-              )}
-              <button
-                type="button"
-                className="btn job-clear"
-                onClick={() => setConfirmClear(true)}
-                disabled={!clearableCount}
-                title="Close every job that isn't running"
-              >
-                Clear
-              </button>
+                <button
+                  type="button"
+                  className="btn job-clear"
+                  onClick={() => setConfirmClear(true)}
+                  disabled={!clearableCount}
+                  title="Close every job that isn't running"
+                >
+                  Clear
+                </button>
+              </div>
             </aside>
           )}
           <div className="gen-v3-jobs">
@@ -482,6 +537,8 @@ export default function Home() {
                     active={shown}
                     onStatus={onJobStatus}
                     startRequest={startRequests[n]}
+                    command={commands[n]}
+                    prewarm={n === bootJob}
                   />
                 </div>
               );
