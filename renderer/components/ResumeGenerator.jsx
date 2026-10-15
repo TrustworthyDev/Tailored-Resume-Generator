@@ -436,9 +436,10 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
       hasJob: !!jobMeta || !!(jd && jd.trim()),
       mark,
       company: jobCompany,
+      link: jobPostUrl,
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, fetchingJd, chatWaiting, dupConfirm, savedPath, jobMeta, jd, mark, jobCompany]);
+  }, [loading, fetchingJd, chatWaiting, dupConfirm, savedPath, jobMeta, jd, mark, jobCompany, jobLink]);
 
   // Brief in-app toast, shown by the single global toast in the app shell.
   const toast = (message, type = "alert") =>
@@ -2225,6 +2226,15 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
   const proxyLabel = (p) =>
     (p.name && p.name.trim()) || [p.url, p.port].filter(Boolean).join(":") || `Proxy ${p.id}`;
 
+  // The job post this job is for: the link it was extracted from, else whatever
+  // is in the link box.
+  const jobPostUrl = ((jobMeta && jobMeta.url) || jobLink || "").trim();
+  const openJobPost = async () => {
+    if (!/^https?:\/\//i.test(jobPostUrl)) { toast("This job has no job-post link to open.", "warning"); return; }
+    const res = await api().openExternalLink(jobPostUrl);
+    if (res && !res.ok) toast(res.error || "Could not open the job post.", "danger");
+  };
+
   const openFolder = async () => {
     if (!savedPath) { toast("Generate a resume first — then Open Folder will reveal the saved PDF.", "warning"); return; }
     const res = await api().revealPdf(savedPath);
@@ -2927,6 +2937,14 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
           </div>
 
           <div className="modal-actions saved-actions">
+            <button
+              className="btn"
+              onClick={openJobPost}
+              disabled={!/^https?:\/\//i.test(jobPostUrl)}
+              title={jobPostUrl || "This job has no job-post link"}
+            >
+              Open Job Post
+            </button>
             <button className="btn" onClick={openFolder} disabled={!savedPath}>Open Folder</button>
             <button className="btn" onClick={openFile} disabled={!savedPath}>Open File</button>
             <button className="btn" onClick={copySavedLocation} disabled={!savedPath}>

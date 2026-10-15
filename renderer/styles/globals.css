@@ -98,7 +98,7 @@ h1, h2, h3 { color: var(--text); }
 .gen-v3-jobs { flex: 1; min-width: 0; }
 .gen-v3.parked, .gen-v3.parked .gen-v3-jobs { display: contents; }
 .job-rail {
-  width: 180px; flex-shrink: 0; position: sticky; top: 0;
+  width: 240px; flex-shrink: 0; position: sticky; top: 0;
   height: calc(100vh - 52px); overflow-y: auto;
   background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
   padding: 16px 10px; display: flex; flex-direction: column; gap: 8px;
@@ -159,6 +159,13 @@ h1, h2, h3 { color: var(--text); }
   border-left: 1px solid var(--border); color: var(--muted); cursor: pointer; font-size: 16px;
 }
 .job-tab-close:hover:not(:disabled) { color: var(--danger); }
+/* Opens the job post in the browser, beside the close button. */
+.job-tab-link {
+  flex-shrink: 0; width: 30px; background: transparent; border: none;
+  border-left: 1px solid var(--border); color: var(--muted); cursor: pointer;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.job-tab-link:hover { color: var(--primary); }
 .job-tab-close:disabled { opacity: 0.35; cursor: not-allowed; }
 .job-tab-add {
   flex-shrink: 0; height: 40px; border-radius: 10px; cursor: pointer;
