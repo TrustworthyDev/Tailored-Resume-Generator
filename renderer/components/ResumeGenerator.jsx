@@ -290,9 +290,11 @@ function CopyButton({ label, done, onCopy }) {
 //
 // Several of these run side by side, one per job (`job` = 1, 2, …), each with
 // its own ChatGPT tab and its own saved draft. `multi` says more than one job is
-// open, `onStatus` tells the job tabs what this one is doing, and
-// `startRequest` ({ url, token }) hands it a link to extract straight away.
-export default function ResumeGenerator({ active = true, job = 1, multi = false, onStatus, startRequest }) {
+// open, `onStatus` tells the job tabs what this one is doing,
+// `startRequest` ({ url, token }) hands it a link to extract straight away,
+// `command` ({ type, token }) runs a job-tab button (openFile / copyPath), and
+// `prewarm` loads its ChatGPT tab at startup.
+export default function ResumeGenerator({ active = true, job = 1, multi = false, onStatus, startRequest, command, prewarm = false }) {
   // This job's copy of a per-job setting. Job 1 keeps the plain key, so the
   // draft from before jobs existed is still there.
   const jk = (key) => (job > 1 ? `${key}@${job}` : key);
@@ -411,10 +413,12 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
   // it. Waits for this job's saved state to load first, so the account (and the
   // auto-generate toggle) are in place and the load can't overwrite the result.
   const startedTokenRef = useRef("");
+  const [startedToken, setStartedToken] = useState("");
   useEffect(() => {
     if (!prefsReady || !startRequest || !startRequest.url) return;
     if (startedTokenRef.current === startRequest.token) return;
     startedTokenRef.current = startRequest.token;
+    setStartedToken(startRequest.token);
     // Start may hand a finished job its next link: drop the old job first.
     resetJob();
     setJobLink(startRequest.url);
@@ -437,9 +441,59 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
       mark,
       company: jobCompany,
       link: jobPostUrl,
+      // Handed a link by Start that it hasn't begun on yet - already a thread.
+      pending: !!(startRequest && startRequest.token && startRequest.token !== startedToken),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, fetchingJd, chatWaiting, dupConfirm, savedPath, jobMeta, jd, mark, jobCompany, jobLink]);
+  }, [loading, fetchingJd, chatWaiting, dupConfirm, savedPath, jobMeta, jd, mark, jobCompany, jobLink, startRequest, startedToken]);
+
+  // ---- The job's ChatGPT tab, loaded only while it is needed ----------------
+  // A ChatGPT page costs a few hundred MB, and the number of job tabs is not
+  // limited. So a job holds one only while it generates, while you look at its
+  // ChatGPT tab, or - for the one job warmed up at startup - until first used;
+  // finishing releases it, and the next run loads it fresh.
+  const [chatLive, setChatLive] = useState(!!prewarm);
+  const chatLiveRef = useRef(!!prewarm);
+  chatLiveRef.current = chatLive;
+  useEffect(() => { if (prewarm) setChatLive(true); }, [prewarm]);
+  // Load the tab now (if it isn't) and wait for the <webview> to be in the page.
+  const ensureChat = async () => {
+    if (!chatLiveRef.current) {
+      chatLiveRef.current = true;
+      setChatLive(true);
+    }
+    for (let i = 0; i < 100 && !webviewRef.current; i++) await new Promise((r) => setTimeout(r, 50));
+  };
+  const openChatView = () => { setChatLive(true); setView("chatgpt"); };
+  // Release it when a run ends, or when you leave the ChatGPT tab with nothing
+  // running - never mid-run, and never while it's on screen.
+  const chatPrevRef = useRef({ view: "generate", loading: false });
+  useEffect(() => {
+    const prev = chatPrevRef.current;
+    chatPrevRef.current = { view, loading };
+    const finished = prev.loading && !loading;
+    const leftChat = prev.view === "chatgpt" && view !== "chatgpt";
+    if ((finished || leftChat) && !loading && view !== "chatgpt") {
+      setChatLive(false);
+      lastChatUrlRef.current = ""; // the next tab starts from Project Home again
+    }
+  }, [view, loading]);
+
+  // A job-tab button, run here so it does exactly what the job's own does.
+  const commandTokenRef = useRef("");
+  useEffect(() => {
+    if (!command || !command.token || command.token === commandTokenRef.current) return;
+    commandTokenRef.current = command.token;
+    if (command.type === "openFile") openFile();
+    if (command.type === "copyPath") {
+      if (!savedPath) return;
+      copyFolderToClipboard(savedPath);
+      setShowSaved(false);
+      markLocationCopied();
+      toast("Resume path copied to clipboard.", "success");
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [command]);
 
   // Brief in-app toast, shown by the single global toast in the app shell.
   const toast = (message, type = "alert") =>
@@ -772,10 +826,12 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
 
   // Load the saved PDF's bytes into a blob URL so the preview tab can render the
   // real, paginated PDF inline. Re-runs on each new generation (savedAt changes).
+  // Only for the job on screen - with many job tabs, each holding its PDF (and a
+  // PDF viewer) would add up.
   useEffect(() => {
     let revoked = false;
     let url = "";
-    if (!savedPath) { setPdfUrl(""); return; }
+    if (!savedPath || !active) { setPdfUrl(""); return; }
     (async () => {
       try {
         const res = await api().readPdf(savedPath);
@@ -792,7 +848,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
       }
     })();
     return () => { revoked = true; if (url) URL.revokeObjectURL(url); };
-  }, [savedPath, savedAt]);
+  }, [savedPath, savedAt, active]);
 
   // Re-render the resume PDF automatically when the user changes the style, a
   // colour, or the font (debounced; cover letter untouched so there's no AI
@@ -1121,6 +1177,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
       // Open the ChatGPT tab IMMEDIATELY, in parallel with the Gemini prompt
       // build. reuse:true starts a fresh chat inside the already-loaded tab
       // (no full SPA reload) when possible, falling back to a full load.
+      await ensureChat();
       const openPromise = openChatTab({ reuse: true });
       const { id, prompt, copied, clipboardSkipped, jobRef, target } = await api().chatgptBuildPrompt({
         accountId: Number(accountId),
@@ -1981,6 +2038,8 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     let clicks = 0;
 
     while (Date.now() < deadline) {
+      // The ChatGPT tab was released (the run ended another way) - nothing to watch.
+      if (!webviewRef.current) break;
       const left = deadline - Date.now();
       const res = await scanForReply(reqId, Math.min(left, 3 * 60 * 1000));
       if (res.diag) diag = res.diag;
@@ -2136,7 +2195,10 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     const onReady = async () => {
       let cur = "";
       try { cur = wv.getURL() || ""; } catch (_) {}
-      if (!cur || cur === "about:blank") {
+      // Only when nothing else has asked for a page: a run that loads the tab
+      // fresh has already sent it somewhere, and a second load here would pull
+      // the page out from under its prompt.
+      if ((!cur || cur === "about:blank") && !lastChatUrlRef.current) {
         try { await api().chatgptSessionInfo(); } catch (_) {} // apply proxy first
         const r = await api().getChatgptHome();
         loadWebview((r && r.url) || "https://chatgpt.com/");
@@ -2190,7 +2252,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
       try { wv.removeEventListener("did-finish-load", onLoaded); } catch (_) {}
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [chatUa]);
+  }, [chatUa, chatLive]);
 
   // The app-wide connection: this computer's IP (direct) or a chosen proxy.
   // Whichever is picked is what the AI requests, the ChatGPT browser and the
@@ -2249,11 +2311,13 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
   const copyFolderToClipboard = async (filePath) => {
     if (!filePath) return;
     const folder = filePath.replace(/[\\/][^\\/]*$/, "");
-    try {
-      await navigator.clipboard.writeText(folder);
+    let ok = false;
+    try { const r = await api().clipboardWrite(folder); ok = !!(r && r.ok); } catch (_) {}
+    if (!ok) { try { await navigator.clipboard.writeText(folder); ok = true; } catch (_) {} }
+    if (ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
-    } catch (_) {}
+    }
   };
   // Flag the form as taken. Every Copy Resume Path button routes through this, so
   // the border appears whichever one was used.
@@ -2467,7 +2531,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
           <button
             type="button"
             className={"resume-tab" + (view === "chatgpt" ? " active" : "")}
-            onClick={() => setView("chatgpt")}
+            onClick={openChatView}
           >
             ChatGPT
           </button>
@@ -2751,7 +2815,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
               </span>
             </div>
             <button className="btn small" onClick={cancelChatWait}>Cancel</button>
-            <button className="btn small" onClick={() => setView("chatgpt")}>Open ChatGPT tab</button>
+            <button className="btn small" onClick={openChatView}>Open ChatGPT tab</button>
           </div>
         )}
         {error && <div className="error">{error}</div>}
@@ -2785,7 +2849,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
         {error && <div className="error">{error}</div>}
 
         <div className="resume-viewer-wrap">
-          {pdfUrl ? (
+          {!active ? null : pdfUrl ? (
             <iframe className="resume-viewer" title="Resume PDF" src={pdfUrl + "#toolbar=1&navpanes=0&view=FitH"} />
           ) : result ? (
             <iframe className="resume-viewer" title="Resume preview" srcDoc={previewHtml} />
@@ -2797,7 +2861,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
         </div>
         </>
         )}
-        {chatUa && (
+        {chatUa && chatLive && (
           <div
             className="chat-embed"
             style={
