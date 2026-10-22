@@ -171,6 +171,7 @@ const LOCAL_PREF_KEYS = new Set([
   "selected_account_id",
   "gen_jd", "gen_v3_jd", "gen_result", "gen_v3_result", "gen_v3_meta",
   "gen_job_link", "gen_job_company", "gen_job_role", "gen_job_country", "gen_extra_info",
+  "gen_gpt_url", "gen_app_id",
   "gen_saved_path", "gen_saved_at", "gen_mark_state", "gen_issue", "gen_slots", "gen_active_job", "gen_batch_links",
   "theme",
   // The Generate page's look and toggles.
@@ -190,6 +191,7 @@ const LATER_LOCAL_KEYS = [
 const JOB1_DRAFT_KEYS = [
   "gen_v3_jd", "gen_v3_result", "gen_v3_meta", "gen_job_link", "gen_job_company",
   "gen_job_role", "gen_job_country", "gen_saved_path", "gen_saved_at", "gen_mark_state", "gen_issue",
+  "gen_gpt_url", "gen_app_id",
 ];
 // Generate runs several jobs side by side. Job 1 keeps the plain keys above;
 // every further job stores its own copy as "<key>@<job number>".
@@ -792,6 +794,19 @@ function createWindow() {
   }
 }
 
+// The account's first application for this company + role (matched on the
+// dedicated index columns, falling back to the display ones), or null.
+function findEarlierApplication(accountId, company, role) {
+  return db.get(
+    `SELECT id FROM applications
+      WHERE account_id = ?
+        AND LOWER(COALESCE(NULLIF(match_company, ''), company)) = LOWER(?)
+        AND LOWER(COALESCE(NULLIF(match_role, ''), role)) = LOWER(?)
+      ORDER BY id ASC LIMIT 1`,
+    [accountId, company, role]
+  ) || null;
+}
+
 // ---- IPC handlers ----------------------------------------------------------
 
 // Every read of an account's roles uses this, so the form, the resume and the
@@ -1117,6 +1132,7 @@ function registerIpc() {
       `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
               ap.gpt_url, (CASE WHEN IFNULL(ap.gpt_url,'') <> '' THEN 1 ELSE 0 END) AS has_gpt,
               ap.job_link, (CASE WHEN IFNULL(ap.job_link,'') <> '' THEN 1 ELSE 0 END) AS has_link,
+              ap.path_copied_at, ap.duplicate_of,
               ac.name AS account_name, ac.main_stack AS account_stack,
               ac.country AS account_country
        FROM applications ap
@@ -1147,6 +1163,7 @@ function registerIpc() {
       `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
               ap.gpt_url, (CASE WHEN IFNULL(ap.gpt_url,'') <> '' THEN 1 ELSE 0 END) AS has_gpt,
               ap.job_link, (CASE WHEN IFNULL(ap.job_link,'') <> '' THEN 1 ELSE 0 END) AS has_link,
+              ap.path_copied_at, ap.duplicate_of,
               ac.name AS account_name, ac.main_stack AS account_stack,
               ac.country AS account_country
        FROM applications ap
@@ -1162,6 +1179,7 @@ function registerIpc() {
       `SELECT ap.id, ap.role, ap.company, ap.country, ap.request_id, ap.applied_at, ap.pdf_path,
               ap.gpt_url, (CASE WHEN IFNULL(ap.gpt_url,'') <> '' THEN 1 ELSE 0 END) AS has_gpt,
               ap.job_link, (CASE WHEN IFNULL(ap.job_link,'') <> '' THEN 1 ELSE 0 END) AS has_link,
+              ap.path_copied_at, ap.duplicate_of,
               ac.name AS account_name, ac.main_stack AS account_stack,
               ac.country AS account_country
        FROM applications ap
@@ -1208,23 +1226,47 @@ function registerIpc() {
 
   // Does an application already exist for this account + company + role? Used to
   // confirm before generating another resume for the same company and job title.
-  handle("applications:findDuplicate", (_e, d) => {
-    const accountId = d && d.accountId;
-    const r = ((d && d.role) || "").trim();
-    const c = ((d && d.company) || "").trim();
-    if (!accountId || !r || !c) return { exists: false };
-    // Match on the dedicated index columns (match_company / match_role — the
-    // Gemini JD extraction). Fall back to the display columns so applications
-    // saved before these columns existed are still detected.
-    const row = db.get(
-      `SELECT id FROM applications
-       WHERE account_id = ?
-         AND LOWER(COALESCE(NULLIF(match_company, ''), company)) = LOWER(?)
-         AND LOWER(COALESCE(NULLIF(match_role, ''), role)) = LOWER(?)
-       LIMIT 1`,
-      [accountId, c, r]
+  // The application a saved resume belongs to, by its PDF path: its id and its
+  // ChatGPT conversation. Lets a job saved before it kept these itself find them.
+  handle("applications:forPdf", (_e, pdfPath) => {
+    const p = String(pdfPath || "").trim();
+    if (!p) return null;
+    return db.get("SELECT id, gpt_url FROM applications WHERE pdf_path = ? ORDER BY id DESC LIMIT 1", [p]) || null;
+  });
+
+  // The resume path of an application was copied (to file it). Records it, and
+  // reports any other application for the same account + company + role, so the
+  // copy can say it's a duplicate.
+  handle("applications:markPathCopied", (_e, id) => {
+    const ap = db.get(
+      `SELECT id, account_id, role, company,
+              COALESCE(NULLIF(match_company, ''), company) AS mc,
+              COALESCE(NULLIF(match_role, ''), role) AS mr
+         FROM applications WHERE id = ?`,
+      [id]
     );
-    return { exists: !!row, id: row ? row.id : null };
+    if (!ap) return { ok: false };
+    db.run("UPDATE applications SET path_copied_at = ? WHERE id = ?", [nowIso(), id]);
+    const mc = (ap.mc || "").trim();
+    const mr = (ap.mr || "").trim();
+    const others = mc && mr
+      ? db.all(
+          `SELECT id, applied_at, path_copied_at FROM applications
+            WHERE account_id = ? AND id <> ?
+              AND LOWER(COALESCE(NULLIF(match_company, ''), company)) = LOWER(?)
+              AND LOWER(COALESCE(NULLIF(match_role, ''), role)) = LOWER(?)
+            ORDER BY id ASC`,
+          [ap.account_id, ap.id, mc, mr]
+        )
+      : [];
+    return {
+      ok: true,
+      role: ap.role || mr,
+      company: ap.company || mc,
+      duplicates: others.length,
+      firstAppliedAt: others.length ? others[0].applied_at : "",
+      copiedBefore: others.filter((o) => (o.path_copied_at || "").trim()).length,
+    };
   });
 
   // Export the whole application history to a CSV file the user picks.
@@ -1850,9 +1892,33 @@ function registerIpc() {
     return { ok: true, id };
   });
 
+  // Edit a saved proxy. If it is the one this app connects through, the new
+  // details take effect straight away - for the AI requests and the browser.
+  handle("proxy:update", (_e, d) => {
+    if (!d || !d.id) return { ok: false, error: "No proxy given." };
+    if (!(d.url || "").trim()) return { ok: false, error: "Proxy URL is required." };
+    if (!db.get("SELECT id FROM proxies WHERE id = ?", [d.id])) return { ok: false, error: "That proxy no longer exists." };
+    db.run(
+      "UPDATE proxies SET name = ?, url = ?, port = ?, username = ?, password = ? WHERE id = ?",
+      [
+        (d.name || "").trim(),
+        (d.url || "").trim(),
+        (d.port || "").trim(),
+        (d.username || "").trim(),
+        (d.password || "").trim(),
+        d.id,
+      ]
+    );
+    applyApiConnection();
+    applyChatProxy().catch(() => {});
+    return { ok: true };
+  });
+
   // Per-app: only this app switches to the proxy (or turns it off).
+  // The Generate page's proxy choice follows, so the two never disagree.
   handle("proxy:setActive", (_e, id) => {
     setActiveId("proxy", Number(id));
+    setPref("chat_proxy_id", String(id));
     applyActiveProxy();
     return { ok: true };
   });
@@ -1944,12 +2010,26 @@ function registerIpc() {
     let win;
     try {
       win = await htmlWindow(d.html, false);
+      // Some templates carry a footer on every page: "<name> Resume" on the
+      // left, "<page> of <pages>" on the right, in the page's bottom margin.
+      const footerLabel = String((d && d.footerLabel) || "").trim();
+      const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
       const pdf = await win.webContents.printToPDF({
         printBackground: true,
         pageSize: "A4",
         // Use the CSS @page size/margins — gives correct A4 pagination and
         // uniform per-page margins regardless of the window size.
         preferCSSPageSize: true,
+        ...(footerLabel
+          ? {
+              displayHeaderFooter: true,
+              headerTemplate: "<span></span>",
+              footerTemplate:
+                '<div style="width:100%;font-size:10px;font-family:Poppins,Montserrat,\'Segoe UI\',Arial,sans-serif;' +
+                'color:#6a6a6a;letter-spacing:.3px;padding:0 12mm 0 16mm;display:flex;justify-content:space-between;">' +
+                `<span>${esc(footerLabel)}</span><span><span class="pageNumber"></span> of <span class="totalPages"></span></span></div>`,
+            }
+          : {}),
       });
 
       // Live re-render (colour / style / font change): overwrite the already
@@ -1995,32 +2075,18 @@ function registerIpc() {
       const matchRole = ((d.matchRole || d.role) || "").trim();
       const matchCompany = ((d.matchCompany || d.company) || "").trim();
       const matchAccount = sani(acct && acct.name);
-      const dup = db.get(
-        `SELECT id, pdf_path FROM applications
-         WHERE account_id = ?
-           AND LOWER(COALESCE(NULLIF(match_company, ''), company)) = LOWER(?)
-           AND LOWER(COALESCE(NULLIF(match_role, ''), role)) = LOWER(?)
-         LIMIT 1`,
-        [d.accountId, matchCompany, matchRole]
-      );
-      const isDuplicate = !!dup && !!matchCompany && !!matchRole;
+      const dup = matchCompany && matchRole ? findEarlierApplication(d.accountId, matchCompany, matchRole) : null;
+      const isDuplicate = !!dup;
 
-      // For a duplicate, overwrite the existing PDF in place (one resume per
-      // company+role) rather than creating a new folder. New applications get a
-      // fresh timestamped folder:
+      // Every generation is its own application, in a fresh timestamped folder -
+      // a duplicate too; it is only marked as one (duplicate_of):
       //   <location>/<Account (Stack)>/<Date Time> - <Role> (<Company>)/<Account>.pdf
       const stamp = nowStamp();
-      let folder, file;
-      if (isDuplicate && dup.pdf_path) {
-        file = dup.pdf_path;
-        folder = path.dirname(file);
-      } else {
-        const personFolder = stack ? `${person} (${stack})` : person;
-        const label = [role, company ? `(${company})` : ""].filter(Boolean).join(" ");
-        const folderName = label ? `${stamp.folder} - ${label}` : stamp.folder;
-        folder = path.join(dir, personFolder, folderName);
-        file = path.join(folder, `${person}.pdf`);
-      }
+      const personFolder = stack ? `${person} (${stack})` : person;
+      const label = [role, company ? `(${company})` : ""].filter(Boolean).join(" ");
+      const folderName = label ? `${stamp.folder} - ${label}` : stamp.folder;
+      const folder = path.join(dir, personFolder, folderName);
+      let file = path.join(folder, `${person}.pdf`);
       fs.mkdirSync(folder, { recursive: true });
 
       // If the target file is open in another program (EBUSY/EPERM), fall back
@@ -2042,7 +2108,6 @@ function registerIpc() {
       }
       if (!savedFile) return { ok: false, error: "Could not write the PDF file." };
 
-      // Update the single existing entry for a duplicate; otherwise add a new one.
       const recRequestId = (d.requestId || "").trim();
       const recJd = (d.jobDescription || "").trim();
       const recResume = (d.resumeContent || "").trim();
@@ -2054,39 +2119,14 @@ function registerIpc() {
       const recIndustry = (d.jobIndustry || "").trim();
       const recSalary = (d.salaryRange || "").trim();
       const recEmployment = (d.employmentType || "").trim();
-      if (isDuplicate) {
-        // Silently update the existing entry (the renderer handles the user-facing
-        // duplicate confirmation before it gets here). Keep existing values when
-        // this regeneration carries none (e.g. a colour re-render).
-        db.run(
-          `UPDATE applications SET pdf_path = ?, country = ?, applied_at = ?,
-             request_id = COALESCE(NULLIF(?, ''), request_id),
-             job_description = COALESCE(NULLIF(?, ''), job_description),
-             resume_content = COALESCE(NULLIF(?, ''), resume_content),
-             gpt_url = COALESCE(NULLIF(?, ''), gpt_url),
-             job_link = COALESCE(NULLIF(?, ''), job_link),
-             location = COALESCE(NULLIF(?, ''), location),
-             industry = COALESCE(NULLIF(?, ''), industry),
-             salary_range = COALESCE(NULLIF(?, ''), salary_range),
-             employment_type = COALESCE(NULLIF(?, ''), employment_type),
-             match_role = COALESCE(NULLIF(?, ''), match_role),
-             match_company = COALESCE(NULLIF(?, ''), match_company),
-             match_account = COALESCE(NULLIF(?, ''), match_account)
-           WHERE id = ?`,
-          [savedFile, recCountry, nowIso(), recRequestId, recJd, recResume, recGptUrl, recJobLink,
-           recLocation, recIndustry, recSalary, recEmployment,
-           matchRole, matchCompany, matchAccount, dup.id]
-        );
-      } else {
-        db.insert(
-          `INSERT INTO applications (account_id, role, company, country, position, request_id, job_description, resume_content, gpt_url, job_link, location, industry, salary_range, employment_type, match_role, match_company, match_account, applied_at, pdf_path)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-          [d.accountId, recRole, recCompany, recCountry, recRole, recRequestId, recJd, recResume, recGptUrl, recJobLink,
-           recLocation, recIndustry, recSalary, recEmployment,
-           matchRole, matchCompany, matchAccount, nowIso(), savedFile]
-        );
-      }
-      return { ok: true, path: savedFile, duplicate: isDuplicate, savedAt: stamp.display };
+      const appId = db.insert(
+        `INSERT INTO applications (account_id, role, company, country, position, request_id, job_description, resume_content, gpt_url, job_link, location, industry, salary_range, employment_type, match_role, match_company, match_account, applied_at, pdf_path, duplicate_of)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [d.accountId, recRole, recCompany, recCountry, recRole, recRequestId, recJd, recResume, recGptUrl, recJobLink,
+         recLocation, recIndustry, recSalary, recEmployment,
+         matchRole, matchCompany, matchAccount, nowIso(), savedFile, isDuplicate ? dup.id : null]
+      );
+      return { ok: true, path: savedFile, id: appId, duplicate: isDuplicate, savedAt: stamp.display };
     } catch (e) {
       return { ok: false, error: (e && e.message) || String(e) };
     } finally {

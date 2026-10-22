@@ -65,6 +65,7 @@ contextBridge.exposeInMainWorld("api", {
   // Proxies (multiple; one active)
   listProxies: () => invoke("proxy:list"),
   addProxy: (data) => invoke("proxy:add", data),
+  updateProxy: (data) => invoke("proxy:update", data),
   deleteProxy: (id) => invoke("proxy:delete", id),
   setActiveProxy: (id) => invoke("proxy:setActive", id),
   disableProxy: () => invoke("proxy:disable"),
@@ -152,7 +153,8 @@ contextBridge.exposeInMainWorld("api", {
   importApplicationsDb: () => invoke("applications:importDb"),
   // Same single-payload rule: as three arguments, role and company arrived
   // undefined and every job was reported as "not a duplicate".
-  findDuplicateApplication: (accountId, role, company) => invoke("applications:findDuplicate", { accountId, role, company }),
+  markPathCopied: (id) => invoke("applications:markPathCopied", id),
+  applicationForPdf: (pdfPath) => invoke("applications:forPdf", pdfPath),
   openGptForApplication: (id) => invoke("application:openGpt", id),
   getApplicationJobContent: (id) => invoke("application:jobContent", id),
   openExternalLink: (url) => invoke("link:openExternal", url),

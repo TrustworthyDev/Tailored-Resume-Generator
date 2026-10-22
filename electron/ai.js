@@ -384,7 +384,10 @@ function resumeStructToMarkdown(resume) {
       } else {
         lines.push(`**${title}**`);
       }
-      if (s(pr.description)) lines.push(s(pr.description)); // next line = description
+      // Next line = the description, in plain text: any **bold** the model
+      // still added is dropped, so only the title above it is bold.
+      const desc = s(pr.description).replace(/\*\*([^*]+)\*\*/g, "$1").replace(/__([^_]+)__/g, "$1");
+      if (desc) lines.push(desc);
       lines.push(""); // blank line between projects
     });
   }
@@ -449,7 +452,7 @@ function buildPromptJson(personal, work, education, projects, jobDescription, st
         "Echo `request_id` and `job_ref` back EXACTLY as given above so the app can verify the reply matches this request. " +
         "`user_prompt` is the SOLE authority for the resume's content, wording, tone and emphasis — follow it. Build the resume FRESH from THIS JSON only (never reuse a resume from earlier in the conversation) and fill every field of `resume` following this schema EXACTLY. " +
         "NOTHING you write is dropped: if `user_prompt` calls for a section the fixed fields don't cover (Key Achievements, Certifications, Languages, Awards, Publications…), put it in `additional_sections` with its heading, its lines in `bullets`, and `position` saying where it belongs. Use `additional_sections` rather than inventing new top-level keys. " +
-        "KEYWORDS: inside every `experience[].bullets` entry and each `projects[].description`, wrap each technology, tool, framework, platform or named skill that also appears in `job_description` in Markdown `**bold**`, using the job description's exact spelling and casing. Bold the term ONLY — never a whole clause or sentence — and leave ordinary prose unbolded, since bolding everything makes nothing stand out. " +
+        "KEYWORDS: inside every `experience[].bullets` entry, wrap each technology, tool, framework, platform or named skill that also appears in `job_description` in Markdown `**bold**`, using the job description's exact spelling and casing. Bold the term ONLY — never a whole clause or sentence — and leave ordinary prose unbolded, since bolding everything makes nothing stand out. Write each `projects[].description` as plain text with NO bold at all — the project title alone is shown bold. " +
         "Fill `target` (used to file the application): `target.role` = the job title copied VERBATIM from job_description;`target.company` = the hiring company; `target.country` = the job's country as a plain country name (infer from location/office; map a city to its country); use \"Unknown\" only when a part is genuinely absent. " +
         (extra ? "Honour `additional_info_for_this_application` — job-specific notes for THIS application. " : "") +
         "If the user later asks job-application questions, answer each in its own fenced code block — positive, first-person, consistent with the resume; this does not change the resume output.",

@@ -118,6 +118,15 @@ a { text-decoration: none; }
 @page { size: A4; margin: 14mm 8mm; }
 `;
 
+// Spectrum style: a fixed palette, never the colour pickers. The header is pink,
+// then each section takes the next colour in turn (About, Skills, Experience,
+// Education, Volunteer… cycling if there are more).
+const SP_HEAD_COLOR = "#c676b0";
+const SP_COLORS = ["#7e56a1", "#5873b6", "#d9a466", "#e5e56b", "#bddca8", "#c676b0"];
+
+// Templates whose footer (name + "page of pages") is printed on every page.
+export const PAGE_FOOTER_STYLES = new Set(["spectrum"]);
+
 // Distinct visual template per style id. `head` is the user-picked color (empty
 // for "Default"). It recolors only the THEMEABLE parts — section headings
 // (categories), dividers/rules, and header backgrounds — while the candidate's
@@ -504,6 +513,191 @@ main li::before{content:"";position:absolute;left:1px;top:.55em;width:5px;height
 main p.skills strong{color:#14181e;}
 a{color:${accent};}`;
     }
+    case "spectrum":
+      // A coloured band down the left edge, one colour per section; a bold
+      // uppercase name and title with the contacts stacked on the right; light
+      // uppercase section headings over a hairline that starts in the section's
+      // colour; "Role at Company" with the dates on the right. Fixed colours.
+      return `@page{size:A4;margin:10mm 12mm 16mm 0;}
+body{font-family:Poppins,Montserrat,"Segoe UI",Arial,sans-serif;color:#2b2b2b;font-size:9.5pt;line-height:1.45;letter-spacing:.15px;}
+.page{padding-left:16mm;}
+@media screen{.page{padding:30px 34px 30px 76px;overflow:hidden;}}
+.sp-sec{position:relative;display:flow-root;padding-top:12px;}
+.sp-sec::before{content:"";position:absolute;left:-16mm;width:6.5mm;top:0;bottom:0;background:var(--c);}
+@media screen{.sp-sec::before{left:-76px;width:26px;}}
+.sp-head{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding:4px 0 16px;margin:0;}
+.sp-head h1{margin:0;font-size:30pt;font-weight:700;color:#1d1d1d;text-transform:uppercase;letter-spacing:2.5px;line-height:1.1;}
+.sp-head .title{margin-top:4px;font-size:14pt;font-weight:500;color:#1d1d1d;text-transform:uppercase;letter-spacing:1.5px;}
+.sp-contacts{text-align:right;font-size:9pt;line-height:1.35;color:#5a5a5a;padding-top:2px;}
+.sp-contacts a{color:#5a5a5a;}
+.sp-sec > h2{display:flex;align-items:center;margin:0 0 8px;padding:0;border:none;font-size:14pt;font-weight:400;color:#1d1d1d;text-transform:uppercase;letter-spacing:1.3px;}
+.sp-line{flex:1 1 auto;position:relative;height:1px;background:#9c9c9c;margin-left:24px;}
+.sp-line::before{content:"";position:absolute;left:0;top:-1px;width:170px;height:3px;background:var(--c);}
+.sp-sec > p{margin:0 0 6px;}
+.sp-sub{font-weight:600;font-size:10pt;color:#1d1d1d;margin:8px 0 3px;}
+.sp-sub:first-of-type{margin-top:2px;}
+.sp-items{margin:0 0 4px !important;}
+main h3,.sp-edu{display:block;margin:10px 0 4px;font-size:10.5pt;font-weight:600;color:#1d1d1d;}
+.sp-sec > h3:first-of-type,.sp-sec > .kh:first-of-type h3,.sp-sec > .sp-edu:first-of-type{margin-top:2px;}
+.role-dates{float:right;color:#1d1d1d;font-weight:600;font-size:10.5pt;}
+main ul{margin:2px 0 8px;padding-left:24px;}
+main li{margin:3px 0;padding-left:4px;}
+main li::marker{color:#2b2b2b;font-size:9pt;}
+main ul + .kh,main .kh + .kh,main ul + h3{margin-top:0;}
+main strong{font-weight:600;color:#1d1d1d;}
+a{color:#2b2b2b;}`;
+    case "nexus": {
+      // Serif and monochrome over a faint grey network of nodes: the name,
+      // title and summary, then a full-width band with the contacts in two
+      // columns; plain uppercase section headings; skills as label / items rows;
+      // each role opened by a short tick from the page edge, with its dates on
+      // the left and location in italics on the right, over ring bullets. The
+      // Content picker recolours the band, ticks and bullets (default near-black);
+      // the Name picker the name and title.
+      const ink = head || "#1a1a1a";
+      return `@page{size:A4;margin:12mm 0 14mm 0;}
+body{font-family:Lora,Georgia,Cambria,"Times New Roman",serif;color:#1c1c1c;font-size:9pt;line-height:1.38;}
+.page{position:relative;padding:0 14mm;}
+@media screen{.page{padding:30px 14mm;overflow:hidden;}}
+.nx-bg{position:absolute;z-index:0;pointer-events:none;}
+.nx-bg svg{display:block;width:100%;height:100%;}
+.nx-bg line{stroke:#e9e9e9;stroke-width:1.2;}
+.nx-bg circle{fill:#e6e6e6;}
+.nx-bg-top{top:0;right:0;width:470px;height:300px;}
+.nx-bg-bottom{right:0;bottom:0;width:360px;height:230px;}
+@media print{.nx-bg{position:fixed;}}
+header,main{position:relative;z-index:1;}
+header{margin-bottom:4px;}
+header h1{margin:0;font-size:25pt;font-weight:400;color:#111;line-height:1.1;}
+.title{margin-top:3px;font-size:13pt;font-weight:400;color:#1c1c1c;}
+.nx-summary{margin-top:8px;font-size:9.5pt;line-height:1.4;color:#1c1c1c;}
+.nx-summary p{margin:0 0 4px;text-align:left;}
+.contacts.nx-band{margin:16px -14mm 0;padding:10px 14mm;background:${ink};color:#ececec;display:grid;grid-template-columns:1fr 1fr;gap:8px 30px;font-size:9.5pt;font-weight:400;}
+.nx-band a{color:#ececec;}
+.contact{display:inline-flex;align-items:center;gap:9px;min-width:0;overflow-wrap:anywhere;}
+.contact svg{flex:0 0 auto;width:16px;height:16px;color:#fff;}
+main h2{margin:24px 0 10px !important;padding:0;border:none;font-size:14pt;font-weight:400;color:#111;text-transform:uppercase;letter-spacing:.2px;}
+.nx-skills{display:grid;grid-template-columns:118px 1fr;gap:9px 14px;margin:2px 0;}
+.nx-skill-cat{font-weight:700;color:#111;}
+.nx-entry{position:relative;margin:0 0 4px;}
+.nx-entry + .nx-entry{margin-top:20px;}
+.nx-entry::before{content:"";position:absolute;left:-14mm;width:calc(14mm - 7px);top:10px;height:1.6px;background:${ink};}
+.nx-head{break-inside:avoid;break-after:avoid;}
+.nx-entry h3{margin:0;font-size:13pt;font-weight:400;color:#111;line-height:1.2;}
+.nx-entry h3 .edu-degree{font-weight:400;color:#111;}
+.nx-company{font-size:13pt;color:#1c1c1c;line-height:1.2;}
+.nx-meta{display:flex;justify-content:space-between;gap:16px;margin-top:4px;font-size:8pt;color:#333;}
+.nx-loc{font-style:italic;}
+main ul{list-style:none;padding-left:0;margin:5px 0 0;}
+main li{position:relative;padding-left:13px;margin:3px 0;}
+main li::before{content:"";position:absolute;left:1px;top:.42em;width:5px;height:5px;border-radius:50%;border:1.4px solid ${ink};}
+main strong{font-weight:700;color:#111;}
+main p.skills strong{color:#111;}
+a{color:#1c1c1c;}`;
+    }
+    case "slate": {
+      // Dark slate and gold: a light name, gold title and the summary beside a
+      // slate contact card (each contact in a white tile); faint chevron line-art
+      // in two corners of every page; section headings led by a slate icon tile
+      // with gold tabs behind it and followed by gold / slate / gold bars; roles
+      // with gold italic dates over gold square bullets. The Content picker
+      // recolours the gold; the slate stays. The Name picker the name and title.
+      const gold = accent;
+      const pale = mixWhite(gold, 0.45);
+      const dark = "#2b313b";
+      return `body{font-family:Ubuntu,"Open Sans","Segoe UI",Arial,sans-serif;color:#23272e;font-size:9pt;line-height:1.38;}
+.page{position:relative;}
+.sl-bg{position:absolute;z-index:0;pointer-events:none;}
+.sl-bg svg{display:block;width:100%;height:100%;}
+.sl-bg-tl{top:0;left:0;width:330px;height:150px;}
+.sl-bg-br{right:0;bottom:0;width:330px;height:170px;}
+@media print{.sl-bg{position:fixed;}}
+header,main{position:relative;z-index:1;}
+header{display:flex;align-items:stretch;gap:26px;margin-bottom:6px;}
+.sl-left{flex:1 1 auto;min-width:0;padding-top:6px;}
+header h1{margin:0;font-size:25pt;font-weight:400;color:${dark};letter-spacing:.2px;line-height:1.1;}
+.title{margin-top:2px;font-size:12.5pt;font-weight:400;color:${gold};}
+.sl-summary{margin-top:9px;font-size:9pt;line-height:1.42;color:#23272e;}
+.sl-summary p{margin:0 0 4px;text-align:left;}
+.contacts.sl-card{flex:0 0 252px;align-self:stretch;background:${dark};color:#fff;border-radius:6px;padding:20px 16px;display:flex;flex-direction:column;gap:14px;font-size:9pt;font-weight:400;}
+.sl-card a{color:#fff;font-weight:400;}
+.sl-c{display:flex;align-items:center;gap:12px;min-width:0;}
+.sl-c > span:last-child{min-width:0;overflow-wrap:anywhere;}
+.sl-c-ico{flex:0 0 26px;width:26px;height:26px;border-radius:6px;background:#fff;color:${dark};display:inline-flex;align-items:center;justify-content:center;}
+.sl-c-ico svg{width:15px;height:15px;}
+.sl-c-ico .nw-in{stroke:#fff;}
+main h2{display:flex;align-items:center;gap:10px;margin:22px 0 12px !important;padding:0 0 0 14px;border:none;font-size:14pt;font-weight:700;color:${dark};text-transform:uppercase;letter-spacing:.2px;}
+.sl-ico{flex:0 0 30px;width:30px;height:30px;border-radius:7px;background:${dark};color:#fff;display:inline-flex;align-items:center;justify-content:center;box-shadow:-9px 0 0 -3px ${gold},-15px 0 0 -5px ${pale};}
+.sl-ico svg{width:17px;height:17px;}
+.sl-h2-text{flex:0 0 auto;}
+.sl-bars{flex:1 1 auto;display:flex;gap:7px;margin-left:28px;}
+.sl-bars i{flex:1 1 0;height:5px;border-radius:3px;background:${gold};}
+.sl-bars i:nth-child(2){background:${dark};}
+.sl-entry{margin:0 0 4px;}
+.sl-entry + .sl-entry{margin-top:16px;}
+.sl-head{break-inside:avoid;break-after:avoid;}
+.sl-entry h3{margin:0;font-size:12pt;font-weight:700;color:#14181e;}
+.sl-entry h3 .edu-degree{font-weight:700;color:#14181e;}
+.sl-company{margin-top:1px;font-size:12pt;color:#23272e;}
+.sl-loc{color:#6a7280;font-size:9.5pt;}
+.sl-dates{margin-top:3px;font-size:8.5pt;font-style:italic;color:${gold};}
+main ul{list-style:none;padding-left:0;margin:6px 0 0;}
+main li{position:relative;padding-left:15px;margin:3px 0;}
+main li::before{content:"";position:absolute;left:1px;top:.3em;width:7px;height:7px;border-radius:2px;background:${gold};}
+.sl-skills{display:grid;grid-template-columns:1fr 1fr;column-gap:34px;row-gap:16px;margin:4px 0 2px;}
+.sl-skill{display:grid;grid-template-columns:118px 1fr;column-gap:10px;break-inside:avoid;}
+.sl-skill-cat{font-weight:700;font-size:9pt;color:#14181e;}
+.sl-skill-items{font-size:9pt;line-height:1.42;color:#23272e;}
+main p.skills strong{color:#14181e;}
+a{color:${gold};}`;
+    }
+    case "diamond": {
+      // Clean and light: a large regular-weight name, a teal title, the summary
+      // and a centred row of solid contact icons up top; each section heading
+      // led by a diamond badge and followed by a pale rule that ends in small
+      // diamonds; skills in two label/items columns; roles as title, company and
+      // italic dates over hollow-diamond bullets. The Content picker recolours
+      // the badge, rules, bullets and (darkened) the title, dates and icons; the
+      // Name picker the name and title.
+      const teal = head ? darkenHex(head, 0.62) : "#1d5a6e";
+      const soft = mixWhite(accent, 0.7);
+      const bullet = mixWhite(accent, 0.5);
+      const ink = head ? darkenHex(head, 0.5) : "#1f3c5a";
+      return `body{font-family:Ubuntu,"Open Sans","Segoe UI",Arial,sans-serif;color:#23272e;font-size:9pt;line-height:1.38;}
+header{margin-bottom:4px;}
+header h1{margin:0;font-size:25pt;font-weight:400;color:#16191e;letter-spacing:.2px;line-height:1.1;}
+.title{margin-top:3px;font-size:12pt;font-weight:400;color:${teal};}
+.dm-summary{margin-top:10px;font-size:9pt;line-height:1.42;color:#23272e;}
+.dm-summary p{margin:0 0 4px;text-align:left;}
+.contacts{display:flex;flex-wrap:wrap;justify-content:center;gap:4px 34px;margin:16px 0 8px;font-size:9pt;color:#23272e;}
+.contacts a{color:#23272e;}
+.contact{display:inline-flex;align-items:center;gap:9px;white-space:nowrap;}
+.contact svg{width:15px;height:15px;flex:0 0 auto;color:${ink};}
+main h2{display:flex;align-items:center;gap:10px;margin:22px 0 12px !important;padding:0;border:none;font-size:14pt;font-weight:700;color:#14181e;text-transform:uppercase;letter-spacing:.3px;}
+.dm-badge{flex:0 0 auto;width:22px;height:22px;color:${accent};display:inline-flex;}
+.dm-badge svg{width:22px;height:22px;}
+.dm-rule{flex:1 1 auto;position:relative;height:2px;background:${soft};margin:0 6px 0 26px;}
+.dm-rule::before,.dm-rule::after{content:"";position:absolute;top:50%;width:7px;height:7px;background:${soft};transform:translate(-50%,-50%) rotate(45deg);}
+.dm-rule::before{left:0;}
+.dm-rule::after{left:100%;}
+.dm-entry{margin:0 0 4px;}
+.dm-entry + .dm-entry{margin-top:16px;}
+.dm-head{break-inside:avoid;break-after:avoid;}
+.dm-entry h3{margin:0;font-size:12pt;font-weight:700;color:#14181e;}
+.dm-entry h3 .edu-degree{font-weight:700;color:#14181e;}
+.dm-company{margin-top:1px;font-size:12pt;color:#23272e;}
+.dm-loc{color:#6a7280;font-size:9.5pt;}
+.dm-dates{margin-top:3px;font-size:8pt;font-style:italic;color:${teal};}
+main ul{list-style:none;padding-left:0;margin:6px 0 0;}
+main li{position:relative;padding-left:15px;margin:2px 0;}
+main li::before{content:"";position:absolute;left:2px;top:.42em;width:5.5px;height:5.5px;border:1.2px solid ${bullet};transform:rotate(45deg);}
+.dm-skills{display:grid;grid-template-columns:1fr 1fr;column-gap:34px;row-gap:16px;margin:4px 0 2px;}
+.dm-skill{display:grid;grid-template-columns:118px 1fr;column-gap:10px;break-inside:avoid;}
+.dm-skill-cat{font-weight:700;font-size:9pt;color:#14181e;}
+.dm-skill-items{font-size:9pt;line-height:1.42;color:#23272e;}
+main p.skills strong{color:#14181e;}
+a{color:${teal};}`;
+    }
     default: // professional
       return `body{font-family:Calibri,"Segoe UI",Arial,sans-serif;}
 header{border-left:5px solid ${accent};padding-left:16px;margin-bottom:18px;}
@@ -528,6 +722,16 @@ function darkenHex(hex, f = 0.7) {
   if (!/^[0-9a-f]{6}$/i.test(h)) return hex;
   const n = parseInt(h, 16);
   const ch = (shift) => Math.round(((n >> shift) & 255) * f).toString(16).padStart(2, "0");
+  return "#" + ch(16) + ch(8) + ch(0);
+}
+
+// Blend a hex toward white by `t` (0 = unchanged, 1 = white): the pale tints
+// some templates draw their rules and bullets in.
+function mixWhite(hex, t = 0.5) {
+  const h = String(hex || "").replace("#", "");
+  if (!/^[0-9a-f]{6}$/i.test(h)) return hex;
+  const n = parseInt(h, 16);
+  const ch = (shift) => Math.round(((n >> shift) & 255) * (1 - t) + 255 * t).toString(16).padStart(2, "0");
   return "#" + ch(16) + ch(8) + ch(0);
 }
 
@@ -786,6 +990,64 @@ const NW_BACKGROUND =
   NW_NODES.map(([x, y, r]) => `<circle cx="${x}" cy="${y}" r="${r}"/>`).join("") +
   `</svg></div>`;
 
+// ---- Nexus style artwork --------------------------------------------------------
+// The faint grey node network behind the header and the foot of each page —
+// the Network template's drawing, in grey.
+const nxNetwork = (w, h) =>
+  `<svg viewBox="0 0 794 230" preserveAspectRatio="xMaxYMin slice" width="${w}" height="${h}">` +
+  NW_EDGES.map(([a, b]) => `<line x1="${NW_NODES[a][0]}" y1="${NW_NODES[a][1]}" x2="${NW_NODES[b][0]}" y2="${NW_NODES[b][1]}"/>`).join("") +
+  NW_NODES.map(([x, y, r]) => `<circle cx="${x}" cy="${y}" r="${r}"/>`).join("") +
+  `</svg>`;
+const NX_BACKGROUND =
+  `<div class="nx-bg nx-bg-top" aria-hidden="true">${nxNetwork(470, 300)}</div>` +
+  `<div class="nx-bg nx-bg-bottom" aria-hidden="true">${nxNetwork(360, 230)}</div>`;
+
+// ---- Slate style artwork --------------------------------------------------------
+// Faint chevron line-art for the top-left and bottom-right corners of each page.
+const slChevrons = (paths, w, h) =>
+  `<svg viewBox="0 0 ${w} ${h}" preserveAspectRatio="xMidYMid slice"><g fill="none" stroke="#ececec" stroke-width="1.5" stroke-linejoin="round">${paths}</g></svg>`;
+const SL_BACKGROUND =
+  `<div class="sl-bg sl-bg-tl" aria-hidden="true">` +
+  slChevrons(
+    '<path d="M-10 18 52 66-10 114"/><path d="M30-6 100 52 30 110"/><path d="M78-6 148 52 78 110"/><path d="M150 0 214 46"/>' +
+      '<path d="M214 46 276 0"/><path d="M110 150 172 98 234 150"/><path d="M196 18 252 62 308 18"/>',
+    330, 150
+  ) +
+  `</div><div class="sl-bg sl-bg-br" aria-hidden="true">` +
+  slChevrons(
+    '<path d="M20 170 82 112 144 170"/><path d="M82 112 144 54 206 112"/><path d="M144 170 206 112 268 170"/><path d="M206 112 268 54 330 112"/>' +
+      '<path d="M268 54 330 0"/><path d="M118 92 156 60"/><path d="M240 0 300 40 340 10"/><path d="M268 170 330 112"/>',
+    330, 170
+  ) +
+  `</div>`;
+
+// ---- Diamond style artwork ------------------------------------------------------
+// The section badge: a rounded diamond in the accent (currentColor) with a white
+// diamond outline inside it.
+const DM_BADGE =
+  '<svg viewBox="0 0 24 24" aria-hidden="true">' +
+  '<rect x="4.6" y="4.6" width="14.8" height="14.8" rx="2.6" transform="rotate(45 12 12)" fill="currentColor"/>' +
+  '<rect x="8.3" y="8.3" width="7.4" height="7.4" rx="1" transform="rotate(45 12 12)" fill="none" stroke="#fff" stroke-width="1.7"/></svg>';
+
+// Solid contact icons (currentColor, with white detail).
+const DM_CONTACT_ICONS = {
+  email:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="5" width="20" height="14" rx="1.6" fill="currentColor"/>' +
+    '<path d="m3.6 6.6 8.4 6.4 8.4-6.4" fill="none" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg>',
+  phone:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="6.5" y="1.8" width="11" height="20.4" rx="2.4" fill="currentColor"/>' +
+    '<rect x="8.6" y="4.6" width="6.8" height="12.2" rx=".7" fill="#fff"/><circle cx="12" cy="19.3" r="1.1" fill="#fff"/></svg>',
+  location:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 1.8a7.4 7.4 0 0 0-7.4 7.4c0 5.4 7.4 13 7.4 13s7.4-7.6 7.4-13A7.4 7.4 0 0 0 12 1.8Z" fill="currentColor"/>' +
+    '<circle cx="12" cy="9.2" r="2.7" fill="#fff"/></svg>',
+  linkedin:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="2.5" width="19" height="19" rx="2.6" fill="currentColor"/>' +
+    '<path d="M8 10.5V17M8 7.4v.1M11.6 17v-6.5M11.6 13.2c0-1.6 1-2.7 2.4-2.7s2.2 1 2.2 2.7V17" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/></svg>',
+  link:
+    '<svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="10" fill="currentColor"/>' +
+    '<path d="M2.6 12h18.8M12 2.4c2.5 2.6 3.6 5.8 3.6 9.6s-1.1 7-3.6 9.6c-2.5-2.6-3.6-5.8-3.6-9.6S9.5 5 12 2.4Z" fill="none" stroke="#fff" stroke-width="1.4"/></svg>',
+};
+
 // Which icon belongs beside a contact item. Mirrors linkifyContact's tests, so
 // an item that becomes a mailto/tel/https link gets the matching glyph and
 // anything left over (a city, an address) reads as a place.
@@ -805,7 +1067,7 @@ function contactKind(t) {
 const BD_SEP = ' <span class="bd-sep">|</span> ';
 
 const STACKED_CONTACTS = new Set(["cards", "highlight", "darkheader"]);
-function headerHtml(id, name, title, contacts, summaryHtml = "") {
+function headerHtml(id, name, title, contacts, summaryHtml = "", inkColor = "") {
   if (!name) return "";
   const raw = String(contacts || "")
     .split("  •  ")
@@ -829,6 +1091,69 @@ function headerHtml(id, name, title, contacts, summaryHtml = "") {
       `<header><h1>${escapeHtml(name)}</h1>` +
       `${title ? `<div class="title">${escapeHtml(title)}</div>` : ""}` +
       `${summaryHtml ? `<div class="nw-summary">${summaryHtml}</div>` : ""}` +
+      `${raw.length ? `<div class="contacts">${contactsHtml}</div>` : ""}</header>`
+    );
+  }
+
+  // Nexus: name, title and the summary (lifted out of the body), then the
+  // contacts in a full-width band, two to a row, each with a solid white icon
+  // whose detail takes the band's colour.
+  if (id === "nexus") {
+    const band = inkColor || "#1a1a1a";
+    const items = raw
+      .map((t) => {
+        const icon = (DM_CONTACT_ICONS[contactKind(t)] || "").replace(/#fff/g, band);
+        return `<span class="contact">${icon}${linkifyContact(t)}</span>`;
+      })
+      .join("");
+    return (
+      `<header><h1>${escapeHtml(name)}</h1>` +
+      `${title ? `<div class="title">${escapeHtml(title)}</div>` : ""}` +
+      `${summaryHtml ? `<div class="nx-summary">${summaryHtml}</div>` : ""}` +
+      `${raw.length ? `<div class="contacts nx-band">${items}</div>` : ""}</header>`
+    );
+  }
+
+  // Slate: name, title and the summary (lifted out of the body) on the left; the
+  // contacts in a slate card on the right, each in a white icon tile.
+  if (id === "slate") {
+    const items = raw
+      .map((t) => `<div class="sl-c"><span class="sl-c-ico">${NW_CONTACT_ICONS[contactKind(t)] || ""}</span><span>${linkifyContact(t)}</span></div>`)
+      .join("");
+    return (
+      `<header><div class="sl-left"><h1>${escapeHtml(name)}</h1>` +
+      `${title ? `<div class="title">${escapeHtml(title)}</div>` : ""}` +
+      `${summaryHtml ? `<div class="sl-summary">${summaryHtml}</div>` : ""}</div>` +
+      `${raw.length ? `<div class="contacts sl-card">${items}</div>` : ""}</header>`
+    );
+  }
+
+  // Spectrum: name and title on the left, the contacts stacked on the right —
+  // place first, then phone, email and links — all on the pink band.
+  if (id === "spectrum") {
+    const order = { location: 0, phone: 1, email: 2, linkedin: 3, link: 4 };
+    const lines = raw
+      .map((t, i) => ({ t, k: order[contactKind(t)] ?? 5, i }))
+      .sort((a, b) => a.k - b.k || a.i - b.i)
+      .map(({ t }) => `<div>${linkifyContact(t)}</div>`)
+      .join("");
+    return (
+      `<header class="sp-sec sp-head" style="--c:${SP_HEAD_COLOR}"><div><h1>${escapeHtml(name)}</h1>` +
+      `${title ? `<div class="title">${escapeHtml(title)}</div>` : ""}</div>` +
+      `${raw.length ? `<div class="contacts sp-contacts">${lines}</div>` : ""}</header>`
+    );
+  }
+
+  // Diamond: name, title, the summary (lifted out of the body), then a centred
+  // row of contacts, each led by its solid icon.
+  if (id === "diamond") {
+    const contactsHtml = raw
+      .map((t) => `<span class="contact">${DM_CONTACT_ICONS[contactKind(t)] || ""}${linkifyContact(t)}</span>`)
+      .join("");
+    return (
+      `<header><h1>${escapeHtml(name)}</h1>` +
+      `${title ? `<div class="title">${escapeHtml(title)}</div>` : ""}` +
+      `${summaryHtml ? `<div class="dm-summary">${summaryHtml}</div>` : ""}` +
       `${raw.length ? `<div class="contacts">${contactsHtml}</div>` : ""}</header>`
     );
   }
@@ -1065,6 +1390,53 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
             `</div></div><!--nw-->`
           );
         }
+        // Nexus style: the same block as a role — degree, school, then the
+        // period on the left and the location on the right.
+        if (id === "nexus") {
+          const school = degree && uni ? uni : "";
+          return (
+            `<div class="nx-entry nx-edu"><div class="nx-head"><h3 data-nx>${primary}</h3>` +
+            (school ? `<div class="nx-company">${escapeHtml(school)}</div>` : "") +
+            (period || loc
+              ? `<div class="nx-meta"><span>${escapeHtml(period)}</span><span class="nx-loc">${escapeHtml(loc)}</span></div>`
+              : "") +
+            `</div></div>`
+          );
+        }
+        // Slate style: the same block as a role — degree, school, then the period.
+        if (id === "slate") {
+          const school = degree && uni ? uni : "";
+          const org = [school ? escapeHtml(school) : "", loc ? `<span class="sl-loc">${escapeHtml(loc)}</span>` : ""]
+            .filter(Boolean)
+            .join(" · ");
+          return (
+            `<div class="sl-entry sl-edu"><div class="sl-head"><h3 data-sl>${primary}</h3>` +
+            (org ? `<div class="sl-company">${org}</div>` : "") +
+            (period ? `<div class="sl-dates">${escapeHtml(period)}</div>` : "") +
+            `</div></div>`
+          );
+        }
+        // Spectrum style: one line styled like a role — "School - Degree", the
+        // period on the right. A div, not an h3: with no bullets under it, an h3
+        // would let the keep-with-first-bullet pass reach into the next section.
+        if (id === "spectrum") {
+          const label = [uni, degree].filter(Boolean).map(escapeHtml).join(" - ");
+          return `<div class="sp-edu">${label}${dates}</div>` + (loc ? `<div class="role-org edu-org">${escapeHtml(loc)}</div>` : "");
+        }
+        // Diamond style: the same block as a role — the degree, the school (and
+        // its location), then the period in italic. data-dm marks it as built.
+        if (id === "diamond") {
+          const school = degree && uni ? uni : "";
+          const org = [school ? escapeHtml(school) : "", loc ? `<span class="dm-loc">${escapeHtml(loc)}</span>` : ""]
+            .filter(Boolean)
+            .join(" · ");
+          return (
+            `<div class="dm-entry dm-edu"><div class="dm-head"><h3 data-dm>${primary}</h3>` +
+            (org ? `<div class="dm-company">${org}</div>` : "") +
+            (period ? `<div class="dm-dates">${escapeHtml(period)}</div>` : "") +
+            `</div></div>`
+          );
+        }
         // Formal style: the same centered three-line block as its experience
         // entries — the degree leads, then the school with its location, then the
         // study period last. With no degree to lead, `primary` already falls back
@@ -1121,19 +1493,27 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
 
   // Projects: rebuild the whole section so each project is a bold-title +
   // clickable (domain) line followed by its description on the next line, with
-  // space between projects — regardless of how the model grouped them. The
-  // boundary between projects is each bold title. (All styles.)
+  // space between projects — regardless of how the model grouped them. (All
+  // styles.) Only the project's title is bold: the description's keywords are
+  // shown in plain text.
   body = body.replace(
     /(<h2[^>]*>[^<]*Projects?[^<]*<\/h2>)([\s\S]*?)(?=<h2|$)/i,
     (m, heading, rest2) => {
-      let raw = rest2;
-      // Flatten block wrappers so projects can be re-segmented cleanly.
-      raw = raw.replace(/<\/?(p|ul|ol|li)\b[^>]*>/gi, " ").replace(/<br\s*\/?>/gi, " ");
       // Make any relative project links absolute (the model often omits https).
-      raw = raw.replace(/<a\s+href="(?!https?:|mailto:)([^"]+)"/gi, '<a href="https://$1"');
+      const absolute = (html) => html.replace(/<a\s+href="(?!https?:|mailto:)([^"]+)"/gi, '<a href="https://$1"');
+      const flatten = (html) => html.replace(/<\/?(p|ul|ol|li)\b[^>]*>/gi, " ").replace(/<br\s*\/?>/gi, " ");
 
-      // Each project begins at a bold title (<strong>).
-      const chunks = raw.split(/(?=<strong>)/g).map((s) => s.trim()).filter(Boolean);
+      // Each project is its own paragraph (or list item) opening with its bold
+      // title, so split there. Splitting at every bold run instead turned each
+      // bolded keyword in a description into a "project" of its own.
+      const blocks = (rest2.match(/<(p|li)\b[^>]*>[\s\S]*?<\/\1>/gi) || [])
+        .map((b) => absolute(flatten(b)).trim())
+        .filter(Boolean);
+      let chunks = blocks.length && blocks.every((b) => /^<strong>/.test(b)) ? blocks : null;
+      // Otherwise (no such structure), fall back to a bold title per project.
+      if (!chunks) {
+        chunks = absolute(flatten(rest2)).split(/(?=<strong>)/g).map((s) => s.trim()).filter(Boolean);
+      }
       if (!chunks.length) return heading + rest2;
 
       const html = chunks
@@ -1150,6 +1530,7 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
           // line as a single clickable link so the viewer can open it directly.
           const { link, desc: rawDesc } = extractProjectLink(after);
           const desc = rawDesc
+            .replace(/<\/?(?:strong|b)\b[^>]*>/gi, "") // keywords in plain text, not bold
             .replace(/\s*<a\b[^>]*>\s*https?:\/\/[^<]*<\/a>/gi, "") // drop leftover bare-URL dupes
             .replace(/^(?:\s|[|•:\-–—])+/, "")
             .replace(/\(\s*\)/g, "")
@@ -1283,6 +1664,169 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
       const divider = firstHeading ? "" : `<div class="nw-div"><i></i><i></i><i></i></div>`;
       firstHeading = false;
       return `${divider}<h2${attr}><span class="nw-ico">${nwSectionIcon(inner.replace(/<[^>]+>/g, ""))}</span><span>${inner}</span></h2>`;
+    });
+  }
+
+  // Diamond style: the summary moves up into the header, each role becomes a
+  // title / company / italic-dates block over its bullets, skills go into two
+  // label/items columns, and every heading gets its badge and diamond rule.
+  if (id === "diamond") {
+    body = body.replace(
+      /<h2[^>]*>\s*(?:Professional\s+)?(?:Summary|Profile|About(?:\s+Me)?)\s*<\/h2>([\s\S]*?)(?=<h2|$)/i,
+      (m, content) => { nwSummary = content.trim(); return ""; }
+    );
+
+    body = body.replace(
+      /<h3\b(?![^>]*data-dm)([^>]*)>([\s\S]*?)<\/h3>\s*(?:<div class="role-org">([\s\S]*?)<\/div>)?\s*(<ul\b[\s\S]*?<\/ul>)?/g,
+      (m, attr, h3inner, org, ul) => {
+        const dm = h3inner.match(/<span class="role-dates">([\s\S]*?)<\/span>/);
+        const dates = dm ? dm[1].trim() : "";
+        const roleTitle = h3inner.replace(/<span class="role-dates">[\s\S]*?<\/span>/, "").trim();
+        const parts = (org || "").split(/\s*[·•]\s*/).map((s) => s.trim()).filter(Boolean);
+        const company = parts[0] || "";
+        const location = parts.slice(1).join(" · ");
+        const companyLine = company
+          ? `<div class="dm-company">${company}${location ? ` · <span class="dm-loc">${location}</span>` : ""}</div>`
+          : "";
+        return (
+          `<div class="dm-entry"><div class="dm-head"><h3 data-dm${attr}>${roleTitle}</h3>${companyLine}` +
+          (dates ? `<div class="dm-dates">${dates}</div>` : "") +
+          `</div>${ul || ""}</div>`
+        );
+      }
+    );
+
+    // Skills: every "Category: items" line becomes a label/items pair, two pairs to a row.
+    body = body.replace(/(<h2[^>]*>[^<]*(?:Skill|Technolog|Competenc|Expertise)[^<]*<\/h2>)([\s\S]*?)(?=<h2|$)/i, (m, heading, content) => {
+      const cells = [];
+      content.replace(/<strong>([^<]*?):?\s*<\/strong>:?\s*([\s\S]*?)(?=<strong>|<\/p>|$)/g, (mm, cat, items) => {
+        const text = items.replace(/<br\s*\/?>/gi, " ").replace(/<\/?p[^>]*>/gi, "").trim();
+        if (cat.trim() && text) {
+          cells.push(`<div class="dm-skill"><div class="dm-skill-cat">${cat.trim().replace(/:$/, "")}:</div><div class="dm-skill-items">${text}</div></div>`);
+        }
+        return mm;
+      });
+      return cells.length >= 2 ? `${heading}<div class="dm-skills">${cells.join("")}</div>` : m;
+    });
+
+    // Section headings: badge, title, then the pale rule with a diamond at each end.
+    body = body.replace(
+      /<h2\b([^>]*)>([\s\S]*?)<\/h2>/g,
+      (m, attr, inner) => `<h2${attr}><span class="dm-badge">${DM_BADGE}</span><span>${inner}</span><span class="dm-rule"></span></h2>`
+    );
+  }
+
+  // Nexus style: the summary moves up into the header, each role becomes a
+  // ticked block (title, company, dates | location) over its bullets, and the
+  // skills become label / items rows.
+  if (id === "nexus") {
+    body = body.replace(
+      /<h2[^>]*>\s*(?:Professional\s+)?(?:Summary|Profile|About(?:\s+Me)?)\s*<\/h2>([\s\S]*?)(?=<h2|$)/i,
+      (m, content) => { nwSummary = content.trim(); return ""; }
+    );
+    body = body.replace(
+      /<h3\b(?![^>]*data-nx)([^>]*)>([\s\S]*?)<\/h3>\s*(?:<div class="role-org">([\s\S]*?)<\/div>)?\s*(<ul\b[\s\S]*?<\/ul>)?/g,
+      (m, attr, h3inner, org, ul) => {
+        const dm = h3inner.match(/<span class="role-dates">([\s\S]*?)<\/span>/);
+        const dates = dm ? dm[1].trim() : "";
+        const roleTitle = h3inner.replace(/<span class="role-dates">[\s\S]*?<\/span>/, "").trim();
+        const parts = (org || "").split(/\s*[·•]\s*/).map((s) => s.trim()).filter(Boolean);
+        const company = parts[0] || "";
+        const location = parts.slice(1).join(" · ");
+        return (
+          `<div class="nx-entry"><div class="nx-head"><h3 data-nx${attr}>${roleTitle}</h3>` +
+          (company ? `<div class="nx-company">${company}</div>` : "") +
+          (dates || location ? `<div class="nx-meta"><span>${dates}</span><span class="nx-loc">${location}</span></div>` : "") +
+          `</div>${ul || ""}</div>`
+        );
+      }
+    );
+    body = body.replace(/(<h2[^>]*>[^<]*(?:Skill|Technolog|Competenc|Expertise)[^<]*<\/h2>)([\s\S]*?)(?=<h2|$)/i, (m, heading, content) => {
+      const cells = [];
+      content.replace(/<strong>([^<]*?):?\s*<\/strong>:?\s*([\s\S]*?)(?=<strong>|<\/p>|$)/g, (mm, cat, items) => {
+        const text = items.replace(/<br\s*\/?>/gi, " ").replace(/<\/?p[^>]*>/gi, "").trim();
+        if (cat.trim() && text) cells.push(`<div class="nx-skill-cat">${cat.trim().replace(/:$/, "")}</div><div class="nx-skill-items">${text}</div>`);
+        return mm;
+      });
+      return cells.length >= 2 ? `${heading}<div class="nx-skills">${cells.join("")}</div>` : m;
+    });
+  }
+
+  // Slate style: the summary moves up beside the contact card, each role becomes
+  // a title / company / gold-dates block over its bullets, skills go into two
+  // label/items columns, and every heading gets its icon tile and bars.
+  if (id === "slate") {
+    body = body.replace(
+      /<h2[^>]*>\s*(?:Professional\s+)?(?:Summary|Profile|About(?:\s+Me)?)\s*<\/h2>([\s\S]*?)(?=<h2|$)/i,
+      (m, content) => { nwSummary = content.trim(); return ""; }
+    );
+    body = body.replace(
+      /<h3\b(?![^>]*data-sl)([^>]*)>([\s\S]*?)<\/h3>\s*(?:<div class="role-org">([\s\S]*?)<\/div>)?\s*(<ul\b[\s\S]*?<\/ul>)?/g,
+      (m, attr, h3inner, org, ul) => {
+        const dm = h3inner.match(/<span class="role-dates">([\s\S]*?)<\/span>/);
+        const dates = dm ? dm[1].trim() : "";
+        const roleTitle = h3inner.replace(/<span class="role-dates">[\s\S]*?<\/span>/, "").trim();
+        const parts = (org || "").split(/\s*[·•]\s*/).map((s) => s.trim()).filter(Boolean);
+        const company = parts[0] || "";
+        const location = parts.slice(1).join(" · ");
+        const companyLine = company
+          ? `<div class="sl-company">${company}${location ? ` · <span class="sl-loc">${location}</span>` : ""}</div>`
+          : "";
+        return (
+          `<div class="sl-entry"><div class="sl-head"><h3 data-sl${attr}>${roleTitle}</h3>${companyLine}` +
+          (dates ? `<div class="sl-dates">${dates}</div>` : "") +
+          `</div>${ul || ""}</div>`
+        );
+      }
+    );
+    body = body.replace(/(<h2[^>]*>[^<]*(?:Skill|Technolog|Competenc|Expertise)[^<]*<\/h2>)([\s\S]*?)(?=<h2|$)/i, (m, heading, content) => {
+      const cells = [];
+      content.replace(/<strong>([^<]*?):?\s*<\/strong>:?\s*([\s\S]*?)(?=<strong>|<\/p>|$)/g, (mm, cat, items) => {
+        const text = items.replace(/<br\s*\/?>/gi, " ").replace(/<\/?p[^>]*>/gi, "").trim();
+        if (cat.trim() && text) {
+          cells.push(`<div class="sl-skill"><div class="sl-skill-cat">${cat.trim().replace(/:$/, "")}:</div><div class="sl-skill-items">${text}</div></div>`);
+        }
+        return mm;
+      });
+      return cells.length >= 2 ? `${heading}<div class="sl-skills">${cells.join("")}</div>` : m;
+    });
+    body = body.replace(
+      /<h2\b([^>]*)>([\s\S]*?)<\/h2>/g,
+      (m, attr, inner) =>
+        `<h2${attr}><span class="sl-ico">${nwSectionIcon(inner.replace(/<[^>]+>/g, ""))}</span>` +
+        `<span class="sl-h2-text">${inner}</span><span class="sl-bars"><i></i><i></i><i></i></span></h2>`
+    );
+  }
+
+  // Spectrum style: roles read "Role at Company" with the dates on the right; the
+  // summary is "About"; skills become a sub-heading per category over its items;
+  // and every section is wrapped so it carries its own colour on the left band.
+  if (id === "spectrum") {
+    body = body.replace(
+      /<h3\b(?![^>]*data-sp)([^>]*)>([\s\S]*?)<\/h3>\s*(?:<div class="role-org">([\s\S]*?)<\/div>)?/g,
+      (m, attr, h3inner, org) => {
+        const dm = h3inner.match(/<span class="role-dates">[\s\S]*?<\/span>/);
+        const roleTitle = h3inner.replace(/<span class="role-dates">[\s\S]*?<\/span>/, "").trim();
+        const company = ((org || "").split(/\s*[·•]\s*/)[0] || "").trim();
+        return `<h3 data-sp${attr}>${roleTitle}${company ? ` at ${company}` : ""}${dm ? dm[0] : ""}</h3>`;
+      }
+    );
+    body = body.replace(
+      /<h2([^>]*)>\s*(?:Professional\s+)?(?:Summary|Profile)\s*<\/h2>/i,
+      (m, attr) => `<h2${attr}>About</h2>`
+    );
+    body = body.replace(/(<h2[^>]*>[^<]*(?:Skill|Technolog|Competenc|Expertise)[^<]*<\/h2>)([\s\S]*?)(?=<h2|$)/i, (m, heading, content) =>
+      heading +
+      content.replace(
+        /<p class="skills"><strong>([^<]*?):?\s*<\/strong>:?\s*([\s\S]*?)<\/p>/g,
+        (mm, cat, items) => `<div class="sp-sub">${cat.trim().replace(/:$/, "")}</div><p class="sp-items">${items.trim()}</p>`
+      )
+    );
+    let n = 0;
+    body = body.replace(/<h2\b[\s\S]*?(?=<h2\b|$)/g, (chunk) => {
+      const c = SP_COLORS[n++ % SP_COLORS.length];
+      const withLine = chunk.replace(/<h2\b([^>]*)>([\s\S]*?)<\/h2>/, (mm, attr, inner) => `<h2${attr}><span>${inner}</span><span class="sp-line"></span></h2>`);
+      return `<section class="sp-sec" style="--c:${c}">${withLine}</section>`;
     });
   }
 
@@ -1424,7 +1968,7 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
   );
 
   const css =
-    BASE + "\n" + templateCss(id, accent, head, nameColor) + nameTitleCss(nameColor) +
+    BASE + "\n" + templateCss(id, accent, head, nameColor) + (id === "spectrum" ? "" : nameTitleCss(nameColor)) +
     "\nmain h2{margin-top:13px;margin-bottom:5px;}" +
     "\n.edu-line{font-size:11pt;color:#23272e;font-weight:normal;margin:8px 0 0;}" +
     "\n.edu-line .edu-degree{font-weight:700;color:#14181e;}" +
@@ -1441,11 +1985,11 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
     contacts = contacts.replace(/https?:\/\/(?:www\.)?(linkedin\.com\/[^\s)]+)/gi, "$1");
   }
 
-  const header = headerHtml(id, name, title, contacts, nwSummary);
+  const header = headerHtml(id, name, title, contacts, nwSummary, head);
 
   return `<!doctype html>
 <html><head><meta charset="utf-8" /><base target="_blank" /><style>${css}${fontOverride(style)}</style></head>
-<body><div class="page">${id === "network" ? NW_BACKGROUND : ""}
+<body><div class="page">${id === "network" ? NW_BACKGROUND : id === "slate" ? SL_BACKGROUND : id === "nexus" ? NX_BACKGROUND : ""}
 ${header}
 <main>${body}</main>
 </div></body></html>`;

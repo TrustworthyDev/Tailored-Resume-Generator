@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { api } from "../lib/api";
 import { useDbChanged } from "../lib/useDbChanged";
-import { buildResumeHtml } from "../lib/resumeHtml";
+import { buildResumeHtml, PAGE_FOOTER_STYLES } from "../lib/resumeHtml";
 import { styleThumb } from "../lib/styleThumbs";
 import { STYLES, PRESET_COLORS, FONT_OPTIONS, SIZE_OPTIONS, hasSavedLook, rankStyles } from "../lib/resumeStyles";
 import { modelTiny, providerLabel } from "../lib/aiModels";
 import { friendlyError } from "../lib/errors";
 import { ageFromBirthDate } from "../lib/age";
 import FlagSelect from "./FlagSelect";
-import ConfirmModal from "./ConfirmModal";
+import { duplicateNotice } from "../lib/duplicates";
 
 
 // Shown when the user tweaks a style/colour/font but hasn't generated a resume.
@@ -171,6 +171,64 @@ const COMPOSER_JS =
   "    el.dispatchEvent(new MouseEvent('mouseup', o));" +
   "    try { el.click(); } catch (e) { el.dispatchEvent(new MouseEvent('click', o)); } };";
 
+// Wait until ChatGPT's message box is there AND live. Under load (several jobs
+// opening ChatGPT at once) the page's HTML shows a box well before ChatGPT's
+// code has taken it over; typing into it then goes nowhere and Send never
+// enables. Live = Lexical, ProseMirror or React has attached itself to it.
+// Waits up to 60s for the box; once it is there, up to 15s more for it to go
+// live, then goes ahead anyway (stale) - a box that still won't take the text
+// is caught by the send's own checks and retried.
+const COMPOSER_READY_JS =
+  "(async () => {" +
+  "  const sleep = (ms) => new Promise(r => setTimeout(r, ms));" +
+  COMPOSER_JS +
+  "  const reactKey = (n) => !!n && Object.keys(n).some(k => k.startsWith('__reactFiber') || k.startsWith('__reactProps'));" +
+  "  const live = (c) => !!(c.el.__lexicalEditor || c.el.pmViewDesc || reactKey(c.el));" +
+  "  const t0 = Date.now(); let seenAt = 0;" +
+  "  for (;;) {" +
+  "    const c = composerNow(Date.now() - t0 > 3000);" +
+  "    if (c) {" +
+  "      if (live(c)) return JSON.stringify({ ok: true, kind: c.kind, ms: Date.now() - t0 });" +
+  "      if (!seenAt) seenAt = Date.now();" +
+  "      if (Date.now() - seenAt > 15000) return JSON.stringify({ ok: true, stale: true, kind: c.kind, ms: Date.now() - t0 });" +
+  "    }" +
+  "    if (Date.now() - t0 > 60000) return JSON.stringify({ ok: false, why: 'no-composer', path: location.pathname, ms: Date.now() - t0 });" +
+  "    await sleep(250);" +
+  "  }" +
+  "})();";
+
+// One job types and sends at a time, across every job in this window. Typing
+// moves focus inside a ChatGPT page, and two pages doing it at once take it from
+// each other mid-insert; and a burst of jobs all clicking Send while their pages
+// are still busy is exactly when sends were lost. Everything else - building the
+// prompt, loading ChatGPT, waiting for the reply - still runs in parallel.
+// Settle within `ms` no matter what: { value } when `promise` settles in time
+// (a rejection counts as { error }), { timedOut: true } when it doesn't. A
+// script in the ChatGPT page that never returns - the page froze, navigated,
+// or is held by a dialog - can no longer hang a send.
+const settleWithin = (promise, ms) =>
+  new Promise((resolve) => {
+    const t = setTimeout(() => resolve({ timedOut: true }), ms);
+    Promise.resolve(promise).then(
+      (value) => { clearTimeout(t); resolve({ value }); },
+      (error) => { clearTimeout(t); resolve({ error }); }
+    );
+  });
+
+// Whether a message carrying this request_id is already in the conversation
+// (a sent prompt, not one still sitting in the message box).
+const promptInChatJs = (reqId) =>
+  "(() => { const id = " + JSON.stringify(String(reqId || "")) + "; if (!id) return false;" +
+  "  return Array.from(document.querySelectorAll('[data-message-author-role=\"user\"]'))" +
+  "    .some(e => (e.textContent || '').indexOf(id) > -1); })();";
+
+let sendQueue = Promise.resolve();
+const withSendLock = (fn) => {
+  const run = sendQueue.then(fn, fn);
+  sendQueue = run.catch(() => {});
+  return run;
+};
+
 // Find the message box, empty it, put the prompt in, and check that exactly the
 // prompt is there with no file attached. Leaves the box in window.__rgComposer
 // for the scripts below. Returns a JSON report; `ok` false carries `why`.
@@ -221,7 +279,7 @@ const COMPOSER_AIM_JS =
   "  const c = window.__rgComposer;" +
   "  if (!c || !c.el.isConnected) return JSON.stringify({ ok: false, why: 'no-composer' });" +
   "  let b = null;" +
-  "  for (let i = 0; i < 25 && !b; i++) { b = findSubmit(c); if (!b) await sleep(200); }" +
+  "  for (let i = 0; i < 50 && !b; i++) { b = findSubmit(c); if (!b) await sleep(200); }" +
   "  if (!b) return JSON.stringify({ ok: false, why: stopShown() ? 'generating' : 'no-send-button' });" +
   "  try { b.scrollIntoView({ block: 'center', inline: 'nearest' }); } catch (e) {}" +
   "  await sleep(120);" +
@@ -305,8 +363,6 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     if (job === 1 || (own && own.value != null)) return own;
     return api().getPref(key);
   };
-  const activeRef = useRef(active);
-  activeRef.current = active;
   const multiRef = useRef(multi);
   multiRef.current = multi;
   const [accounts, setAccounts] = useState([]);
@@ -349,6 +405,20 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
   const [error, setError] = useState("");
   const [savedPath, setSavedPath] = useState("");
   const [savedAt, setSavedAt] = useState("");
+  // The application the saved resume belongs to - its "path copied" sign is set
+  // from here.
+  const appIdRef = useRef("");
+  // This job's ChatGPT conversation, so its ChatGPT tab reopens that chat -
+  // after a restart, and after the tab was released at the end of a run.
+  const [gptUrl, setGptUrl] = useState("");
+  const gptUrlRef = useRef("");
+  gptUrlRef.current = gptUrl;
+  const rememberGptUrl = (url) => {
+    setGptUrl(url || "");
+    api().setPref(jk("gen_gpt_url"), url || "");
+  };
+  // A run is loading the ChatGPT tab itself - the tab mustn't load anything else.
+  const runOwnsChatRef = useRef(false);
   const [showPreview, setShowPreview] = useState(false);
   const [autoOnPaste, setAutoOnPaste] = useState(true);
   const [openModalAfterPreview, setOpenModalAfterPreview] = useState(true);
@@ -393,14 +463,13 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
   const [showSaved, setShowSaved] = useState(false); // post-generation modal with the file actions
   const [copiedField, setCopiedField] = useState(""); // which contact field was just copied
   const [promptCopied, setPromptCopied] = useState(false); // "Copy prompt" acknowledgement
-  const [dupConfirm, setDupConfirm] = useState(null); // { role, company } when confirming a duplicate
-  const dupResolveRef = useRef(null); // resolves the duplicate-confirm promise
   const [chatUa, setChatUa] = useState(""); // user-agent for the embedded ChatGPT webview
   const webviewRef = useRef(null); // the embedded ChatGPT <webview>
   const chatRetriedRef = useRef(false); // guard the one-time proxy→direct retry
   const lastChatUrlRef = useRef(""); // last URL loaded into the webview
   const lastPromptRef = useRef(""); // last prompt, for auto-send / manual re-send
   const lastReqIdRef = useRef(""); // last request_id, for auto-copying the reply
+  const cancelledIdRef = useRef(""); // request_id the user cancelled - stops its send retries
   const autoSentIdRef = useRef(""); // request_id already auto-sent (single-fire guard)
   const sendingRef = useRef(false); // a prompt is being typed/sent right now
   const sentPromptRef = useRef(""); // the last prompt that actually went out
@@ -435,7 +504,6 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     if (!onStatus) return;
     onStatus(job, {
       busy: loading || fetchingJd || chatWaiting,
-      attention: !!dupConfirm,
       done: !!savedPath,
       hasJob: !!jobMeta || !!(jd && jd.trim()),
       mark,
@@ -445,7 +513,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
       pending: !!(startRequest && startRequest.token && startRequest.token !== startedToken),
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loading, fetchingJd, chatWaiting, dupConfirm, savedPath, jobMeta, jd, mark, jobCompany, jobLink, startRequest, startedToken]);
+  }, [loading, fetchingJd, chatWaiting, savedPath, jobMeta, jd, mark, jobCompany, jobLink, startRequest, startedToken]);
 
   // ---- The job's ChatGPT tab, loaded only while it is needed ----------------
   // A ChatGPT page costs a few hundred MB, and the number of job tabs is not
@@ -464,7 +532,19 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     }
     for (let i = 0; i < 100 && !webviewRef.current; i++) await new Promise((r) => setTimeout(r, 50));
   };
-  const openChatView = () => { setChatLive(true); setView("chatgpt"); };
+  // The ChatGPT sub-tab shows this job's own conversation. A tab not loaded yet
+  // opens it as it loads; one already showing something else (the job warmed
+  // up at startup sits on Project Home) is switched to it - never mid-run.
+  const openChatView = () => {
+    setView("chatgpt");
+    if (!chatLiveRef.current) { setChatLive(true); return; }
+    const own = gptUrlRef.current;
+    if (loading || !/^https?:\/\//i.test(own)) return;
+    let cur = "";
+    try { cur = webviewRef.current ? webviewRef.current.getURL() || "" : ""; } catch (_) {}
+    const bare = (u) => String(u || "").split(/[?#]/)[0].replace(/\/+$/, "");
+    if (bare(cur) !== bare(own)) loadWebview(own);
+  };
   // Release it when a run ends, or when you leave the ChatGPT tab with nothing
   // running - never mid-run, and never while it's on screen.
   const chatPrevRef = useRef({ view: "generate", loading: false });
@@ -574,6 +654,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     setJd("");
     api().setPref(JD_PREF, "");
     clearCache();
+    rememberGptUrl("");
     rememberTarget("", "", "");
     setMarkState("");
     setError("");
@@ -588,6 +669,8 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     setResult("");
     setSavedPath("");
     setSavedAt("");
+    appIdRef.current = "";
+    api().setPref(jk("gen_app_id"), "");
     api().setPref(RESULT_PREF, "");
     api().setPref(jk("gen_saved_path"), "");
     api().setPref(jk("gen_saved_at"), "");
@@ -654,6 +737,20 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
       }
       if (savedPathPref && savedPathPref.value) setSavedPath(savedPathPref.value);
       if (savedAtPref && savedAtPref.value) setSavedAt(savedAtPref.value);
+      const [appIdPref, gptPref] = await Promise.all([api().getPref(jk("gen_app_id")), api().getPref(jk("gen_gpt_url"))]);
+      if (appIdPref && appIdPref.value) appIdRef.current = appIdPref.value;
+      if (gptPref && gptPref.value) setGptUrl(gptPref.value);
+      // A job saved before it kept these itself: take them from its application.
+      if (savedPathPref && savedPathPref.value && !(gptPref && gptPref.value && appIdPref && appIdPref.value)) {
+        const ap = await api().applicationForPdf(savedPathPref.value);
+        if (ap) {
+          if (!appIdRef.current && ap.id) {
+            appIdRef.current = String(ap.id);
+            api().setPref(jk("gen_app_id"), String(ap.id));
+          }
+          if (!(gptPref && gptPref.value) && /^https?:\/\//i.test(ap.gpt_url || "")) rememberGptUrl(ap.gpt_url);
+        }
+      }
 
       const autoOpenPref = await api().getPref("auto_open_pdf");
       if (autoOpenPref && autoOpenPref.value != null) setAutoOpenPdf(autoOpenPref.value === "1");
@@ -800,19 +897,23 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     api().chatgptSessionInfo().then((r) => setChatUa((r && r.ua) || ""));
   }, []);
 
-  // The app-wide connection choice.
-  useEffect(() => {
-    (async () => {
-      const [modePref, pidPref, list] = await Promise.all([
-        api().getPref("chat_conn_mode"),
-        api().getPref("chat_proxy_id"),
-        api().listProxies(),
-      ]);
-      setProxyList(list || []);
-      if (modePref && modePref.value) setConnMode(modePref.value);
-      if (pidPref && pidPref.value) setChatProxyId(String(pidPref.value));
-    })();
-  }, []);
+  // The app-wide connection choice, and the proxies to pick from. Loaded at
+  // start, again whenever this job is opened (a proxy added or edited in
+  // Settings shows up straight away), and when another app changes the list.
+  const loadConnection = async () => {
+    const [modePref, pidPref, list] = await Promise.all([
+      api().getPref("chat_conn_mode"),
+      api().getPref("chat_proxy_id"),
+      api().listProxies(),
+    ]);
+    setProxyList(list || []);
+    if (modePref && modePref.value) setConnMode(modePref.value);
+    if (pidPref && pidPref.value) setChatProxyId(String(pidPref.value));
+    refreshConn();
+  };
+  useEffect(() => { loadConnection(); }, []);
+  useEffect(() => { if (active) loadConnection(); }, [active]);
+  useDbChanged(() => loadConnection());
 
   // The saved ChatGPT Project Home URL.
   useEffect(() => {
@@ -940,19 +1041,11 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
       )
     : "";
 
-  // Ask the user to confirm generating another resume for a company + title they
-  // already have an application for. Resolves true (proceed) / false (cancel).
-  const confirmDuplicate = (role, company) =>
-    new Promise((resolve) => {
-      dupResolveRef.current = resolve;
-      setDupConfirm({ role, company });
-      if (!activeRef.current) toast("Already applied to this role? Open this job to answer.", "warning");
-    });
-
   // Build + save the PDF from generated content.
   // opts.skipCover: re-render the resume only (the live colour/font regen) — no
-  // duplicate check or notifications, and the existing file is overwritten.
-  // Returns true when saved, false when cancelled/blocked.
+  // notifications, and the existing file is overwritten. Every real generation
+  // is saved as its own application, a duplicate one too; copying its path says
+  // so. Returns true when saved, false when blocked.
   const exportPdf = async (content, role, company, country, jdValue, opts = {}) => {
     const useJd = resolveJd(jdValue);
     const v3Meta = jobMetaRef.current || {};
@@ -960,21 +1053,6 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     if (!content) {
       if (!opts.skipCover) setError("Click Preview first to generate the content, then Generate to download the PDF.");
       return false;
-    }
-    // On a real generation (not a colour/font re-render): if the same company +
-    // job title already exists in the history, confirm before saving another.
-    if (!opts.skipCover && !opts.skipDupCheck) {
-      // Match on the index fields (Gemini JD extraction when available, else the
-      // display role/company) so this agrees with what gets stored.
-      const recRole = ((opts.matchRole || role) || "").trim();
-      const recCompany = ((opts.matchCompany || company) || "").trim();
-      if (recRole && recCompany) {
-        const dup = await api().findDuplicateApplication(Number(accountId), recRole, recCompany);
-        if (dup && dup.exists) {
-          const proceed = await confirmDuplicate(recRole, recCompany);
-          if (!proceed) { toast("Kept your existing resume — nothing new saved.", "info"); return false; }
-        }
-      }
     }
     busyRef.current = true;
     setLoading(true);
@@ -986,6 +1064,8 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
 
       const exp = await api().exportResumePdf({
         html: buildResumeHtml(content, { ...styleObj, accent: effectiveAccent, head: accent, nameColor, font, fontSize }, accountTitle(), acc, edu),
+        // Templates with a page footer print "<name> Resume" on every page.
+        footerLabel: PAGE_FOOTER_STYLES.has(style) && acc && acc.name ? `${acc.name} Resume` : "",
         accountId: Number(accountId),
         role,
         company,
@@ -1016,6 +1096,10 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
         overwritePath: opts.skipCover && savedPath ? savedPath : undefined,
       });
       if (exp && exp.ok) {
+        if (exp.id) {
+          appIdRef.current = String(exp.id);
+          api().setPref(jk("gen_app_id"), String(exp.id));
+        }
         setSavedPath(exp.path);
         setSavedAt(exp.savedAt || "");
         api().setPref(jk("gen_saved_path"), exp.path);
@@ -1079,6 +1163,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     setJd("");
     api().setPref(JD_PREF, "");
     clearCache();
+    rememberGptUrl("");
     try {
       const res = await api().fetchJobPost(link);
       if (!res || !res.ok) {
@@ -1177,6 +1262,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
       // Open the ChatGPT tab IMMEDIATELY, in parallel with the Gemini prompt
       // build. reuse:true starts a fresh chat inside the already-loaded tab
       // (no full SPA reload) when possible, falling back to a full load.
+      runOwnsChatRef.current = true;
       await ensureChat();
       const openPromise = openChatTab({ reuse: true });
       const { id, prompt, copied, clipboardSkipped, jobRef, target } = await api().chatgptBuildPrompt({
@@ -1187,18 +1273,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
         extraInfo,
       });
       const opened = await openPromise; // { reused } — reused tab vs cold first load
-      // Duplicate guard BEFORE the (slow) ChatGPT round-trip. Gemini already
-      // extracted the target role/company from the JD while building the prompt,
-      // so we can catch an existing application (same Account + Company + Title)
-      // now and skip the whole generation if the user doesn't want a re-do.
-      if (target && target.company && target.role) {
-        let dup = null;
-        try { dup = await api().findDuplicateApplication(Number(accountId), target.role, target.company); } catch (_) {}
-        if (dup && dup.exists) {
-          const proceed = await confirmDuplicate(target.role, target.company);
-          if (!proceed) { setLoading(false); return; }
-        }
-      }
+      runOwnsChatRef.current = false;
       // The JSON prompt is copied natively in the main process (more reliable
       // than navigator.clipboard here); fall back to the renderer copy if that
       // fails. Under a profile the main process deliberately leaves the clipboard
@@ -1262,14 +1337,13 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
           const fb = [res.jobCompany || "", res.jobRole || ""].filter(Boolean).join(" - ");
           if (fb) { try { renameChat(fb); } catch (_) {} }
         }
-        // Skip the late duplicate prompt only when the early check actually ran
-        // (target present). Without a Gemini target, let exportPdf run its own
-        // check so duplicates are still caught. Pass the Gemini target as the
-        // dedicated match index so storage + matching stay consistent.
+        // Keep the conversation with the job, for its ChatGPT tab.
+        if (/^https?:\/\//i.test(gptUrl)) rememberGptUrl(gptUrl);
+        // Pass the Gemini target as the dedicated match index so storage and
+        // duplicate matching stay consistent.
         const saved = await exportPdf(res.text || "", res.jobRole || "", res.jobCompany || "", res.jobCountry || "", useJd, {
           requestId: id,
           gptUrl,
-          skipDupCheck: hasTarget,
           matchRole: hasTarget ? target.role : "",
           matchCompany: hasTarget ? target.company : "",
         });
@@ -1279,6 +1353,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
       setChatWaiting(false);
       setError(friendlyError(e));
     } finally {
+      runOwnsChatRef.current = false;
       setLoading(false);
     }
   };
@@ -1290,6 +1365,7 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
   const runGenerate = (jdValue) => generateWithChatgpt(jdValue);
 
   const cancelChatWait = async () => {
+    cancelledIdRef.current = lastReqIdRef.current;
     if (lastReqIdRef.current) await api().cancelChatgptClipboard(lastReqIdRef.current);
     setChatWaiting(false);
     setLoading(false);
@@ -1400,30 +1476,40 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
           ? "Couldn't find ChatGPT's message box. Make sure the ChatGPT tab shows a chat, then press Send prompt."
           : result === "generating"
             ? "ChatGPT is still answering in this chat. Wait for it to finish, then press Send prompt."
+            : result === "send-timeout"
+            ? "The ChatGPT tab stopped responding while sending. Check it, then press Send prompt — it won't send twice."
             : "Couldn't send the prompt to ChatGPT. Press Send prompt in the ChatGPT tab to try again.";
     toast(msg, "warning");
   };
 
   // Type the prompt into ChatGPT's message box as text and send it. One send at
-  // a time: a second press while one is running gets "busy" instead of typing
-  // over it. Every run leaves one line in copy-diag.log saying what it found
-  // and how it ended.
-  const autoSend = async (promptText) => {
+  // a time per job: a second press while one is running gets "busy" instead of
+  // typing over it. First waits (in parallel with other jobs) for the box to be
+  // live, then types and sends inside the window-wide send queue. Every run
+  // leaves one line in copy-diag.log saying what it found and how it ended.
+  // opts.reasoning: pick ChatGPT's high-reasoning model first (auto-send only).
+  const autoSend = async (promptText, attempt = 1, opts = {}) => {
     const wv = webviewRef.current;
     if (!wv || !promptText) return "no-webview";
     if (sendingRef.current) return "busy";
     sendingRef.current = true;
     setSending(true);
     const started = Date.now();
-    const diag = { step: "auto-send", chars: String(promptText).length };
+    const diag = { step: "auto-send", chars: String(promptText).length, job, attempt };
+    // A line as the send starts, so a send that never finishes still shows up.
+    logCopyDiag({ step: "auto-send-start", job, attempt, chars: diag.chars });
     const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    const run = async (code, fallback) => {
-      try { return await wv.executeJavaScript(code, true); } catch (_) { return fallback; }
+    // Every script in the page is bounded; one that runs out of time is noted
+    // (diag.timeouts) and treated as having returned `fallback`.
+    const run = async (code, fallback, ms = 30000, stage = "script") => {
+      const r = await settleWithin(wv.executeJavaScript(code, true), ms);
+      if (r.timedOut) { (diag.timeouts = diag.timeouts || []).push(stage); return fallback; }
+      return "error" in r ? fallback : r.value;
     };
     const parse = (s) => { try { return JSON.parse(s) || {}; } catch (_) { return {}; } };
     const sent = async () => {
       for (let i = 0; i < 15; i++) {
-        if (await run(COMPOSER_SENT_JS, false)) return true;
+        if (await run(COMPOSER_SENT_JS, false, 5000, "sent-check")) return true;
         await sleep(200);
       }
       return false;
@@ -1435,12 +1521,29 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
       return result;
     };
     try {
-      const fill = parse(await run(composerFillJs(promptText), "{}"));
+      const ready = parse(await run(COMPOSER_READY_JS, "{}", 90000, "ready"));
+      diag.ready = ready;
+      // Nothing typed yet, so this is always safe to retry.
+      if (!ready.ok) return finish(ready.why || "no-composer");
+      // The model is picked before the prompt goes in - switching afterwards
+      // wouldn't affect a message already sent. Best-effort, on a live page,
+      // and never allowed to hold the send up.
+      if (opts.reasoning) {
+        const pick = await settleWithin(setReasoningHigh(), 20000);
+        diag.reasoning = pick.timedOut ? "timeout" : "error" in pick ? "error" : pick.value;
+      }
+      const queued = Date.now();
+      // The queue is held for at most two minutes. A job whose page stops
+      // answering mid-send gives its turn up, so it can't stall every other job.
+      const turn = await withSendLock(() => settleWithin((async () => {
+      diag.queuedMs = Date.now() - queued;
+      if (webviewRef.current !== wv) return finish("no-webview");
+      const fill = parse(await run(composerFillJs(promptText), "{}", 45000, "fill"));
       diag.fill = fill;
       if (!fill.ok) return finish(fill.why || "fill-failed");
 
       // A real click first: it is what a person does, so ChatGPT treats it as one.
-      const aim = parse(await run(COMPOSER_AIM_JS, "{}"));
+      const aim = parse(await run(COMPOSER_AIM_JS, "{}", 20000, "aim"));
       diag.aim = aim;
       if (!aim.ok && aim.why === "generating") {
         return (await run(COMPOSER_SENT_JS, false)) ? finish("sent", "late") : finish("generating");
@@ -1449,19 +1552,25 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
         let wcId = 0;
         try { wcId = wv.getWebContentsId(); } catch (_) {}
         let click = null;
-        if (wcId) { try { click = await api().chatSendClick({ id: wcId, x: aim.x, y: aim.y }); } catch (_) {} }
+        if (wcId) {
+          const c = await settleWithin(api().chatSendClick({ id: wcId, x: aim.x, y: aim.y }), 10000);
+          click = c.value || null;
+        }
         diag.trustedClick = !!(click && click.ok);
         if (diag.trustedClick && (await sent())) return finish("sent", "trusted-click");
       }
       // Each fallback first checks the message hasn't already gone, so a slow
       // send is never sent twice.
       for (const [name, code] of [["click", COMPOSER_CLICK_JS], ["enter", COMPOSER_ENTER_JS], ["click-again", COMPOSER_CLICK_JS]]) {
-        const r = await run(code, "error");
+        const r = await run(code, "error", 10000, name);
         diag[name] = r;
         if (r === "already-sent") return finish("sent", "late");
         if (await sent()) return finish("sent", name);
       }
       return finish("not-sent");
+      })(), 120000));
+      if (turn.timedOut) return finish("send-timeout");
+      return "error" in turn ? finish("send-error") : turn.value;
     } finally {
       diag.ms = Date.now() - started;
       logCopyDiag(diag);
@@ -2125,6 +2234,50 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     }
   };
 
+  // Send results after which nothing can have gone out, so a retry is safe.
+  const RETRY_SEND = new Set(["no-composer", "fill-failed", "verify-mismatch", "not-sent"]);
+
+  // Whether the message went after all, checked a little later.
+  const stillSentLate = async () => {
+    const wv = webviewRef.current;
+    if (!wv) return false;
+    await new Promise((r) => setTimeout(r, 2500));
+    const r = await settleWithin(wv.executeJavaScript(COMPOSER_SENT_JS, true), 5000);
+    return !!r.value;
+  };
+
+  // Whether this request's prompt is already a message in the job's chat.
+  const promptInChat = async (reqId) => {
+    const wv = webviewRef.current;
+    if (!wv || !reqId) return false;
+    const r = await settleWithin(wv.executeJavaScript(promptInChatJs(reqId), true), 5000);
+    return r.value === true;
+  };
+
+  // A full, fresh load of this job's ChatGPT tab (Project Home) for another try.
+  // Resolves once the page has loaded and had a moment to start up.
+  const reloadChatForRetry = async () => {
+    const wv = webviewRef.current;
+    if (!wv) return false;
+    const loaded = new Promise((resolve) => {
+      let done = false;
+      const fin = (v) => {
+        if (done) return;
+        done = true;
+        clearTimeout(t);
+        try { wv.removeEventListener("did-finish-load", on); } catch (_) {}
+        resolve(v);
+      };
+      const on = () => fin(true);
+      const t = setTimeout(() => fin(false), 45000);
+      wv.addEventListener("did-finish-load", on);
+    });
+    await openChatTab();
+    const ok = await loaded;
+    await new Promise((r) => setTimeout(r, 3000));
+    return ok;
+  };
+
   // Auto-send the prompt once the ChatGPT page has finished loading, then watch
   // for the reply and auto-copy it.
   const autoSendOnLoad = (promptText, reqId, reused, chatLabel) => {
@@ -2146,17 +2299,39 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
       // autoSend() also polls internally for ChatGPT's composer to mount, so
       // this works whether the page just finished loading or loaded earlier.
       setTimeout(async () => {
-        // Select the high-reasoning model BEFORE the prompt goes in — switching
-        // afterwards would not affect a message already sent. Best-effort: if the
-        // picker can't be driven, send anyway on whatever model is selected.
         // Send prompt may have been pressed during the settle delay. Let that
         // run finish, and don't send again if it got the prompt out — that
         // would put the same prompt in the chat twice.
         for (let i = 0; i < 360 && sendingRef.current; i++) await new Promise((res) => setTimeout(res, 250));
+        // Up to three tries. A try that failed with nothing sent - the box never
+        // came up, the text didn't take, or Send never went through and the
+        // prompt is still sitting in the box - reloads this job's ChatGPT tab
+        // and goes again. Anything that may have gone out is never retried, so
+        // a prompt is never sent twice.
         let r = "sent";
-        if (sentPromptRef.current !== promptText) {
-          try { await setReasoningHigh(); } catch (_) {}
-          r = await autoSend(promptText);
+        for (let attempt = 1; attempt <= 3 && sentPromptRef.current !== promptText; attempt++) {
+          if (attempt > 1) {
+            if (cancelledIdRef.current === reqId || !webviewRef.current) break; // cancelled / closed
+            if (await promptInChat(reqId)) { r = "sent"; sentPromptRef.current = String(promptText); break; }
+            toast(`ChatGPT wasn't ready — reloading it and sending again (try ${attempt} of 3)…`, "info");
+            await reloadChatForRetry();
+          }
+          r = await autoSend(promptText, attempt, { reasoning: true });
+          if (r === "sent") break;
+          // A send that ran out of time may or may not have gone. Look in the
+          // chat for it - now and again a few seconds later, for a slow page -
+          // and only go again when it isn't there. The retry reloads the tab,
+          // so a prompt left sitting in the box goes with it.
+          if (r === "send-timeout" || r === "send-error") {
+            let inChat = await promptInChat(reqId);
+            if (!inChat) { await new Promise((res) => setTimeout(res, 5000)); inChat = await promptInChat(reqId); }
+            if (inChat) { r = "sent"; sentPromptRef.current = String(promptText); break; }
+            continue;
+          }
+          if (!RETRY_SEND.has(r)) break;
+          // "not-sent" means every click was checked; one last look before
+          // calling it unsent, since a slow page can still be taking it.
+          if (r === "not-sent" && (await stillSentLate())) { r = "sent"; sentPromptRef.current = String(promptText); break; }
         }
         if (r !== "sent") toastSendFailure(r);
         // Set the chat's name right after the message is sent (the conversation
@@ -2198,8 +2373,13 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
       // Only when nothing else has asked for a page: a run that loads the tab
       // fresh has already sent it somewhere, and a second load here would pull
       // the page out from under its prompt.
-      if ((!cur || cur === "about:blank") && !lastChatUrlRef.current) {
+      // Otherwise it opens this job's own conversation when it has one, so the
+      // chat is a click away after a restart too; else Project Home.
+      if ((!cur || cur === "about:blank") && !lastChatUrlRef.current && !runOwnsChatRef.current) {
         try { await api().chatgptSessionInfo(); } catch (_) {} // apply proxy first
+        if (runOwnsChatRef.current || lastChatUrlRef.current) return;
+        const own = gptUrlRef.current;
+        if (/^https?:\/\//i.test(own)) { loadWebview(own); return; }
         const r = await api().getChatgptHome();
         loadWebview((r && r.url) || "https://chatgpt.com/");
       }
@@ -2278,9 +2458,15 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
     try { await api().chatgptSessionInfo(); } catch (_) {}
     refreshConn();
   };
+  // Picking a proxy here also makes it this app's active proxy, so the
+  // "(active)" mark - here and in Settings → Proxy - follows the choice.
   const chooseChatProxy = async (id) => {
     setChatProxyId(id);
     await api().setPref("chat_proxy_id", id);
+    if (id) {
+      await api().setActiveProxy(Number(id));
+      setProxyList((list) => list.map((p) => ({ ...p, is_active: String(p.id) === String(id) ? 1 : 0 })));
+    }
     chatRetriedRef.current = false;
     try { await api().chatgptSessionInfo(); } catch (_) {}
     refreshConn();
@@ -2321,7 +2507,17 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
   };
   // Flag the form as taken. Every Copy Resume Path button routes through this, so
   // the border appears whichever one was used.
-  const markLocationCopied = () => setMarkState("copied");
+  // Copying the path also files the application: its "Path copied" sign in the
+  // history, and a warning when it repeats an earlier one.
+  const markLocationCopied = () => {
+    setMarkState("copied");
+    const id = Number(appIdRef.current);
+    if (!id) return;
+    api().markPathCopied(id).then((res) => {
+      const note = duplicateNotice(res);
+      if (note) toast(note, "warning");
+    }).catch(() => {});
+  };
   const copyLocation = () => {
     copyFolderToClipboard(savedPath);
     setView("generate");
@@ -2882,6 +3078,14 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
               <button
                 className="btn small"
                 onClick={async () => {
+                  // Already went out (perhaps by a send that looked stuck)?
+                  // Then only watch for the reply - never post it twice.
+                  if (await promptInChat(lastReqIdRef.current)) {
+                    sentPromptRef.current = lastPromptRef.current;
+                    toast("This prompt is already in the chat — watching for the reply.", "info");
+                    autoCopyReply(lastReqIdRef.current);
+                    return;
+                  }
                   const r = await autoSend(lastPromptRef.current);
                   if (r === "busy") return;
                   if (r !== "sent") toastSendFailure(r);
@@ -3085,20 +3289,6 @@ export default function ResumeGenerator({ active = true, job = 1, multi = false,
         </div>
       </div>
     )}
-
-    <ConfirmModal
-      open={active && !!dupConfirm}
-      overlayClassName="job-modal"
-      title="Already applied to this role?"
-      message={
-        dupConfirm
-          ? `You already have an application for "${dupConfirm.role}"${dupConfirm.company ? ` at ${dupConfirm.company}` : ""}. Generate a new resume for it (this overwrites the existing one)?`
-          : ""
-      }
-      confirmLabel="Generate anyway"
-      onConfirm={() => { const r = dupResolveRef.current; dupResolveRef.current = null; setDupConfirm(null); if (r) r(true); }}
-      onCancel={() => { const r = dupResolveRef.current; dupResolveRef.current = null; setDupConfirm(null); if (r) r(false); }}
-    />
 
     </div>
   );

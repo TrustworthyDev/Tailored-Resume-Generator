@@ -371,6 +371,11 @@ function migrate() {
     ["match_role", "TEXT"],
     ["match_company", "TEXT"],
     ["match_account", "TEXT"],
+    // When its resume path was copied to file the application (empty = never).
+    ["path_copied_at", "TEXT"],
+    // The earlier application for the same account + company + role, when this
+    // one repeats it. Every generation is kept as its own application.
+    ["duplicate_of", "INTEGER"],
   ].forEach(([col, type]) => {
     if (!appCols.some((c) => c.name === col)) {
       db.run(`ALTER TABLE applications ADD COLUMN ${col} ${type}`);
