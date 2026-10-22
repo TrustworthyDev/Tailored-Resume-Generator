@@ -1,6 +1,6 @@
 {
   "name": "rgenerator",
-  "version": "3.1.10",
+  "version": "3.1.11",
   "description": "RGenerator - generate tailored resumes and track job applications",
   "private": true,
   "main": "electron/main.js",

@@ -115,6 +115,11 @@ a { text-decoration: none; }
 /* Header contact links follow the contact-line colour (visible on every style,
    including coloured-header templates) instead of the accent. */
 .contacts a { color: inherit; }
+/* The line(s) under the role - services and main technologies: smaller than
+   the role and lighter than the name and role, in every template. Relative to
+   the role, so it scales with each template's own title size. */
+.title-sub { display: block; margin-top: 2px; font-size: .8em; font-weight: 400; opacity: .72; }
+.title-stack { opacity: .72; }
 @page { size: A4; margin: 14mm 8mm; }
 `;
 
@@ -208,7 +213,11 @@ a{color:${accent};}`;
 header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:start;column-gap:20px;border-bottom:3px solid ${accent};padding-bottom:12px;margin-bottom:16px;}
 header h1{grid-column:1;grid-row:1;margin:0;font-size:24pt;font-weight:700;color:#1b3a5e;letter-spacing:.3px;line-height:1.06;}
 .title{grid-column:1;grid-row:2;margin-top:5px;color:${accent};text-transform:uppercase;letter-spacing:.8px;font-weight:700;font-size:10pt;white-space:normal;}
-.contacts{grid-column:2;grid-row:1/3;align-self:start;justify-self:end;text-align:right;color:#5a6573;font-size:8.5pt;line-height:1.7;white-space:normal;max-width:235px;word-break:break-word;}
+.contacts{grid-column:2;grid-row:1/3;align-self:start;justify-self:end;text-align:right;color:#5a6573;font-size:8.5pt;line-height:1.7;white-space:normal;max-width:255px;word-break:break-word;}
+.cd-c{display:flex;justify-content:flex-end;align-items:center;gap:7px;}
+.cd-c > span{min-width:0;}
+.cd-c svg{flex:0 0 auto;width:13px;height:13px;color:${head || "#1b3a5e"};}
+.cd-c .nw-in{stroke:#fff;}
 main h2{font-size:11pt;color:${head || "#1b3a5e"};text-transform:uppercase;letter-spacing:1px;border-bottom:2px solid ${accent};padding-bottom:3px;margin:16px 0 8px;}
 main ul{list-style:none;padding-left:2px;}
 main li{position:relative;padding-left:15px;}
@@ -218,6 +227,7 @@ a{color:${accent};}
 .summary-box{border:1.5px solid ${accent};border-radius:9px;padding:2px 16px 12px;margin-bottom:8px;background:${accent}0d;}
 .summary-box h2{border:none;color:${accent};margin:10px 0 4px;}
 .skills-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin:4px 0 8px;}
+.skill-card.skill-card-wide{grid-column:1/-1;}
 .skill-card{border:1px solid #e2e6ec;border-top:2px solid ${accent};border-radius:7px;padding:8px 10px;background:#f7f9fb;break-inside:avoid;}
 .skill-cat{color:${accent};text-transform:uppercase;letter-spacing:.5px;font-size:8.5pt;font-weight:700;margin-bottom:3px;}
 .skill-items{font-size:9.5pt;color:#3a4250;}
@@ -501,6 +511,7 @@ main li{position:relative;padding-left:12px;margin:2px 0;}
 main li::before{content:"";position:absolute;left:1px;top:.55em;width:5px;height:5px;border-radius:50%;background:${accent};}
 .nw-skills{display:grid;grid-template-columns:1fr 1fr;column-gap:30px;row-gap:12px;margin:10px 0 2px;}
 .nw-skill{break-inside:avoid;}
+.nw-skill-wide{grid-column:1/-1;}
 .nw-skill-cat{font-weight:700;font-size:10pt;color:#14181e;margin-bottom:2px;}
 .nw-skill-items{font-size:9pt;line-height:1.4;color:#23272e;}
 .nw-langs{display:grid;grid-template-columns:repeat(3,1fr);gap:10px 24px;margin:10px 0 2px;}
@@ -525,10 +536,15 @@ body{font-family:Poppins,Montserrat,"Segoe UI",Arial,sans-serif;color:#2b2b2b;fo
 .sp-sec{position:relative;display:flow-root;padding-top:12px;}
 .sp-sec::before{content:"";position:absolute;left:-16mm;width:6.5mm;top:0;bottom:0;background:var(--c);}
 @media screen{.sp-sec::before{left:-76px;width:26px;}}
-.sp-head{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;padding:4px 0 16px;margin:0;}
+.sp-head{padding:4px 0 16px;margin:0;}
+.sp-row{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;margin-top:4px;}
 .sp-head h1{margin:0;font-size:30pt;font-weight:700;color:#1d1d1d;text-transform:uppercase;letter-spacing:2.5px;line-height:1.1;}
 .sp-head .title{margin-top:4px;font-size:14pt;font-weight:500;color:#1d1d1d;text-transform:uppercase;letter-spacing:1.5px;}
-.sp-contacts{text-align:right;font-size:9pt;line-height:1.35;color:#5a5a5a;padding-top:2px;}
+.sp-head .title-sub{font-size:10.5pt;text-transform:none;letter-spacing:.3px;}
+.sp-contacts{text-align:right;font-size:9pt;line-height:1.35;color:#5a5a5a;padding-top:2px;flex:0 0 auto;max-width:48%;}
+.sp-c{display:flex;justify-content:flex-end;align-items:center;gap:7px;margin:0 0 3px;}
+.sp-c > span{min-width:0;overflow-wrap:anywhere;}
+.sp-c svg{flex:0 0 auto;width:11px;height:11px;fill:currentColor;}
 .sp-contacts a{color:#5a5a5a;}
 .sp-sec > h2{display:flex;align-items:center;margin:0 0 8px;padding:0;border:none;font-size:14pt;font-weight:400;color:#1d1d1d;text-transform:uppercase;letter-spacing:1.3px;}
 .sp-line{flex:1 1 auto;position:relative;height:1px;background:#9c9c9c;margin-left:24px;}
@@ -585,9 +601,9 @@ main h2{margin:24px 0 10px !important;padding:0;border:none;font-size:14pt;font-
 .nx-head{break-inside:avoid;break-after:avoid;}
 .nx-entry h3{margin:0;font-size:13pt;font-weight:400;color:#111;line-height:1.2;}
 .nx-entry h3 .edu-degree{font-weight:400;color:#111;}
-.nx-company{font-size:13pt;color:#1c1c1c;line-height:1.2;}
-.nx-meta{display:flex;justify-content:space-between;gap:16px;margin-top:4px;font-size:8pt;color:#333;}
-.nx-loc{font-style:italic;}
+.nx-company{display:flex;justify-content:space-between;align-items:baseline;gap:16px;font-size:13pt;color:#1c1c1c;line-height:1.2;}
+.nx-meta{margin-top:4px;font-size:8pt;color:#333;}
+.nx-loc{flex:0 0 auto;font-size:8pt;font-style:italic;color:#333;}
 main ul{list-style:none;padding-left:0;margin:5px 0 0;}
 main li{position:relative;padding-left:13px;margin:3px 0;}
 main li::before{content:"";position:absolute;left:1px;top:.42em;width:5px;height:5px;border-radius:50%;border:1.4px solid ${ink};}
@@ -613,13 +629,13 @@ a{color:#1c1c1c;}`;
 .sl-bg-br{right:0;bottom:0;width:330px;height:170px;}
 @media print{.sl-bg{position:fixed;}}
 header,main{position:relative;z-index:1;}
-header{display:flex;align-items:stretch;gap:26px;margin-bottom:6px;}
-.sl-left{flex:1 1 auto;min-width:0;padding-top:6px;}
+header{display:flow-root;margin-bottom:6px;}
+.sl-left{padding-top:6px;}
 header h1{margin:0;font-size:25pt;font-weight:400;color:${dark};letter-spacing:.2px;line-height:1.1;}
 .title{margin-top:2px;font-size:12.5pt;font-weight:400;color:${gold};}
 .sl-summary{margin-top:9px;font-size:9pt;line-height:1.42;color:#23272e;}
 .sl-summary p{margin:0 0 4px;text-align:left;}
-.contacts.sl-card{flex:0 0 252px;align-self:stretch;background:${dark};color:#fff;border-radius:6px;padding:20px 16px;display:flex;flex-direction:column;gap:14px;font-size:9pt;font-weight:400;}
+.contacts.sl-card{float:right;width:252px;margin:0 0 12px 26px;background:${dark};color:#fff;border-radius:6px;padding:16px;display:flex;flex-direction:column;gap:11px;font-size:9pt;font-weight:400;}
 .sl-card a{color:#fff;font-weight:400;}
 .sl-c{display:flex;align-items:center;gap:12px;min-width:0;}
 .sl-c > span:last-child{min-width:0;overflow-wrap:anywhere;}
@@ -646,6 +662,7 @@ main li{position:relative;padding-left:15px;margin:3px 0;}
 main li::before{content:"";position:absolute;left:1px;top:.3em;width:7px;height:7px;border-radius:2px;background:${gold};}
 .sl-skills{display:grid;grid-template-columns:1fr 1fr;column-gap:34px;row-gap:16px;margin:4px 0 2px;}
 .sl-skill{display:grid;grid-template-columns:118px 1fr;column-gap:10px;break-inside:avoid;}
+.sl-skill-wide{grid-column:1/-1;}
 .sl-skill-cat{font-weight:700;font-size:9pt;color:#14181e;}
 .sl-skill-items{font-size:9pt;line-height:1.42;color:#23272e;}
 main p.skills strong{color:#14181e;}
@@ -693,6 +710,7 @@ main li{position:relative;padding-left:15px;margin:2px 0;}
 main li::before{content:"";position:absolute;left:2px;top:.42em;width:5.5px;height:5.5px;border:1.2px solid ${bullet};transform:rotate(45deg);}
 .dm-skills{display:grid;grid-template-columns:1fr 1fr;column-gap:34px;row-gap:16px;margin:4px 0 2px;}
 .dm-skill{display:grid;grid-template-columns:118px 1fr;column-gap:10px;break-inside:avoid;}
+.dm-skill-wide{grid-column:1/-1;}
 .dm-skill-cat{font-weight:700;font-size:9pt;color:#14181e;}
 .dm-skill-items{font-size:9pt;line-height:1.42;color:#23272e;}
 main p.skills strong{color:#14181e;}
@@ -1089,7 +1107,7 @@ function headerHtml(id, name, title, contacts, summaryHtml = "", inkColor = "") 
       .join("");
     return (
       `<header><h1>${escapeHtml(name)}</h1>` +
-      `${title ? `<div class="title">${escapeHtml(title)}</div>` : ""}` +
+      `${titleBlock(title)}` +
       `${summaryHtml ? `<div class="nw-summary">${summaryHtml}</div>` : ""}` +
       `${raw.length ? `<div class="contacts">${contactsHtml}</div>` : ""}</header>`
     );
@@ -1108,7 +1126,7 @@ function headerHtml(id, name, title, contacts, summaryHtml = "", inkColor = "") 
       .join("");
     return (
       `<header><h1>${escapeHtml(name)}</h1>` +
-      `${title ? `<div class="title">${escapeHtml(title)}</div>` : ""}` +
+      `${titleBlock(title)}` +
       `${summaryHtml ? `<div class="nx-summary">${summaryHtml}</div>` : ""}` +
       `${raw.length ? `<div class="contacts nx-band">${items}</div>` : ""}</header>`
     );
@@ -1120,11 +1138,14 @@ function headerHtml(id, name, title, contacts, summaryHtml = "", inkColor = "") 
     const items = raw
       .map((t) => `<div class="sl-c"><span class="sl-c-ico">${NW_CONTACT_ICONS[contactKind(t)] || ""}</span><span>${linkifyContact(t)}</span></div>`)
       .join("");
+    // The card comes first and floats right at its own height; the name, title
+    // and summary wrap beside it, and a summary longer than the card carries on
+    // full-width beneath it.
     return (
-      `<header><div class="sl-left"><h1>${escapeHtml(name)}</h1>` +
-      `${title ? `<div class="title">${escapeHtml(title)}</div>` : ""}` +
-      `${summaryHtml ? `<div class="sl-summary">${summaryHtml}</div>` : ""}</div>` +
-      `${raw.length ? `<div class="contacts sl-card">${items}</div>` : ""}</header>`
+      `<header>${raw.length ? `<div class="contacts sl-card">${items}</div>` : ""}` +
+      `<div class="sl-left"><h1>${escapeHtml(name)}</h1>` +
+      `${titleBlock(title, { stacked: true })}` +
+      `${summaryHtml ? `<div class="sl-summary">${summaryHtml}</div>` : ""}</div></header>`
     );
   }
 
@@ -1135,12 +1156,14 @@ function headerHtml(id, name, title, contacts, summaryHtml = "", inkColor = "") 
     const lines = raw
       .map((t, i) => ({ t, k: order[contactKind(t)] ?? 5, i }))
       .sort((a, b) => a.k - b.k || a.i - b.i)
-      .map(({ t }) => `<div>${linkifyContact(t)}</div>`)
+      .map(({ t }) => `<div class="sp-c"><span>${linkifyContact(t)}</span>${CONTACT_ICONS[contactKind(t)] || ""}</div>`)
       .join("");
+    // The name has the full first row; under it the role, services and main
+    // tech on the left, the contacts on the right with each icon after its text.
     return (
-      `<header class="sp-sec sp-head" style="--c:${SP_HEAD_COLOR}"><div><h1>${escapeHtml(name)}</h1>` +
-      `${title ? `<div class="title">${escapeHtml(title)}</div>` : ""}</div>` +
-      `${raw.length ? `<div class="contacts sp-contacts">${lines}</div>` : ""}</header>`
+      `<header class="sp-sec sp-head" style="--c:${SP_HEAD_COLOR}"><h1>${escapeHtml(name)}</h1>` +
+      `<div class="sp-row"><div>${titleBlock(title, { stacked: true })}</div>` +
+      `${raw.length ? `<div class="contacts sp-contacts">${lines}</div>` : ""}</div></header>`
     );
   }
 
@@ -1152,7 +1175,7 @@ function headerHtml(id, name, title, contacts, summaryHtml = "", inkColor = "") 
       .join("");
     return (
       `<header><h1>${escapeHtml(name)}</h1>` +
-      `${title ? `<div class="title">${escapeHtml(title)}</div>` : ""}` +
+      `${titleBlock(title)}` +
       `${summaryHtml ? `<div class="dm-summary">${summaryHtml}</div>` : ""}` +
       `${raw.length ? `<div class="contacts">${contactsHtml}</div>` : ""}</header>`
     );
@@ -1161,10 +1184,7 @@ function headerHtml(id, name, title, contacts, summaryHtml = "", inkColor = "") 
   // Classic: the role title and its technology list take separate lines, and the
   // contacts sit between two rules with an icon matching each item.
   if (id === "classic") {
-    const full = String(title || "").trim();
-    const cut = full.indexOf("|");
-    const role = cut === -1 ? full : full.slice(0, cut).trim();
-    const stack = cut === -1 ? "" : full.slice(cut + 1).trim();
+    const { role, sub: stack } = titleParts(title);
     const contactsHtml = raw
       .map(
         (t) =>
@@ -1181,12 +1201,50 @@ function headerHtml(id, name, title, contacts, summaryHtml = "", inkColor = "") 
   }
 
   const items = raw.map(linkifyContact);
-  const contactsHtml = STACKED_CONTACTS.has(id) ? items.join("<br>") : items.join("  •  ");
+  // Cards: one contact per line, each with its outline icon on the right.
+  const contactsHtml =
+    id === "cards"
+      ? raw.map((t, i) => `<div class="cd-c"><span>${items[i]}</span>${NW_CONTACT_ICONS[contactKind(t)] || ""}</div>`).join("")
+      : STACKED_CONTACTS.has(id)
+      ? items.join("<br>")
+      : items.join("  •  ");
   return (
     `<header><h1>${escapeHtml(name)}</h1>` +
-    `${title ? `<div class="title">${escapeHtml(title)}</div>` : ""}` +
+    // Cards and Highlight: services and main tech each on their own line under
+    // the role (the title shares its row with the contacts).
+    `${titleBlock(title, { stacked: id === "cards" || id === "highlight" })}` +
     `${contacts ? `<div class="contacts">${contactsHtml}</div>` : ""}</header>`
   );
+}
+
+// The professional title on two lines: the role, then whatever follows its
+// first "|" (the service and main technologies) — e.g. "Senior Software
+// Engineer" over "Angular, TypeScript, AWS | Microservices & API Design". Kept
+// in one .title element, so templates that place the title in a grid or style
+// it as a box carry both lines.
+// opts.stacked: every part on its own line - role, services, main tech - for
+// headers where the title sits beside the contact card and has the height.
+function titleBlock(title, opts = {}) {
+  const { role, sub, parts } = titleParts(title);
+  if (!role) return "";
+  const lines = opts.stacked ? parts : sub ? [sub] : [];
+  return `<div class="title">${escapeHtml(role)}${lines.map((l) => `<span class="title-sub">${escapeHtml(l)}</span>`).join("")}</div>`;
+}
+
+// Split a title into the role (before the first "|") and the line under it.
+// That line reads service first, tech stack last: segments that are a
+// comma-separated list of technologies move behind the others, so
+// "Python, SQL, AWS | Data Engineering & Test Automation" becomes
+// "Data Engineering & Test Automation | Python, SQL, AWS". Order within each
+// group is kept.
+function titleParts(title) {
+  const full = String(title || "").trim();
+  const segs = full.split("|").map((x) => x.trim()).filter(Boolean);
+  if (!segs.length) return { role: "", sub: "", parts: [] };
+  const rest = segs.slice(1);
+  const isStack = (x) => x.includes(",");
+  const parts = [...rest.filter((x) => !isStack(x)), ...rest.filter(isStack)];
+  return { role: segs[0], sub: parts.join(" | "), parts };
 }
 
 // Optional font-family / size override (chosen in the UI), appended last so it
@@ -1222,8 +1280,9 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
     (l) => l.trim() !== "" && !/^[-*_]{3,}$/.test(l.trim())
   );
   if (idx !== -1) {
-    // Line 1 may pack "Name | Title | contacts…". Take the name, then the first
-    // NON-contact part as the title.
+    // Line 1 may pack "Name | Title | Tech | contacts…". Take the name, then
+    // every NON-contact part as the title, still "|"-separated so the header
+    // can put the role and the rest on their own lines.
     const firstParts = lines[idx]
       .trim()
       .replace(/^#{1,6}\s+/, "")
@@ -1233,9 +1292,7 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
       .map((s) => s.trim())
       .filter(Boolean);
     name = firstParts[0] || "";
-    for (let j = 1; j < firstParts.length; j++) {
-      if (!isContactish(firstParts[j])) { title = firstParts[j]; break; }
-    }
+    title = firstParts.slice(1).filter((x) => !isContactish(x)).join(" | ");
     lines.splice(idx, 1);
 
     while (idx < lines.length) {
@@ -1284,12 +1341,24 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
         /<strong>([^<]*?):<\/strong>\s*([\s\S]*?)(?=<strong>|$)/g,
         (mm, nm, items) => {
           cards.push(
-            `<div class="skill-card"><div class="skill-cat">${nm.trim()}</div>` +
+            `<div class="skill-card${/soft\s*skill/i.test(nm) ? " skill-card-wide" : ""}"><div class="skill-cat">${nm.trim()}</div>` +
               `<div class="skill-items">${items.replace(/<br\s*\/?>/gi, "").trim()}</div></div>`
           );
           return mm;
         }
       );
+      // Soft Skills spans the whole row and goes last, so it never sits alone
+      // in a row of empty slots.
+      const wide = (c) => c.includes("skill-card-wide");
+      cards.sort((a, b) => wide(a) - wide(b));
+      // And the last card of an incomplete row stretches to the end of it, so
+      // the grid has no empty slots.
+      const narrow = cards.filter((c) => !wide(c)).length;
+      const spare = narrow % 3;
+      if (spare) {
+        const span = spare === 1 ? 3 : 2;
+        cards[narrow - 1] = cards[narrow - 1].replace('class="skill-card"', `class="skill-card" style="grid-column:span ${span}"`);
+      }
       return `<div class="skills-grid">${cards.join("")}</div>`;
     }
     // Each category becomes its own paragraph rather than one <br>-separated
@@ -1396,10 +1465,10 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
           const school = degree && uni ? uni : "";
           return (
             `<div class="nx-entry nx-edu"><div class="nx-head"><h3 data-nx>${primary}</h3>` +
-            (school ? `<div class="nx-company">${escapeHtml(school)}</div>` : "") +
-            (period || loc
-              ? `<div class="nx-meta"><span>${escapeHtml(period)}</span><span class="nx-loc">${escapeHtml(loc)}</span></div>`
+            (school || loc
+              ? `<div class="nx-company"><span>${escapeHtml(school)}</span>${loc ? `<span class="nx-loc">${escapeHtml(loc)}</span>` : ""}</div>`
               : "") +
+            (period ? `<div class="nx-meta">${escapeHtml(period)}</div>` : "") +
             `</div></div>`
           );
         }
@@ -1620,10 +1689,14 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
       content.replace(/<strong>([^<]*?):?\s*<\/strong>:?\s*([\s\S]*?)(?=<strong>|<\/p>|$)/g, (mm, cat, items) => {
         const text = items.replace(/<br\s*\/?>/gi, " ").replace(/<\/?p[^>]*>/gi, "").trim();
         if (cat.trim() && text) {
-          cells.push(`<div class="nw-skill"><div class="nw-skill-cat">${cat.trim().replace(/:$/, "")}</div><div class="nw-skill-items">${text}</div></div>`);
+          cells.push(`<div class="nw-skill${/soft\s*skill/i.test(cat) ? " nw-skill-wide" : ""}"><div class="nw-skill-cat">${cat.trim().replace(/:$/, "")}</div><div class="nw-skill-items">${text}</div></div>`);
         }
         return mm;
       });
+      // A full-width category (Soft Skills) goes last, so it never leaves a gap
+      // in the two-column rows above it.
+      const wide = (c) => c.includes("nw-skill-wide");
+      cells.sort((a, b) => wide(a) - wide(b));
       return cells.length >= 2 ? `${heading}<div class="nw-skills">${cells.join("")}</div>` : m;
     });
 
@@ -1702,10 +1775,12 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
       content.replace(/<strong>([^<]*?):?\s*<\/strong>:?\s*([\s\S]*?)(?=<strong>|<\/p>|$)/g, (mm, cat, items) => {
         const text = items.replace(/<br\s*\/?>/gi, " ").replace(/<\/?p[^>]*>/gi, "").trim();
         if (cat.trim() && text) {
-          cells.push(`<div class="dm-skill"><div class="dm-skill-cat">${cat.trim().replace(/:$/, "")}:</div><div class="dm-skill-items">${text}</div></div>`);
+          cells.push(`<div class="dm-skill${/soft\s*skill/i.test(cat) ? " dm-skill-wide" : ""}"><div class="dm-skill-cat">${cat.trim().replace(/:$/, "")}:</div><div class="dm-skill-items">${text}</div></div>`);
         }
         return mm;
       });
+      // Soft Skills spans both columns and goes last, so it leaves no gap.
+      cells.sort((a, b) => a.includes("dm-skill-wide") - b.includes("dm-skill-wide"));
       return cells.length >= 2 ? `${heading}<div class="dm-skills">${cells.join("")}</div>` : m;
     });
 
@@ -1735,8 +1810,10 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
         const location = parts.slice(1).join(" · ");
         return (
           `<div class="nx-entry"><div class="nx-head"><h3 data-nx${attr}>${roleTitle}</h3>` +
-          (company ? `<div class="nx-company">${company}</div>` : "") +
-          (dates || location ? `<div class="nx-meta"><span>${dates}</span><span class="nx-loc">${location}</span></div>` : "") +
+          (company || location
+            ? `<div class="nx-company"><span>${company}</span>${location ? `<span class="nx-loc">${location}</span>` : ""}</div>`
+            : "") +
+          (dates ? `<div class="nx-meta">${dates}</div>` : "") +
           `</div>${ul || ""}</div>`
         );
       }
@@ -1784,10 +1861,12 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
       content.replace(/<strong>([^<]*?):?\s*<\/strong>:?\s*([\s\S]*?)(?=<strong>|<\/p>|$)/g, (mm, cat, items) => {
         const text = items.replace(/<br\s*\/?>/gi, " ").replace(/<\/?p[^>]*>/gi, "").trim();
         if (cat.trim() && text) {
-          cells.push(`<div class="sl-skill"><div class="sl-skill-cat">${cat.trim().replace(/:$/, "")}:</div><div class="sl-skill-items">${text}</div></div>`);
+          cells.push(`<div class="sl-skill${/soft\s*skill/i.test(cat) ? " sl-skill-wide" : ""}"><div class="sl-skill-cat">${cat.trim().replace(/:$/, "")}:</div><div class="sl-skill-items">${text}</div></div>`);
         }
         return mm;
       });
+      // Soft Skills spans both columns and goes last, so it leaves no gap.
+      cells.sort((a, b) => a.includes("sl-skill-wide") - b.includes("sl-skill-wide"));
       return cells.length >= 2 ? `${heading}<div class="sl-skills">${cells.join("")}</div>` : m;
     });
     body = body.replace(
@@ -1969,6 +2048,15 @@ export function buildResumeHtml(markdown, style, fallbackTitle = "", contactInfo
 
   const css =
     BASE + "\n" + templateCss(id, accent, head, nameColor) + (id === "spectrum" ? "" : nameTitleCss(nameColor)) +
+    // The name, heavier in every template but Spectrum (already its heaviest).
+    // The hairline stroke thickens it even in fonts with no weight above bold.
+    (id === "spectrum" ? "" : "\nheader h1{font-weight:800;-webkit-text-stroke:.35px currentColor;}") +
+    // Sentences fill every line edge to edge (the last line of each stays
+    // short, as it must): bullets, the summary, project descriptions. Skills
+    // lists keep left-aligned (they're comma lists, often in narrow columns),
+    // and templates that centre their summary keep it centred.
+    "\nmain p,main li,.proj-desc,.nw-summary p,.dm-summary p,.sl-summary p,.nx-summary p{text-align:justify;text-justify:inter-word;}" +
+    "\nmain p.sp-items{text-align:left;}" +
     "\nmain h2{margin-top:13px;margin-bottom:5px;}" +
     "\n.edu-line{font-size:11pt;color:#23272e;font-weight:normal;margin:8px 0 0;}" +
     "\n.edu-line .edu-degree{font-weight:700;color:#14181e;}" +
