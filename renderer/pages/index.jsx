@@ -23,7 +23,7 @@ const TABS = [
 const MAX_THREADS = 20;
 
 // Where a job stands, from the status it reports.
-const isRunning = (st) => !!(st && (st.busy || st.attention || st.pending));
+const isRunning = (st) => !!(st && (st.busy || st.pending));
 // Finished = its resume is generated and nothing is running in it.
 const isFinished = (st) => !isRunning(st) && !!(st && st.done);
 
@@ -59,7 +59,7 @@ export default function Home() {
   // soon as the app opens, and until it's up the generators can't actually run.
   const [booting, setBooting] = useState(true);
   // Generate V3 jobs: their numbers, the one on screen, and what each is doing
-  // ({ busy, attention, done, company }) for the job tabs.
+  // ({ busy, done, company, … }) for the job tabs.
   const [jobs, setJobs] = useState([1]);
   const [activeJob, setActiveJob] = useState(1);
   const [jobStatus, setJobStatus] = useState({});
@@ -237,7 +237,6 @@ export default function Home() {
     api().clearJobPrefs(n);
   };
   const runningJobs = Object.values(jobStatus).filter((s) => s && s.busy).length;
-  const waitingJobs = Object.values(jobStatus).filter((s) => s && s.attention).length;
 
   // Auto-collapse the sidebar on small windows so the main content fits.
   useEffect(() => {
@@ -320,15 +319,9 @@ export default function Home() {
               onClick={() => setTab(t.id)}
             >
               {t.label}
-              {t.id === "generate3" && (runningJobs > 0 || waitingJobs > 0) && (
-                <span
-                  className={"nav-badge" + (waitingJobs ? " attention" : "")}
-                  title={
-                    (waitingJobs ? `${waitingJobs} job${waitingJobs > 1 ? "s" : ""} waiting for your answer · ` : "") +
-                    `${runningJobs} job${runningJobs !== 1 ? "s" : ""} generating`
-                  }
-                >
-                  {waitingJobs ? "!" : runningJobs}
+              {t.id === "generate3" && runningJobs > 0 && (
+                <span className="nav-badge" title={`${runningJobs} job${runningJobs !== 1 ? "s" : ""} generating`}>
+                  {runningJobs}
                 </span>
               )}
             </button>
@@ -403,9 +396,7 @@ export default function Home() {
                           title={st.company ? `Job ${n} — ${st.company}` : `Job ${n}`}
                         >
                           {/* Status first, ahead of the job's name. */}
-                          {st.attention ? (
-                            <span className="job-tab-flag attention" title="Waiting for your answer">!</span>
-                          ) : st.busy ? (
+                          {st.busy ? (
                             <span className="spinner small job-tab-spinner" title="Generating" />
                           ) : st.done ? (
                             <span
@@ -426,20 +417,6 @@ export default function Home() {
                             <button
                               type="button"
                               className="job-tab-icon"
-                              onClick={() => sendCommand(n, "openFile")}
-                              title="Open Resume"
-                              aria-label={`Open job ${n}'s resume`}
-                            >
-                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                                <polyline points="14 2 14 8 20 8" />
-                                <line x1="8" y1="13" x2="16" y2="13" />
-                                <line x1="8" y1="17" x2="13" y2="17" />
-                              </svg>
-                            </button>
-                            <button
-                              type="button"
-                              className="job-tab-icon"
                               onClick={() => copyJobLocation(n)}
                               title={copiedJob === n ? "Copied" : "Copy Location"}
                               aria-label={`Copy job ${n}'s resume location`}
@@ -454,6 +431,20 @@ export default function Home() {
                                   <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
                                 </svg>
                               )}
+                            </button>
+                            <button
+                              type="button"
+                              className="job-tab-icon"
+                              onClick={() => sendCommand(n, "openFile")}
+                              title="Open Resume"
+                              aria-label={`Open job ${n}'s resume`}
+                            >
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                                <polyline points="14 2 14 8 20 8" />
+                                <line x1="8" y1="13" x2="16" y2="13" />
+                                <line x1="8" y1="17" x2="13" y2="17" />
+                              </svg>
                             </button>
                           </>
                         )}

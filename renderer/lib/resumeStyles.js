@@ -22,6 +22,11 @@ export const STYLES = [
   { id: "ribbon", label: "Ribbon", accent: "#8b2635" },
   { id: "formal", label: "Formal", accent: "#111111" },
   { id: "network", label: "Network", accent: "#2e86a8" },
+  { id: "diamond", label: "Diamond", accent: "#4a8a70" },
+  { id: "slate", label: "Slate", accent: "#c19459" },
+  { id: "nexus", label: "Nexus", accent: "#1a1a1a" },
+  // Fixed palette: the colour pickers don't change it (see resumeHtml.js).
+  { id: "spectrum", label: "Spectrum", accent: "#7e56a1", fixedColors: true },
 ];
 
 // Sample colors. The Content picker applies one to EVERY template's borders,

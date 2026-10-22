@@ -3,6 +3,7 @@ import { api } from "../lib/api";
 import { useDbChanged } from "../lib/useDbChanged";
 import { countryFlag } from "../lib/flags";
 import ConfirmModal from "./ConfirmModal";
+import { duplicateNotice } from "../lib/duplicates";
 
 // Local YYYY-MM-DD for a date (or now).
 function ymd(d = new Date()) {
@@ -192,12 +193,22 @@ export default function Applications() {
     const r = await api().openPdf(p);
     setFileMsg(r && !r.ok ? r.error || "Could not open the file." : "");
   };
+  // Copying the path files the application: it is recorded (the "Path copied"
+  // sign), and a duplicate says so.
   const copyLocation = async (a) => {
     const folder = (a.pdf_path || "").replace(/[\\/][^\\/]*$/, "");
     if (!folder) return;
     await navigator.clipboard.writeText(folder);
     setCopiedId(a.id);
     setTimeout(() => setCopiedId(null), 1500);
+    const res = await api().markPathCopied(a.id);
+    const note = duplicateNotice(res);
+    if (note) window.dispatchEvent(new CustomEvent("app-notify", { detail: { message: note, type: "warning" } }));
+    const stamp = new Date().toISOString();
+    const mark = (list) => list.map((x) => (x.id === a.id ? { ...x, path_copied_at: stamp } : x));
+    setAllApps((list) => mark(list));
+    setApps((list) => mark(list));
+    setResults((list) => mark(list));
   };
 
   const country = (c) =>
@@ -240,9 +251,19 @@ export default function Applications() {
       );
     } else if (cat) meta.push(<span key="cat">{cat}</span>);
     return (
-      <div className="app-card" key={a.id}>
+      // A green bar down the left edge: its resume path has been copied.
+      <div
+        className={"app-card" + (a.path_copied_at ? " copied" : "")}
+        key={a.id}
+        title={a.path_copied_at ? `Resume path copied ${fmtDate(a.path_copied_at)}` : undefined}
+      >
         <div className="app-top">
-          <span className="app-role">{a.role || "(untitled role)"}</span>
+          <span className="app-role">
+            {a.role || "(untitled role)"}
+            {a.duplicate_of ? (
+              <span className="app-sign dup" title="This account had already applied to this company and role">Duplicate</span>
+            ) : null}
+          </span>
           <span className="app-date muted">{fmtDate(a.applied_at)}</span>
         </div>
         {a.request_id && (

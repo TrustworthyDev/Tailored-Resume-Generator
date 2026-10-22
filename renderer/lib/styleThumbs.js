@@ -371,6 +371,141 @@ export function styleThumb(style) {
       }
       break;
     }
+    case "nexus": {
+      // Serif name and summary over faint grey nodes, the full-width contact
+      // band, plain headings, label/items skills, and ticked role blocks.
+      const ink = head || "#1a1a1a";
+      [[150, 14, 172, 40], [172, 40, 214, 26], [214, 26, 236, 62], [172, 40, 196, 76]].forEach(([x1, y1, x2, y2]) => { inner += `<line x1='${x1}' y1='${y1}' x2='${x2}' y2='${y2}' stroke='#ececec' stroke-width='1'/>`; });
+      [[150, 14, 3], [172, 40, 6], [214, 26, 4], [236, 62, 7], [196, 76, 5]].forEach(([x, y, r]) => { inner += `<circle cx='${x}' cy='${y}' r='${r}' fill='#ebebeb'/>`; });
+      inner += rc(16, 16, 90, 12, nameC || "#111", 2);
+      inner += rc(16, 33, 64, 5.5, titleC || "#444");
+      for (let i = 0; i < 4; i++) inner += rc(16, 44 + i * 6, i === 3 ? 120 : 208, 3, G);
+      inner += rc(0, 74, 240, 20, ink, 0);
+      [[16, 79], [128, 79], [16, 87], [128, 87]].forEach(([x, y]) => { inner += rc(x, y, 4, 4, "#fff", 1); inner += rc(x + 7, y + 0.6, 50, 2.6, "#ffffffaa"); });
+      inner += rc(16, 104, 60, 6, "#111");
+      for (let i = 0; i < 4; i++) { inner += rc(16, 116 + i * 8, 26, 3.5, "#111"); inner += rc(52, 116 + i * 8, i % 2 ? 120 : 160, 3, G); }
+      inner += rc(16, 156, 72, 6, "#111");
+      let y = 168;
+      for (let e = 0; e < 2; e++) {
+        inner += rc(0, y + 2, 12, 1.4, ink, 0);
+        inner += rc(16, y, 76, 5, "#111");
+        inner += rc(16, y + 8, 46, 5, "#333");
+        inner += rc(16, y + 16, 26, 2.6, "#777"); inner += rc(190, y + 16, 34, 2.6, "#999");
+        for (let i = 0; i < 4; i++) { inner += `<circle cx='18.5' cy='${y + 24.5 + i * 7}' r='1.6' fill='none' stroke='${ink}' stroke-width='0.8'/>`; inner += rc(24, y + 23 + i * 7, i === 3 ? 140 : 196, 3, G); }
+        y += 60;
+      }
+      break;
+    }
+    case "slate": {
+      // Light name, gold title and summary beside a slate contact card; then
+      // icon-tile headings with gold / slate / gold bars, a two-column skills
+      // grid, and roles with gold dates over gold square bullets.
+      const dark = "#2b313b";
+      inner += `<path d='M0 8 30 34 0 60M22 0 58 30 22 60M110 70 140 46 170 70' fill='none' stroke='#eeeeee' stroke-width='1'/>`;
+      inner += rc(14, 18, 92, 12, nameC || dark, 2);                  // name
+      inner += rc(14, 35, 62, 5.5, titleC || a);                      // title
+      for (let i = 0; i < 5; i++) inner += rc(14, 46 + i * 6, i === 4 ? 90 : 128, 3, G);
+      inner += rc(152, 14, 74, 64, dark, 4);                          // contact card
+      for (let i = 0; i < 4; i++) { inner += rc(160, 22 + i * 14, 8, 8, "#ffffff", 2); inner += rc(173, 25 + i * 14, 44, 2.6, "#ffffffaa"); }
+      const heading = (y, w) => {
+        inner += rc(14, y - 1, 8, 10, a + "88", 2);
+        inner += rc(17, y - 2, 8, 12, a, 2);
+        inner += rc(20, y - 3, 13, 14, dark, 3);
+        inner += rc(38, y + 1, w, 6, dark);
+        const x0 = 38 + w + 10, seg = (226 - x0 - 8) / 3;
+        [a, dark, a].forEach((c, i) => { inner += rc(x0 + i * (seg + 4), y + 2.5, seg, 2.6, c, 1.3); });
+      };
+      heading(96, 60);
+      for (let r2 = 0; r2 < 3; r2++) {
+        const yy = 112 + r2 * 13;
+        inner += rc(16, yy, 30, 3.5, "#14181e"); inner += rc(52, yy, 58, 3, G); inner += rc(52, yy + 5, 40, 3, G);
+        inner += rc(124, yy, 30, 3.5, "#14181e"); inner += rc(160, yy, 58, 3, G); inner += rc(160, yy + 5, 44, 3, G);
+      }
+      heading(160, 70);
+      let y = 175;
+      for (let e = 0; e < 2; e++) {
+        inner += rc(16, y, 76, 5.5, "#14181e");
+        inner += rc(16, y + 8, 40, 4.5, "#4a4f57");
+        inner += rc(16, y + 16, 30, 3, a);
+        for (let i = 0; i < 4; i++) { inner += rc(17, y + 23 + i * 7, 3.4, 3.4, a, 0.8); inner += rc(24, y + 23.4 + i * 7, i === 3 ? 140 : 196, 3, G); }
+        y += 56;
+      }
+      inner += `<path d='M150 320 180 292 210 320M180 292 210 264 240 292' fill='none' stroke='#eeeeee' stroke-width='1'/>`;
+      break;
+    }
+    case "spectrum": {
+      // Fixed colours: the left band in one colour per section, a heavy name and
+      // title with the contacts stacked right, and hairline headings that start
+      // in the section's colour.
+      const cols = ["#c676b0", "#7e56a1", "#5873b6", "#d9a466", "#e5e56b", "#bddca8"];
+      const band = [[0, 54], [54, 92], [92, 152], [152, 262], [262, 300], [300, 320]];
+      band.forEach(([y0, y1], i) => { inner += rc(0, y0, 10, y1 - y0, cols[i], 0); });
+      inner += rc(24, 20, 110, 15, "#1d1d1d", 1);                     // name
+      inner += rc(24, 40, 78, 6, "#2b2b2b");                            // title
+      for (let i = 0; i < 4; i++) inner += rc(174 - (i % 2) * 14, 18 + i * 6, 50 + (i % 2) * 14, 3, G);
+      const heading = (y, w, c) => {
+        inner += rc(24, y, w, 5.5, "#2b2b2b");
+        inner += rc(24 + w + 10, y + 2.5, 216 - w - 24, 0.8, "#a8a8a8", 0);
+        inner += rc(24 + w + 10, y + 1.8, 52, 2.2, c, 0);
+      };
+      heading(60, 38, cols[1]);
+      for (let i = 0; i < 3; i++) inner += rc(24, 72 + i * 6, i === 2 ? 120 : 196, 3, G);
+      heading(98, 34, cols[2]);
+      inner += rc(24, 110, 60, 4, "#2b2b2b"); for (let i = 0; i < 2; i++) inner += rc(24, 118 + i * 6, 190, 3, G);
+      inner += rc(24, 134, 50, 4, "#2b2b2b"); inner += rc(24, 142, 150, 3, G);
+      heading(158, 46, cols[3]);
+      let y = 170;
+      for (let e = 0; e < 2; e++) {
+        inner += rc(24, y, 92, 4.5, "#1d1d1d"); inner += rc(176, y, 44, 4.5, "#1d1d1d");
+        for (let i = 0; i < 3; i++) { inner += `<circle cx='29' cy='${y + 11.5 + i * 7}' r='1.2' fill='#2b2b2b'/>`; inner += rc(34, y + 10 + i * 7, i === 2 ? 130 : 182, 3, G); }
+        y += 44;
+      }
+      heading(268, 40, cols[4]);
+      inner += rc(24, 280, 120, 4.5, "#1d1d1d"); inner += rc(176, 280, 44, 4.5, "#1d1d1d");
+      heading(302, 54, cols[5]);
+      break;
+    }
+    case "diamond": {
+      // Light name, teal title, summary lines and a centred contact row; then
+      // diamond-badge headings with a pale rule, a two-column skills grid, and
+      // roles with italic dates over hollow-diamond bullets.
+      const teal = titleC || (head ? darken(head, 0.62) : "#1d5a6e");
+      const soft = a + "55";
+      const ink = head ? darken(head, 0.5) : "#1f3c5a";
+      const diamond = (cx, cy, r, fill, stroke) =>
+        `<rect x='${cx - r}' y='${cy - r}' width='${r * 2}' height='${r * 2}' rx='${r * 0.25}' transform='rotate(45 ${cx} ${cy})' fill='${fill}'${stroke ? ` stroke='${stroke}' stroke-width='1'` : ""}/>`;
+      const heading = (y, w) => {
+        inner += diamond(23, y + 3, 5, a);
+        inner += diamond(23, y + 3, 2.2, "none", "#fff");
+        inner += rc(33, y, w, 6, "#14181e");
+        inner += rc(33 + w + 12, y + 2.5, 186 - w - 12, 1.4, soft);
+        inner += diamond(33 + w + 12, y + 3.2, 2, soft);
+        inner += diamond(219, y + 3.2, 2, soft);
+      };
+      inner += rc(16, 16, 96, 13, nameC || "#2a2e35", 2);         // name
+      inner += rc(16, 34, 74, 6, teal);                              // title
+      for (let i = 0; i < 4; i++) inner += rc(16, 46 + i * 6, i === 3 ? 140 : 208, 3, G);
+      for (let i = 0; i < 4; i++) { inner += rc(36 + i * 46, 76, 5, 5, ink, 1); inner += rc(44 + i * 46, 77, 30, 3, G); }
+      heading(94, 66);
+      for (let r2 = 0; r2 < 3; r2++) {
+        const yy = 108 + r2 * 13;
+        inner += rc(16, yy, 30, 3.5, "#14181e"); inner += rc(52, yy, 58, 3, G); inner += rc(52, yy + 5, 40, 3, G);
+        inner += rc(124, yy, 30, 3.5, "#14181e"); inner += rc(160, yy, 58, 3, G); inner += rc(160, yy + 5, 44, 3, G);
+      }
+      heading(156, 74);
+      let y = 170;
+      for (let e = 0; e < 2; e++) {
+        inner += rc(16, y, 76, 5.5, "#14181e");                    // role
+        inner += rc(16, y + 8, 40, 4.5, "#4a4f57");                // company
+        inner += rc(16, y + 16, 34, 3, teal);                      // dates
+        for (let i = 0; i < 4; i++) {
+          inner += diamond(19, y + 25 + i * 7, 1.8, "none", a);
+          inner += rc(25, y + 23.5 + i * 7, i === 3 ? 140 : 195, 3, G);
+        }
+        y += 56;
+      }
+      break;
+    }
     default: // professional
       inner += rc(20, 20, 7, 42, a, 1);
       inner += rc(36, 24, 100, 16, nameC || "#1f2937", 3);
