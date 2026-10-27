@@ -355,13 +355,18 @@ function CopyButton({ label, done, onCopy }) {
 export default function ResumeGenerator({ active = true, job = 1, multi = false, onStatus, startRequest, command, prewarm = false }) {
   // This job's copy of a per-job setting. Job 1 keeps the plain key, so the
   // draft from before jobs existed is still there.
-  const jk = (key) => (job > 1 ? `${key}@${job}` : key);
-  // Every other job starts from job 1's account and notes (kept even while job
-  // 1 is closed).
+  const jk = (key) => (job === 1 ? key : `${key}@${job}`);
+  // Job 0 is the original every other job is copied from: a new job takes its
+  // account and notes (falling back to job 1's, from before Job 0 existed) and
+  // keeps that copy as its own, so changing Job 0 later doesn't touch it. Job 0
+  // itself starts from job 1's the first time.
   const getJobPref = async (key) => {
     const own = await api().getPref(jk(key));
-    if (job === 1 || (own && own.value != null)) return own;
-    return api().getPref(key);
+    if (own && own.value != null) return own;
+    let from = job === 0 ? null : await api().getPref(`${key}@0`);
+    if (!from || from.value == null) from = job === 1 ? null : await api().getPref(key);
+    if (from && from.value != null) api().setPref(jk(key), from.value);
+    return from || own;
   };
   const multiRef = useRef(multi);
   multiRef.current = multi;

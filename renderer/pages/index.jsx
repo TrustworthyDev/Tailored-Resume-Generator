@@ -6,6 +6,7 @@ import AccountManagement from "../components/AccountManagement";
 import ResumeGenerator from "../components/ResumeGenerator";
 import Applications from "../components/Applications";
 import Activation from "../components/Activation";
+import About from "../components/About";
 import ConfirmModal from "../components/ConfirmModal";
 import { applyTheme } from "../components/Appearance";
 
@@ -15,6 +16,7 @@ const TABS = [
   { id: "prompts", label: "Prompts" },
   { id: "account", label: "Accounts" },
   { id: "generate3", label: "Generate" },
+  { id: "about", label: "About" },
 ];
 
 // Jobs that can run at the same time - extracting, generating, waiting for an
@@ -106,6 +108,7 @@ export default function Home() {
     // resume, colour) itself.
     Promise.all([api().getPref("gen_slots"), api().getPref("gen_active_job")]).then(([r, a]) => {
       let first = 1;
+      // Job 0 is always there, so the app can also open on it.
       if (r && r.value != null) {
         const list = String(r.value)
           .split(",")
@@ -113,11 +116,9 @@ export default function Home() {
           .filter((n) => Number.isInteger(n) && n >= 1);
         const uniq = [...new Set(list)].sort((x, y) => x - y);
         const wanted = Number(a && a.value);
-        first = uniq.includes(wanted) ? wanted : uniq.length ? uniq[0] : null;
+        first = a && a.value !== "" && [0, ...uniq].includes(wanted) ? wanted : uniq.length ? uniq[0] : 0;
         setJobs(uniq);
         setActiveJob(first);
-        // No job means no ChatGPT tab warming up - nothing to wait for.
-        if (!uniq.length) setBooting(false);
       }
       setBootJob(first);
       jobsLoadedRef.current = true;
@@ -144,7 +145,7 @@ export default function Home() {
   };
   // Threads in use, and free. Finished, idle and stopped (yellow) jobs don't
   // use one, so a thread frees up as each job finishes.
-  const runningCount = jobs.filter((n) => isRunning(jobStatus[n])).length;
+  const runningCount = [0, ...jobs].filter((n) => isRunning(jobStatus[n])).length;
   const freeThreads = Math.max(0, MAX_THREADS - runningCount);
 
   // Start: a new tab per pasted link, each extracting its link straight away -
@@ -207,7 +208,7 @@ export default function Home() {
       keep.forEach((n) => { if (prev[n]) next[n] = prev[n]; });
       return next;
     });
-    if (!keep.includes(activeJob)) setActiveJob(keep.length ? keep[0] : null);
+    if (activeJob !== 0 && !keep.includes(activeJob)) setActiveJob(keep.length ? keep[0] : 0);
     const running = keep.filter((n) => isRunning(jobStatus[n])).length;
     notify(running ? `Cleared. ${running} running job${running > 1 ? "s" : ""} kept.` : "Cleared all jobs.", "success");
   };
@@ -233,7 +234,7 @@ export default function Home() {
       delete copy[n];
       return copy;
     });
-    if (activeJob === n) setActiveJob(next.filter((x) => x < n).pop() || next[0] || null);
+    if (activeJob === n) setActiveJob(next.filter((x) => x < n).pop() ?? next[0] ?? 0);
     api().clearJobPrefs(n);
   };
   const runningJobs = Object.values(jobStatus).filter((s) => s && s.busy).length;
@@ -377,6 +378,29 @@ export default function Home() {
                 )}
               </div>
               <div className="job-list">
+                {/* Job 0: the original every new job is copied from. Always
+                    here - no buttons, not closed by × or Clear. */}
+                {(() => {
+                  const st = jobStatus[0] || {};
+                  return (
+                    <div className={"job-tab job-tab-base" + (activeJob === 0 ? " active" : "")}>
+                      <div className="job-tab-row">
+                        <button
+                          type="button"
+                          className="job-tab-main"
+                          onClick={() => setActiveJob(0)}
+                          title="Job 0 — the original: new jobs copy its account and Additional Info"
+                        >
+                          {st.busy ? <span className="spinner small job-tab-spinner" title="Generating" /> : null}
+                          <span className="job-tab-text">
+                            <span className="job-tab-name">Job 0</span>
+                            <span className="job-tab-company">{st.company || "Original"}</span>
+                          </span>
+                        </button>
+                      </div>
+                    </div>
+                  );
+                })()}
                 {jobs.map((n) => {
                   const st = jobStatus[n] || {};
                   return (
@@ -502,12 +526,7 @@ export default function Home() {
             </aside>
           )}
           <div className="gen-v3-jobs">
-            {tab === "generate3" && !jobs.length && (
-              <div className="card jobs-empty muted">
-                No jobs open. Paste job-post links in the Jobs column and press Start, or open one with + New job.
-              </div>
-            )}
-            {jobs.map((n) => {
+            {[0, ...jobs].map((n) => {
               const shown = tab === "generate3" && n === activeJob;
               return (
                 <div
@@ -524,7 +543,7 @@ export default function Home() {
                 >
                   <ResumeGenerator
                     job={n}
-                    multi={jobs.length > 1}
+                    multi={jobs.length > 0}
                     active={shown}
                     onStatus={onJobStatus}
                     startRequest={startRequests[n]}
@@ -541,6 +560,7 @@ export default function Home() {
         {tab === "prompts" && <Instructions />}
         {tab === "account" && <AccountManagement />}
         {tab === "applications" && <Applications />}
+        {tab === "about" && <About />}
       </main>
 
       <ConfirmModal
