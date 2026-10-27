@@ -2575,6 +2575,7 @@ function registerIpc() {
     dir: app.getPath("userData"),
     multi: !!profileName,
     sharedDatabase: sharedFolder(),
+    version: app.getVersion(),
   }));
 
   handle("log:copyDiag", (_e, line) => {

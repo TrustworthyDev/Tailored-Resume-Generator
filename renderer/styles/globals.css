@@ -186,6 +186,9 @@ h1, h2, h3 { color: var(--text); }
 }
 .job-tab-add:hover:not(:disabled) { color: var(--text); border-color: var(--muted); }
 .job-tab-row { display: flex; align-items: stretch; min-height: 52px; }
+/* Job 0, the original the other jobs are copied from. */
+.job-tab-base { border-style: dashed; }
+.job-tab-base.active { border-style: solid; }
 
 /* Clear sits at the foot of the column. */
 .job-clear { flex-shrink: 0; width: 100%; margin-top: auto; }
@@ -471,6 +474,14 @@ select.input {
   background: transparent; color: var(--muted); cursor: pointer;
 }
 .input-eye:hover { color: var(--text, #e6e9ef); background: rgba(255, 255, 255, 0.06); }
+
+/* About page */
+.about-card { max-width: 760px; }
+.about-lead { font-size: 15px; line-height: 1.6; margin: 4px 0 14px; }
+.about-points { margin: 0 0 20px; padding-left: 20px; line-height: 1.7; color: var(--text); }
+.about-meta { display: grid; grid-template-columns: 140px 1fr; gap: 8px 16px; padding-top: 14px; border-top: 1px solid var(--border); font-size: 14px; }
+.about-k { color: var(--muted); }
+.about-v { word-break: break-all; }
 
 /* Lists (api keys, prompts, proxies) */
 .subcard {
