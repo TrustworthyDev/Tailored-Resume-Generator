@@ -1149,7 +1149,7 @@ function scanFile(filePath) {
           id: r.id,
           label:
             (r.name || "(unnamed)") +
-            ` · ${r.kind === "v2" ? "V2" : "V1"}` +
+
             (r.provider ? ` ${r.provider}` : ""),
         })),
       });
@@ -1210,12 +1210,12 @@ function mergeSelected(filePath, selection) {
       ids("api_keys").forEach((id) => {
         const r = srcGet(src, "SELECT * FROM api_keys WHERE id = ?", [id]);
         if (!r) return;
-        // Preserve the model and V1/V2 kind so imported API (V2) keys stay V2.
+        // Preserve the model; every key joins the one API list.
         insert(
           `INSERT INTO api_keys (name, api_key, provider, model, kind, is_active, sort_order, created_at)
            VALUES (?, ?, ?, ?, ?, 0, ?, ?)`,
           [r.name ?? null, r.api_key ?? null, r.provider ?? "gemini", r.model ?? null,
-           r.kind === "v2" ? "v2" : "v1", nextOrder("api_keys"), r.created_at ?? nowIso]
+           "v2", nextOrder("api_keys"), r.created_at ?? nowIso]
         );
         counts.api_keys++;
       });
