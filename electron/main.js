@@ -173,6 +173,7 @@ const LOCAL_PREF_KEYS = new Set([
   "gen_job_link", "gen_job_company", "gen_job_role", "gen_job_country", "gen_extra_info",
   "gen_gpt_url", "gen_app_id",
   "gen_saved_path", "gen_saved_at", "gen_mark_state", "gen_issue", "gen_slots", "gen_active_job", "gen_batch_links",
+  "build_json", "build_account_id",
   "theme",
   // The Generate page's look and toggles.
   "resume_style", "resume_accent", "resume_name_color", "resume_font", "resume_font_size",
@@ -310,12 +311,12 @@ function adoptLaterLocalPrefs() {
 // columns are only read to seed an app's first choice.
 const ACTIVE_SLOTS = {
   instruction: { pref: "active_instruction_id", table: "instructions", scope: "", order: "sort_order ASC, id ASC" },
-  apikey_v1: { pref: "active_apikey_v1", table: "api_keys", scope: "kind = 'v1'", order: "sort_order ASC, id ASC" },
+  // One API key list now (Settings → API); its rows all carry kind 'v2'.
   apikey_v2: { pref: "active_apikey_v2", table: "api_keys", scope: "kind = 'v2'", order: "sort_order ASC, id ASC" },
   // A proxy can be switched off entirely ("0"), and is never picked by default.
   proxy: { pref: "active_proxy_id", table: "proxies", scope: "", order: "", allowNone: true },
 };
-const keySlot = (kind) => (kind === "v2" ? "apikey_v2" : "apikey_v1");
+const keySlot = () => "apikey_v2";
 
 // The id of this app's active row, or null. A choice whose row has since been
 // deleted (by any app) falls back like a first start: the database's flagged
@@ -340,20 +341,35 @@ function setActiveId(slot, id) {
   setPref(ACTIVE_SLOTS[slot].pref, id == null ? "0" : String(id));
 }
 
-// The active API key of a list, as { api_key, provider, model }, or null.
-function activeKeyRow(kind) {
-  const id = activeId(keySlot(kind));
+// This app's active API key, as { api_key, provider, model }, or null.
+function activeKeyRow() {
+  const id = activeId("apikey_v2");
   return id ? db.get("SELECT id, api_key, provider, model FROM api_keys WHERE id = ?", [id]) : null;
 }
 
-// A Gemini key for the quick reads (job post, title/company): the active V2 key,
-// else the active V1 key when it is a Gemini one, else any V1 Gemini key.
-function geminiKeyRow() {
-  const v2 = activeKeyRow("v2");
-  if (v2 && v2.api_key) return v2;
-  const v1 = activeKeyRow("v1");
-  if (v1 && v1.api_key && String(v1.provider || "").toLowerCase() === "gemini") return v1;
-  return db.get("SELECT api_key, model FROM api_keys WHERE kind = 'v1' AND provider = 'gemini' ORDER BY id DESC LIMIT 1");
+// The active key when it is from one of `providers`, else the newest key that is.
+function keyFor(providers) {
+  const ok = (r) => r && r.api_key && providers.includes(String(r.provider || "gemini").toLowerCase());
+  const active = activeKeyRow();
+  if (ok(active)) return active;
+  const marks = providers.map(() => "?").join(", ");
+  return db.get(
+    `SELECT id, api_key, provider, model FROM api_keys WHERE LOWER(COALESCE(provider, 'gemini')) IN (${marks}) ORDER BY id DESC LIMIT 1`,
+    providers
+  ) || null;
+}
+
+// A Gemini key for the quick reads (job post, title/company).
+const geminiKeyRow = () => keyFor(["gemini"]);
+
+// One API key list: the keys that were split into V1 (resume import) and V2
+// (prompt refiner) are merged. Every row becomes kind 'v2', the one list.
+function mergeApiKeyLists() {
+  try {
+    db.run("UPDATE api_keys SET kind = 'v2' WHERE kind IS NULL OR kind <> 'v2'");
+  } catch (e) {
+    logCrash("mergeApiKeyLists", e);
+  }
 }
 
 // ---- Shared database -------------------------------------------------------------
@@ -886,9 +902,8 @@ function registerIpc() {
     return { ok: false, error: "Invalid key for this machine." };
   });
 
-  // API keys (multiple; one active key PER KIND is used). Kinds: 'v1' = direct
-  // resume generation (Gemini/OpenAI/Anthropic), 'v2' = a Gemini key that
-  // refines the ChatGPT prompt. Pass a kind to list only that group.
+  // API keys: one list (every row kind 'v2'), one active key per app. Gemini
+  // keys read job posts and refine the prompt; Gemini/Anthropic import resumes.
   // is_active is this app's own choice (activeId), not the shared column.
   handle("apikeys:list", (_e, kind) => {
     const k = kind === "v1" || kind === "v2" ? kind : null;
@@ -900,8 +915,8 @@ function registerIpc() {
       : db.all(
           "SELECT id, name, api_key, provider, model, kind FROM api_keys ORDER BY sort_order ASC, id ASC"
         );
-    const active = { v1: activeId("apikey_v1"), v2: activeId("apikey_v2") };
-    return rows.map((r) => ({ ...r, is_active: r.id === active[r.kind === "v2" ? "v2" : "v1"] ? 1 : 0 }));
+    const active = activeId("apikey_v2");
+    return rows.map((r) => ({ ...r, is_active: r.id === active ? 1 : 0 }));
   });
 
   // Persist a new API-key ranking from drag-and-drop (array of ids in order).
@@ -912,15 +927,15 @@ function registerIpc() {
     return { ok: true };
   });
 
+  // Every key goes in the one list; any provider (Gemini, OpenAI, Anthropic).
   handle("apikeys:add", (_e, d) => {
     const name = (d.name || "").trim();
     const key = (d.api_key || "").trim();
-    const kind = d.kind === "v2" ? "v2" : "v1";
-    // V2 keys only refine the ChatGPT prompt, which uses Gemini.
-    const provider = kind === "v2" ? "gemini" : (d.provider || "gemini").trim().toLowerCase();
+    const kind = "v2";
+    const provider = (d.provider || "gemini").trim().toLowerCase();
     const model = (d.model || "").trim();
     if (!key) return { ok: false, error: "Key is required." };
-    // First key added IN THIS KIND becomes active automatically (here, and as
+    // The first key added becomes active automatically (here, and as
     // the seed for any app that hasn't chosen one yet).
     const existing = db.get("SELECT COUNT(*) AS c FROM api_keys WHERE kind = ?", [kind]);
     const active = existing && existing.c > 0 ? 0 : 1;
@@ -937,9 +952,7 @@ function registerIpc() {
   handle("apikeys:update", (_e, d) => {
     const name = (d.name || "").trim();
     const key = (d.api_key || "").trim();
-    const row = db.get("SELECT kind FROM api_keys WHERE id = ?", [d.id]);
-    const kind = (row && row.kind) === "v2" ? "v2" : "v1";
-    const provider = kind === "v2" ? "gemini" : (d.provider || "gemini").trim().toLowerCase();
+    const provider = (d.provider || "gemini").trim().toLowerCase();
     const model = (d.model || "").trim();
     if (!key) return { ok: false, error: "Key is required." };
     db.run(
@@ -2004,33 +2017,94 @@ function registerIpc() {
   });
 
   // Render the styled resume to a PDF and save it to the chosen location.
+  // Print a loaded resume page to an A4 PDF. Some templates carry a footer on
+  // every page: "<name> Resume" on the left, "<page> of <pages>" on the right,
+  // in the page's bottom margin.
+  async function printResumePdf(win, footerLabelIn) {
+    const footerLabel = String(footerLabelIn || "").trim();
+    const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+    return win.webContents.printToPDF({
+      printBackground: true,
+      pageSize: "A4",
+      // Use the CSS @page size/margins — gives correct A4 pagination and
+      // uniform per-page margins regardless of the window size.
+      preferCSSPageSize: true,
+      ...(footerLabel
+        ? {
+            displayHeaderFooter: true,
+            headerTemplate: "<span></span>",
+            footerTemplate:
+              '<div style="width:100%;font-size:10px;font-family:Poppins,Montserrat,\'Segoe UI\',Arial,sans-serif;' +
+              'color:#6a6a6a;letter-spacing:.3px;padding:0 12mm 0 16mm;display:flex;justify-content:space-between;">' +
+              `<span>${esc(footerLabel)}</span><span><span class="pageNumber"></span> of <span class="totalPages"></span></span></div>`,
+          }
+        : {}),
+    });
+  }
+
+  // ---- Build: a resume from a ChatGPT JSON reply, previewed and saved where
+  // the user chooses. Nothing is filed in the application history.
+
+  // Read the reply: any complete resume JSON (fenced or with prose around it).
+  handle("build:parse", (_e, raw) => {
+    const res = parseResumeJson(String(raw || ""), {});
+    if (!res.ok) {
+      return {
+        ok: false,
+        error:
+          res.reason === "not-json"
+            ? "That isn't a resume reply. Paste the whole JSON from ChatGPT — it has a \"resume\" object."
+            : "Couldn't read that reply.",
+      };
+    }
+    return res;
+  });
+
+  // The PDF for the preview, as base64.
+  handle("build:pdf", async (_e, d) => {
+    let win;
+    try {
+      win = await htmlWindow(d.html, false);
+      const pdf = await printResumePdf(win, d.footerLabel);
+      return { ok: true, base64: Buffer.from(pdf).toString("base64") };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    } finally {
+      if (win) win.close();
+    }
+  });
+
+  // Save as: the user picks where the PDF goes.
+  handle("build:saveAs", async (_e, d) => {
+    const sani = (s) => String(s || "").replace(/[<>:"/\\|?*\x00-\x1f]+/g, " ").replace(/\s+/g, " ").trim();
+    const row = db.get("SELECT value FROM prefs WHERE key = 'download_location'");
+    const dir = (row && row.value) || app.getPath("downloads");
+    const pick = await dialog.showSaveDialog(mainWindow, {
+      title: "Save resume as",
+      defaultPath: path.join(dir, (sani(d.fileName) || "Resume") + ".pdf"),
+      filters: [{ name: "PDF", extensions: ["pdf"] }],
+    });
+    if (pick.canceled || !pick.filePath) return { ok: false, canceled: true };
+    let win;
+    try {
+      win = await htmlWindow(d.html, false);
+      const pdf = await printResumePdf(win, d.footerLabel);
+      fs.writeFileSync(pick.filePath, pdf);
+      return { ok: true, path: pick.filePath };
+    } catch (e) {
+      return { ok: false, error: (e && e.message) || String(e) };
+    } finally {
+      if (win) win.close();
+    }
+  });
+
   handle("resume:exportPdf", async (_e, d) => {
     const row = db.get("SELECT value FROM prefs WHERE key = 'download_location'");
     const dir = (row && row.value) || app.getPath("downloads");
     let win;
     try {
       win = await htmlWindow(d.html, false);
-      // Some templates carry a footer on every page: "<name> Resume" on the
-      // left, "<page> of <pages>" on the right, in the page's bottom margin.
-      const footerLabel = String((d && d.footerLabel) || "").trim();
-      const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-      const pdf = await win.webContents.printToPDF({
-        printBackground: true,
-        pageSize: "A4",
-        // Use the CSS @page size/margins — gives correct A4 pagination and
-        // uniform per-page margins regardless of the window size.
-        preferCSSPageSize: true,
-        ...(footerLabel
-          ? {
-              displayHeaderFooter: true,
-              headerTemplate: "<span></span>",
-              footerTemplate:
-                '<div style="width:100%;font-size:10px;font-family:Poppins,Montserrat,\'Segoe UI\',Arial,sans-serif;' +
-                'color:#6a6a6a;letter-spacing:.3px;padding:0 12mm 0 16mm;display:flex;justify-content:space-between;">' +
-                `<span>${esc(footerLabel)}</span><span><span class="pageNumber"></span> of <span class="totalPages"></span></span></div>`,
-            }
-          : {}),
-      });
+      const pdf = await printResumePdf(win, d && d.footerLabel);
 
       // Live re-render (colour / style / font change): overwrite the already
       // saved PDF in place — no new folder/file, no new application entry.
@@ -2457,10 +2531,11 @@ function registerIpc() {
       payload && payload.extraInfo
     );
 
-    // Optional refinement via the active V2 Gemini key (Settings → API (V2)).
-    // refineV2Prompt falls back to basePrompt on any error, and never disturbs
-    // the verification fields, so this is always safe.
-    const v2Key = activeKeyRow("v2");
+    // Optional refinement via the active key when it is a Gemini one (Settings →
+    // API). refineV2Prompt falls back to basePrompt on any error, and never
+    // disturbs the verification fields, so this is always safe.
+    const activeKey = activeKeyRow();
+    const v2Key = activeKey && String(activeKey.provider || "gemini").toLowerCase() === "gemini" ? activeKey : null;
     let prompt = basePrompt;
     let refined = false;
     if (v2Key && v2Key.api_key) {
@@ -2470,7 +2545,7 @@ function registerIpc() {
 
     // Extract the job title + company from the JD (fast Gemini call) so the app
     // can check for a duplicate application BEFORE the ChatGPT generation. Uses
-    // the V2 key if set, otherwise an active/any V1 Gemini key.
+    // the active key if it is a Gemini one, otherwise any Gemini key.
     const gemKey = geminiKeyRow();
     let target = { role: "", company: "", country: "" };
     if (gemKey && gemKey.api_key) {
@@ -2917,9 +2992,8 @@ function registerIpc() {
     if (res.canceled || !res.filePaths.length) return { ok: false, canceled: true };
 
     const filePath = res.filePaths[0];
-    const keyRow =
-      activeKeyRow("v1") ||
-      db.get("SELECT api_key, provider, model FROM api_keys WHERE kind = 'v1' ORDER BY id DESC LIMIT 1");
+    // Reading a PDF needs a Gemini or Anthropic key.
+    const keyRow = keyFor(["gemini", "anthropic", "claude"]);
     try {
       const stat = fs.statSync(filePath);
       if (stat.size > 15 * 1024 * 1024) {
@@ -3026,6 +3100,7 @@ app.whenReady().then(async () => {
     db.transaction(() => {
       moveLocalPrefsOutOfDatabase();
       adoptLaterLocalPrefs();
+      mergeApiKeyLists();
       // Number any roles saved before ordering existed, so existing accounts read
       // newest-first straight away rather than only after their next save.
       backfillWorkOrder();

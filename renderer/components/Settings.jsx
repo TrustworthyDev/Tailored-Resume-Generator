@@ -7,8 +7,7 @@ import Security from "./Security";
 import Appearance from "./Appearance";
 
 const TABS = [
-  { id: "api", label: "API (V1)" },
-  { id: "api2", label: "API (V2)" },
+  { id: "api", label: "API" },
   { id: "proxy", label: "Proxy" },
   { id: "folder", label: "Folder" },
   { id: "database", label: "Database" },
@@ -33,8 +32,7 @@ export default function Settings() {
         ))}
       </div>
       <div className="settings-body">
-        {tab === "api" && <ApiKeys kind="v1" />}
-        {tab === "api2" && <ApiKeys kind="v2" />}
+        {tab === "api" && <ApiKeys />}
         {tab === "proxy" && <ProxySettings />}
         {tab === "folder" && <LocationSettings />}
         {tab === "database" && <DatabaseSettings />}

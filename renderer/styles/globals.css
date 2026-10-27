@@ -475,6 +475,9 @@ select.input {
 }
 .input-eye:hover { color: var(--text, #e6e9ef); background: rgba(255, 255, 255, 0.06); }
 
+/* Build page: Generate's layout; the resume JSON box in a code font. */
+.build-json { font-family: ui-monospace, Consolas, monospace; font-size: 12px; }
+
 /* About page */
 .about-card { max-width: 760px; }
 .about-lead { font-size: 15px; line-height: 1.6; margin: 4px 0 14px; }

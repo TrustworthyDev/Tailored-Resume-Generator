@@ -7,16 +7,18 @@ import ResumeGenerator from "../components/ResumeGenerator";
 import Applications from "../components/Applications";
 import Activation from "../components/Activation";
 import About from "../components/About";
+import Build from "../components/Build";
 import ConfirmModal from "../components/ConfirmModal";
 import { applyTheme } from "../components/Appearance";
 
 const TABS = [
+  { id: "about", label: "About" },
   { id: "applications", label: "Applications" },
   { id: "settings", label: "Settings" },
   { id: "prompts", label: "Prompts" },
   { id: "account", label: "Accounts" },
   { id: "generate3", label: "Generate" },
-  { id: "about", label: "About" },
+  { id: "build", label: "Build" },
 ];
 
 // Jobs that can run at the same time - extracting, generating, waiting for an
@@ -48,7 +50,7 @@ const TOAST_ICONS = {
 };
 
 export default function Home() {
-  const [tab, setTab] = useState("applications");
+  const [tab, setTab] = useState("about"); // the app opens on About
   const [licensed, setLicensed] = useState(null); // null = checking
   // Which data profile this window owns. Shown in the sidebar so two or three
   // copies running side by side are never mistaken for each other.
@@ -561,6 +563,7 @@ export default function Home() {
         {tab === "account" && <AccountManagement />}
         {tab === "applications" && <Applications />}
         {tab === "about" && <About />}
+        {tab === "build" && <Build />}
       </main>
 
       <ConfirmModal

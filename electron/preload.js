@@ -135,6 +135,10 @@ contextBridge.exposeInMainWorld("api", {
   importAccountMd: () => invoke("account:importMd"),
   previewResume: (html) => invoke("resume:preview", html),
   exportResumePdf: (data) => invoke("resume:exportPdf", data),
+  // Build: a resume from a ChatGPT JSON reply.
+  buildParse: (raw) => invoke("build:parse", raw),
+  buildPdf: (data) => invoke("build:pdf", data),
+  buildSaveAs: (data) => invoke("build:saveAs", data),
   revealPdf: (filePath) => invoke("pdf:reveal", filePath),
   openPdf: (filePath) => invoke("pdf:open", filePath),
   readPdf: (filePath) => invoke("pdf:read", filePath),

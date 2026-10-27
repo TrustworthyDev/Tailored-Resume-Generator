@@ -12,11 +12,10 @@ function mask(key) {
   return "••••••••" + key.slice(-4);
 }
 
-// `kind` splits keys into two independent groups:
-//   "v1" — resume PDF import, and a fallback Gemini key for job-post reading
-//   "v2" — a Gemini key that refines the ChatGPT prompt (Gemini only)
-export default function ApiKeys({ kind = "v1" }) {
-  const isV2 = kind === "v2";
+// The one API key list (kind "v2" in the database). Gemini keys read job posts
+// and refine the ChatGPT prompt; Gemini or Anthropic keys import resume PDFs.
+const kind = "v2";
+export default function ApiKeys() {
   const [keys, setKeys] = useState([]);
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState(EMPTY);
@@ -33,7 +32,7 @@ export default function ApiKeys({ kind = "v1" }) {
     if (!rows || rows.length === 0) setShowForm(true);
   };
 
-  useEffect(() => { load(); /* reload when switching V1/V2 tab */ }, [kind]);
+  useEffect(() => { load(); }, []);
   useDbChanged(load); // another app saved to the shared database
 
   const set = (k) => (e) => setForm((f) => ({ ...f, [k]: e.target.value }));
@@ -126,16 +125,14 @@ export default function ApiKeys({ kind = "v1" }) {
   const formCard = (
     <div className="subcard">
       <h3 className="modal-title">{editingId ? "Edit API Key" : "Add API Key"}</h3>
-      {!isV2 && (
-        <label className="field">
-          <span className="field-label">Provider</span>
-          <select className="input" value={form.provider} onChange={onProvider}>
-            {PROVIDERS.map((p) => (
-              <option key={p.id} value={p.id}>{p.label}</option>
-            ))}
-          </select>
-        </label>
-      )}
+      <label className="field">
+        <span className="field-label">Provider</span>
+        <select className="input" value={form.provider} onChange={onProvider}>
+          {PROVIDERS.map((p) => (
+            <option key={p.id} value={p.id}>{p.label}</option>
+          ))}
+        </select>
+      </label>
       <label className="field">
         <span className="field-label">Model</span>
         <select className="input" value={form.model} onChange={set("model")}>
@@ -195,15 +192,15 @@ export default function ApiKeys({ kind = "v1" }) {
   return (
     <section className="card">
       <div className="card-head">
-        <h2>{isV2 ? "API Keys — V2 (prompt refiner)" : "API Keys — V1 (resume import)"}</h2>
+        <h2>API Keys</h2>
         <button className="btn primary" onClick={startAdd}>
           + Add New
         </button>
       </div>
       <p className="muted small">
-        {isV2
-          ? "A Google Gemini key used by Generate to refine the ChatGPT prompt before it's sent. Optional — without an active key, the app's built-in prompt is used."
-          : "Keys used to import a resume PDF into an account (Google Gemini or Anthropic). An active Gemini key here is also the fallback for reading job posts when no V2 key is set."}
+        Gemini keys read job posts and refine the ChatGPT prompt before it's sent; Gemini or
+        Anthropic keys import a resume PDF into an account. The active key is used when it suits
+        the task, otherwise another key that does.
       </p>
 
       {/* Adding a new key shows the form at the top; editing shows it inline. */}
